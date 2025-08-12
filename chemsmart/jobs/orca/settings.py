@@ -1010,3 +1010,72 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
         if self.scale_formal_charge_ecp_atom is not None:
             crystal_qmmm_subblock += f"Scale_FormalCharge_ECPAtom {self.scale_formal_charge_ecp_atom} \n"
         return crystal_qmmm_subblock
+
+
+class ORCANEBJobSettings(ORCAJobSettings):
+    """Settings for ORCA NEB jobs"""
+
+    def __init__(
+        self,
+        level_of_theory=None,
+        jobtype=None,
+        neb_end_xyzfile=None,
+        neb_intermediate_xyzfile=None,
+        neb_start_xyz=None,
+        nimages=None,
+        preopt_ends=False,
+        **kwargs,
+    ):
+        """
+        jobtype: str, type of NEB jobs to run.
+        neb_end_xyzfile: str, path of the .xyz file containing product geometry.
+
+        """
+        super().__init__(**kwargs)
+        self.level_of_theory = level_of_theory
+        self.jobtype = jobtype
+        self.neb_end_xyzfile = neb_end_xyzfile
+        self.neb_intermediate_xyzfile = neb_intermediate_xyzfile
+        self.neb_start_xyz = neb_start_xyz
+        self.nimages = nimages
+        self.preopt_ends = preopt_ends
+
+    # populate attribute from parent class (optional)
+    @property
+    def route_string(self):
+        return self._get_neb_route_string()
+
+    def _get_neb_route_string(self):
+        return f"! {self.level_of_theory} {self.jobtype}"
+
+    @property
+    def neb_block(self):
+        return self._write_neb_block()
+
+    def _write_neb_block(self):
+        """write the NEB blcok options
+
+        NEB block input example below:
+        ! GFN2-xTB NEB-TS
+        %NEB
+        NImages 8
+        NEB_END_XYZFILE "R-INT2-Si_opt.xyz"
+        PREOPT_ENDS FALSE
+        END
+        * xyzfile 0 1 R-INT1-Si_opt.xyz
+        """
+        assert self.neb_end_xyzfile, "No end geometry file is given!"
+        assert self.neb_start_xyz, "No starting geometry is given!"
+
+        lines = [
+            "%neb",
+            f"NImages {self.nimages}",
+            f"NEB_END_XYZFile '{self.neb_end_xyzfile}'",
+            f"PREOPT_ENDS {self.preopt_ends}",
+        ]
+
+        if self.neb_intermediate_xyzfile:
+            lines.append(f"NEB_TS_XYZFILE {self.neb_intermediate_xyzfile}")
+
+        lines.append("END")
+        return "\n".join(lines)
