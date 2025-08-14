@@ -8,7 +8,7 @@ from ase import units
 
 from chemsmart.io.molecules.structure import CoordinateBlock, Molecule
 from chemsmart.io.orca import ORCARefs
-from chemsmart.io.orca.input import ORCAInput, ORCAQMMMInput
+from chemsmart.io.orca.input import ORCAInput, ORCANEBInput, ORCAQMMMInput
 from chemsmart.io.orca.output import ORCAEngradFile, ORCAOutput, ORCAQMMMFile
 from chemsmart.io.orca.route import ORCARoute
 
@@ -293,6 +293,19 @@ class TestORCAInput:
 
         # todo:tests for crystal QMMM
         # orca_inp3 = os.path.join(orca_inputs_directory, "ionic_crystal_qmmm.inp")
+
+    def test_orca_neb_input(self, orca_inputs_directory):
+        neb_inp1 = os.path.join(orca_inputs_directory, "neb.inp")
+        neb_inp1 = ORCANEBInput(filename=neb_inp1)
+        assert neb_inp1.route_string == "!  gfn2-xtb neb-ts"
+        assert neb_inp1.ts_xyzfile == "C_TS1_initial.xyz"
+        assert neb_inp1.ending_xyzfile == "C_ts1_opt.xyz"
+        assert neb_inp1.starting_xyzfile == "C_reactant_opt.xyz"
+        assert neb_inp1.restarting_allxyzfile is None
+        assert neb_inp1.nimages == 16
+        assert neb_inp1.pre_optimization is False
+        assert neb_inp1.charge == 0
+        assert neb_inp1.multiplicity == 2
 
 
 class TestORCAOutput:

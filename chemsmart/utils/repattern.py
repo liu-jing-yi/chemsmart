@@ -2,7 +2,6 @@ eV_pattern = r"([\d\.]+) eV"
 nm_pattern = r"([\d\.]+) nm"
 f_pattern = r"f=([\d\.]+)"
 float_pattern = r"[-]?\d*\.\d+|\d+"
-
 xyz_filename_pattern = r"([^\s\"']+\.xyz\b)"
 # \b ensures that the match ends right after xyz
 # and is not followed by something like: xyz1, xyzabc xyz_thing
