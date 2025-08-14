@@ -1017,12 +1017,12 @@ class ORCANEBJobSettings(ORCAJobSettings):
 
     def __init__(
         self,
-        level_of_theory=None,
         jobtype=None,
-        neb_end_xyzfile=None,
-        neb_intermediate_xyzfile=None,
-        neb_start_xyz=None,
         nimages=None,
+        ending_xyzfile=None,
+        intermediate_xyzfile=None,
+        starting_xyz=None,
+        restarting_xyzfile=None,
         preopt_ends=False,
         **kwargs,
     ):
@@ -1032,12 +1032,12 @@ class ORCANEBJobSettings(ORCAJobSettings):
 
         """
         super().__init__(**kwargs)
-        self.level_of_theory = level_of_theory
         self.jobtype = jobtype
-        self.neb_end_xyzfile = neb_end_xyzfile
-        self.neb_intermediate_xyzfile = neb_intermediate_xyzfile
-        self.neb_start_xyz = neb_start_xyz
         self.nimages = nimages
+        self.ending_xyzfile = ending_xyzfile
+        self.intermediate_xyzfile = intermediate_xyzfile
+        self.starting_xyz = starting_xyz
+        self.restarting_xyzfile = restarting_xyzfile
         self.preopt_ends = preopt_ends
 
     # populate attribute from parent class (optional)
@@ -1046,7 +1046,7 @@ class ORCANEBJobSettings(ORCAJobSettings):
         return self._get_neb_route_string()
 
     def _get_neb_route_string(self):
-        return f"! {self.level_of_theory} {self.jobtype}"
+        return f"! {self._get_level_of_theory} {self.jobtype}"
 
     @property
     def neb_block(self):
@@ -1064,18 +1064,22 @@ class ORCANEBJobSettings(ORCAJobSettings):
         END
         * xyzfile 0 1 R-INT1-Si_opt.xyz
         """
-        assert self.neb_end_xyzfile, "No end geometry file is given!"
-        assert self.neb_start_xyz, "No starting geometry is given!"
-
+        assert self.nimages, "The number of images is missing!"
         lines = [
             "%neb",
             f"NImages {self.nimages}",
-            f"NEB_END_XYZFile '{self.neb_end_xyzfile}'",
-            f"PREOPT_ENDS {self.preopt_ends}",
         ]
-
-        if self.neb_intermediate_xyzfile:
-            lines.append(f"NEB_TS_XYZFILE {self.neb_intermediate_xyzfile}")
-
+        assert self.restarting_xyzfile or (
+            self.ending_xyzfile and self.starting_xyz
+        ), "No valid input geomertry is given!"
+        if self.restarting_xyzfile:
+            lines.append(f"Restart_ALLXYZFile {self.intermediate_xyzfile}")
+        else:
+            assert self.ending_xyzfile, "No end geometry file is given!"
+            assert self.starting_xyz, "No starting geometry is given!"
+            lines.append(f"NEB_END_XYZFile '{self.ending_xyzfile}'")
+            lines.append(f"PREOPT_ENDS {self.preopt_ends}")
+            if self.intermediate_xyzfile:
+                lines.append(f"NEB_TS_XYZFILE {self.intermediate_xyzfile}")
         lines.append("END")
         return "\n".join(lines)

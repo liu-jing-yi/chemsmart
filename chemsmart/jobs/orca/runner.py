@@ -32,6 +32,7 @@ class ORCAJobRunner(JobRunner):
         "orcasp",
         "orcairc",
         "orcaqmmm",
+        "orcaneb",
     ]
 
     PROGRAM = "orca"

@@ -103,6 +103,13 @@ class ORCAProjectSettings(RegistryMixin):
         settings.freq = False
         return settings
 
+    def neb_settings(self):
+        """ORCA default settings for QMMM job."""
+        settings = self.main_settings().copy()
+        settings.job_type = "neb"
+        settings.freq = False
+        return settings
+
     @classmethod
     def from_project(cls, project):
         """Get project settings based on project name."""
