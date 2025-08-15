@@ -2683,7 +2683,101 @@ class ORCANEBFile(ORCAOutput):
         super().__init__(filename)
         self.filename = filename
 
-    def converged_CI(self):
+    @property
+    def converged_ci(self):
         for line in self.contents:
             if "THE NEB OPTIMIZATION HAS CONVERGED" in line:
                 return True
+
+    @property
+    def ci(self):
+        ci, _, _ = self._get_ci_infor()
+        return f"Climbing Image:  image {ci}."
+
+    @property
+    def ci_energy(self):
+        _, ci_energy, _ = self._get_ci_infor()
+        return ci_energy
+
+    @property
+    def ci_max_abs_force(self):
+        _, _, ci_max_abs_force = self._get_ci_infor()
+        return ci_max_abs_force
+
+    @property
+    def reactant(self):
+        return self._get_geometries()[0]
+
+    @property
+    def product(self):
+        return self._get_geometries()[1]
+
+    @property
+    def ts_energy(self):
+        ts_energy, _, _, _ = self._get_ts_infor()
+        return ts_energy
+
+    @property
+    def ts_delta_energy(self):
+        _, ts_delta_energy, _, _ = self._get_ts_infor()
+        return ts_delta_energy
+
+    @property
+    def ts_max_abs_force(self):
+        _, _, ts_max_abs_force, _ = self._get_ts_infor()
+        return ts_max_abs_force
+
+    @property
+    def ts_rms_force(self):
+        _, _, _, ts_rms_force = self._get_ts_infor()
+        return ts_rms_force
+
+    def _get_ci_infor(self):
+        ci = ci_energy = ci_max_abs_force = None
+        for i, line in enumerate(self.contents):
+            if "Climbing image                            ...." in line:
+                ci = int(line.split()[-1])
+                for line_j in self.contents[i:]:
+                    if (
+                        "Energy                                    ...."
+                        in line_j
+                    ):
+                        ci_energy = float(line_j.split()[-2])
+                    elif (
+                        "Max. abs. force                           ...."
+                        in line_j
+                    ):
+                        ci_max_abs_force = float(line_j.split()[-2])
+        return ci, ci_energy, ci_max_abs_force
+
+    def _get_geometries(self):
+        """Extract all Cartesian coordinate blocks from the ORCA output."""
+        structures = []
+        for i, line in enumerate(self.contents):
+            if "REACTANT (ANGSTROEM)" or "PRODUCT (ANGSTROEM)" in line:
+                coordinate_lines = []
+                for line_j in self.contents[i:]:
+                    pattern = re.compile(standard_coord_pattern)
+                    if len(line_j) == 0:
+                        break
+                    if pattern.match(line_j):
+                        coordinate_lines.append(line_j)
+                cb = CoordinateBlock(coordinate_block=coordinate_lines)
+                structures.append(cb.molecule)
+        return structures
+
+    def _get_ts_infor(self):
+        for line in self.contents:
+            ts_pattern = r"(-?\d+\.\d+)\s+<= TS"
+            match = re.findall(ts_pattern, line)
+            if match and len(match) >= 4:
+                ts_energy = match[0]
+                ts_delta_energy = match[1]
+                ts_max_abs_force = match[2]
+                ts_rms_force = match[3]
+                return (
+                    ts_energy,
+                    ts_delta_energy,
+                    ts_max_abs_force,
+                    ts_rms_force,
+                )
