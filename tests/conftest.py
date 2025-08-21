@@ -774,11 +774,6 @@ def orca_qmmm_input_file(orca_inputs_directory):
 
 
 @pytest.fixture()
-def orca_neb_input_file(orca_inputs_directory):
-    return os.path.join(orca_inputs_directory, "neb.inp")
-
-
-@pytest.fixture()
 def orca_outputs_directory(orca_test_directory):
     orca_outputs_directory = os.path.join(orca_test_directory, "outputs")
     return os.path.abspath(orca_outputs_directory)
@@ -809,6 +804,10 @@ def orca_he_output_freq(orca_outputs_directory):
 @pytest.fixture()
 def orca_co2_output(orca_outputs_directory):
     return os.path.join(orca_outputs_directory, "CO2.out")
+
+@pytest.fixture()
+def orca_neb_output_file(orca_outputs_directory):
+    return os.path.join(orca_outputs_directory, "neb_R-TS1-Si.out")
 
 
 @pytest.fixture()

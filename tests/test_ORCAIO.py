@@ -9,7 +9,7 @@ from ase import units
 from chemsmart.io.molecules.structure import CoordinateBlock, Molecule
 from chemsmart.io.orca import ORCARefs
 from chemsmart.io.orca.input import ORCAInput, ORCANEBInput, ORCAQMMMInput
-from chemsmart.io.orca.output import ORCAEngradFile, ORCAOutput, ORCAQMMMFile
+from chemsmart.io.orca.output import ORCAEngradFile, ORCAOutput, ORCAQMMMFile, ORCANEBFile
 from chemsmart.io.orca.route import ORCARoute
 
 
@@ -294,18 +294,17 @@ class TestORCAInput:
         # todo:tests for crystal QMMM
         # orca_inp3 = os.path.join(orca_inputs_directory, "ionic_crystal_qmmm.inp")
 
-    def test_orca_neb_input(self, orca_inputs_directory):
-        neb_inp1 = os.path.join(orca_inputs_directory, "neb.inp")
-        neb_inp1 = ORCANEBInput(filename=neb_inp1)
-        assert neb_inp1.route_string == "!  gfn2-xtb neb-ts"
-        assert neb_inp1.ts_xyzfile == "C_TS1_initial.xyz"
-        assert neb_inp1.ending_xyzfile == "C_ts1_opt.xyz"
-        assert neb_inp1.starting_xyzfile == "C_reactant_opt.xyz"
+    def test_orca_neb_input(self, orca_input_nebts_file):
+        neb_inp1 = ORCANEBInput(filename=orca_input_nebts_file)
+        assert neb_inp1.route_string == "!  gfn2-xtb neb-ts freq"
+        assert neb_inp1.ts_xyzfile == "TS_rot1.xyz"
+        assert neb_inp1.ending_xyzfile == "R-1a_opt.xyz"
+        assert neb_inp1.starting_xyzfile == "S-1a_opt.xyz"
         assert neb_inp1.restarting_allxyzfile is None
-        assert neb_inp1.nimages == 16
-        assert neb_inp1.pre_optimization is False
+        assert neb_inp1.nimages == 8
+        assert neb_inp1.pre_optimization is True
         assert neb_inp1.charge == 0
-        assert neb_inp1.multiplicity == 2
+        assert neb_inp1.multiplicity == 1
 
 
 class TestORCAOutput:
@@ -1917,3 +1916,20 @@ class TestORCAQMMM:
             orca_qmmm1.qm_qm2_energy,
             orca_qmmm1.qm_energy,
         )
+
+class TestORCANEB:
+    def test_read_neb_output(self, orca_neb_output_file):
+        orca_neb = ORCANEBFile(filename=orca_neb_output_file)
+        assert orca_neb.nimages == 10
+        assert orca_neb.natoms == 148
+        assert orca_neb.ci_converged is True
+        assert orca_neb.ts_converged is True
+        assert orca_neb.ci == "Climbing Image:  image 4."
+        assert orca_neb.ci_energy == -219.0833212
+        # todo:orca_neb.reactant =
+        assert orca_neb.ci_max_abs_force == 0.001963
+        assert orca_neb.ts_delta_energy == 4.02
+        assert orca_neb.ts_rms_force == 0.00034
+        assert orca_neb.ts_max_abs_force == 0.00543
+        assert orca_neb.ts_energy == -219.09056
+        assert orca_neb.preopt_ends == True

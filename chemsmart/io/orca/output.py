@@ -2684,10 +2684,17 @@ class ORCANEBFile(ORCAOutput):
         self.filename = filename
 
     @property
-    def converged_ci(self):
+    def ci_converged(self):
         for line in self.contents:
             if "THE NEB OPTIMIZATION HAS CONVERGED" in line:
                 return True
+
+    @property
+    def ts_converged(self):
+        for line in self.contents:
+            if "THE TS OPTIMIZATION HAS CONVERGED" in line:
+                return True
+        return False
 
     @property
     def ci(self):
@@ -2710,7 +2717,16 @@ class ORCANEBFile(ORCAOutput):
 
     @property
     def product(self):
-        return self._get_geometries()[1]
+        try:
+            return self._get_geometries()[1]
+        except (TypeError, ValueError):
+            # product geometry may not be found for a free end NEB
+            return None
+
+
+    @property
+    def nimages(self):
+        return self._get_number_of_images()
 
     @property
     def ts_energy(self):
@@ -2731,6 +2747,10 @@ class ORCANEBFile(ORCAOutput):
     def ts_rms_force(self):
         _, _, _, ts_rms_force = self._get_ts_infor()
         return ts_rms_force
+
+    @property
+    def preopt_ends(self):
+        return self._get_pre_optimization()
 
     def _get_ci_infor(self):
         ci = ci_energy = ci_max_abs_force = None
@@ -2766,15 +2786,30 @@ class ORCANEBFile(ORCAOutput):
                 structures.append(cb.molecule)
         return structures
 
+    def _get_number_of_images(self):
+        for line in self.contents:
+            if "Number of images (incl. end points)" in line:
+                line_elements = line.split()
+                return int(line_elements[-1])
+
+    def _get_pre_optimization(self):
+        preopt_ends = False
+        for line in self.contents:
+            if "Optimization of end points before NEB" and "YES" in line:
+                preopt_ends = True
+                break
+        return preopt_ends
+
     def _get_ts_infor(self):
         for line in self.contents:
             ts_pattern = r"(-?\d+\.\d+)\s+<= TS"
             match = re.findall(ts_pattern, line)
-            if match and len(match) >= 4:
-                ts_energy = match[0]
-                ts_delta_energy = match[1]
-                ts_max_abs_force = match[2]
-                ts_rms_force = match[3]
+            if match:
+                line = line.split()
+                ts_energy = float(line[1])
+                ts_delta_energy = float(line[2])
+                ts_max_abs_force = float(line[3])
+                ts_rms_force = float(line[4])
                 return (
                     ts_energy,
                     ts_delta_energy,
