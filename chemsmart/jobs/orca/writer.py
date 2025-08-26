@@ -1,7 +1,7 @@
 import logging
 import os.path
 
-from chemsmart.jobs.orca.settings import ORCAIRCJobSettings, ORCATSJobSettings
+from chemsmart.jobs.orca.settings import ORCAIRCJobSettings, ORCATSJobSettings,ORCANEBJobSettings
 from chemsmart.jobs.writer import InputWriter
 from chemsmart.utils.io import remove_keyword
 from chemsmart.utils.utils import (
@@ -47,6 +47,7 @@ class ORCAInputWriter(InputWriter):
         self._write_modred_block(f)
         self._write_hessian_block(f)
         self._write_irc_block(f)
+        self._write_neb_block(f)
         self._write_constrained_atoms(f)
         self._write_charge_and_multiplicity(f)
         self._write_cartesian_coordinates(f)
@@ -319,6 +320,10 @@ class ORCAInputWriter(InputWriter):
         if isinstance(self.settings, ORCAIRCJobSettings):
             self._write_irc_block_for_irc(f)
 
+    def _write_neb_block(self, f):
+        if isinstance(self.settings, ORCANEBJobSettings):
+            self._write_neb_block_for_neb(f)
+
     def _write_irc_block_for_irc(self, f):
         """Writes the IRC block options.
 
@@ -462,3 +467,15 @@ class ORCAInputWriter(InputWriter):
         assert self.job.molecule is not None, "No molecular geometry found!"
         self.job.molecule.write_coordinates(f, program="orca")
         f.write("*\n")
+
+    def _write_neb_block_for_neb(self, f):
+        """Writes the IRC block options.
+        NEB block input example below:
+        ! GFN2-xTB NEB-TS
+        %NEB
+        NImages 8
+        NEB_END_XYZFILE "R-INT2-Si_opt.xyz"
+        PREOPT_ENDS FALSE
+        END
+        * xyzfile 0 1 R-INT1-Si_opt.xyz
+        """
