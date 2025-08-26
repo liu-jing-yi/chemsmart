@@ -9,7 +9,12 @@ from ase import units
 from chemsmart.io.molecules.structure import CoordinateBlock, Molecule
 from chemsmart.io.orca import ORCARefs
 from chemsmart.io.orca.input import ORCAInput, ORCANEBInput, ORCAQMMMInput
-from chemsmart.io.orca.output import ORCAEngradFile, ORCAOutput, ORCAQMMMFile, ORCANEBFile
+from chemsmart.io.orca.output import (
+    ORCAEngradFile,
+    ORCANEBFile,
+    ORCAOutput,
+    ORCAQMMMFile,
+)
 from chemsmart.io.orca.route import ORCARoute
 
 
@@ -1917,6 +1922,7 @@ class TestORCAQMMM:
             orca_qmmm1.qm_energy,
         )
 
+
 class TestORCANEB:
     def test_read_neb_output(self, orca_neb_output_file):
         orca_neb = ORCANEBFile(filename=orca_neb_output_file)
@@ -1926,7 +1932,11 @@ class TestORCANEB:
         assert orca_neb.ts_converged is True
         assert orca_neb.ci == "Climbing Image:  image 4."
         assert orca_neb.ci_energy == -219.0833212
-        # todo:orca_neb.reactant =
+        assert (
+            orca_neb.reactant.empirical_formula
+            == orca_neb.reactant.empirical_formula
+            == "C72H68NO6P"
+        )
         assert orca_neb.ci_max_abs_force == 0.001963
         assert orca_neb.ts_delta_energy == 4.02
         assert orca_neb.ts_rms_force == 0.00034

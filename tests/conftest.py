@@ -805,6 +805,7 @@ def orca_he_output_freq(orca_outputs_directory):
 def orca_co2_output(orca_outputs_directory):
     return os.path.join(orca_outputs_directory, "CO2.out")
 
+
 @pytest.fixture()
 def orca_neb_output_file(orca_outputs_directory):
     return os.path.join(orca_outputs_directory, "neb_R-TS1-Si.out")

@@ -2723,7 +2723,6 @@ class ORCANEBFile(ORCAOutput):
             # product geometry may not be found for a free end NEB
             return None
 
-
     @property
     def nimages(self):
         return self._get_number_of_images()
@@ -2774,7 +2773,17 @@ class ORCANEBFile(ORCAOutput):
         """Extract all Cartesian coordinate blocks from the ORCA output."""
         structures = []
         for i, line in enumerate(self.contents):
-            if "REACTANT (ANGSTROEM)" or "PRODUCT (ANGSTROEM)" in line:
+            if "REACTANT (ANGSTROEM)" in line:
+                coordinate_lines = []
+                for line_j in self.contents[i:]:
+                    pattern = re.compile(standard_coord_pattern)
+                    if len(line_j) == 0:
+                        break
+                    if pattern.match(line_j):
+                        coordinate_lines.append(line_j)
+                cb = CoordinateBlock(coordinate_block=coordinate_lines)
+                structures.append(cb.molecule)
+            elif "PRODUCT (ANGSTROEM)" in line:
                 coordinate_lines = []
                 for line_j in self.contents[i:]:
                     pattern = re.compile(standard_coord_pattern)
