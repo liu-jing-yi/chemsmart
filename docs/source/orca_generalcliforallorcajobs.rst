@@ -69,27 +69,30 @@ Works for all ORCA jobs
    |  Similarly to that in Gaussin, ``-p`` is followed by the one of the projects specified in ``~/.chemsmart/project/*.yaml`` files, without
       ``.yaml`` extension, while ``-f`` is followed by an input file the user wishes to run job on.
    |  Note that this input file can be any format, such as ``.xyz``, Gaussian ``.com``, ``.gjf`` or ``.log`` file or ORCA ``.inp`` or ``.out`` file.
+    Charge and multiplicity can be either read from input files or be overwritten by user using ``-c`` and ``-m`` options.
+   |  The current code supports ``irc``, ``modred``, ``opt``, ``sp``, ``ts`` and ``scan`` subcommands for different types of ORCA jobs. Specifically,
+    the ``inp`` subcommand allows users to run an ORCA input file as it is.
 
 **Specify Name of the File**
 
 -  Users can specify the name of the file to be created for the job, without file extension, they want to run by using
-   the option ``-l``, e.g.:
+   the ``-l`` option, e.g.:
 
    .. code:: console
 
       chemsmart sub -s shared gaussian -p test -f test.com -l custom_job_name opt
 
-   will create input file named ``custom_job_name.com`` instead of the default ``test_opt.com``.
+   will create input file named ``custom_job_name.inp`` instead of the default ``test_opt.inp``.
 
 **Append String to Input File Name**
 
--  Users can also simply append a string to the base name of the filename supplied, e.g.:
+-  Users can also simply append a string to the base name of the filename supplied with the ``-a`` option, e.g.:
 
    .. code:: console
 
-      chemsmart sub -s shared gaussian -p test -f test.com -a append_string ts
+      chemsmart sub -s shared orca -p test -f test.xyz -a append_string ts
 
-   will create input file named ``test_append_string.com`` instead of the default ``test_ts.com``.
+   will create input file named ``test_append_string.inp`` instead of the default ``test_ts.inp``.
 
 **Select the Particular Structure in file**
 
@@ -98,7 +101,7 @@ Works for all ORCA jobs
 
    .. code:: console
 
-      chemsmart sub -s shared gaussian -p test -f small.db -i 5 -c 0 -m 1 opt
+      chemsmart sub -s shared orca -p test -f small.db -i 5 -c 0 -m 1 opt
 
    will take the 5th structure (1-indexed, as in chemsmart) from ase database file, ``small.db``, to create the input
    file for geometry optimization.
