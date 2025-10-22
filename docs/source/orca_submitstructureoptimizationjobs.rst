@@ -42,16 +42,37 @@ Basic Usage
 ===========
 
 **Basic geometry optimization**:
+To submit a regular ORCA optimization job, one can do:
 
    .. code:: console
 
       chemsmart sub orca -p project_name -f input.xyz opt
 
 **Optimization with inverted constraints**:
+To submit a constrained ORCA optimization with specified atoms frozen, one can do:
 
    .. code:: console
 
       chemsmart sub orca -p inverted_opt -f molecule.xyz opt -f 1,2,3 -i
+
+Please note that the ``opt`` subcommand option ``-f, --freeze-atoms`` is different
+from the main ``-f, --file`` option used to specify the input file.
+
+Examples
+========
+
+**optimize structure directly from an ORCA output file with different charge and multiplicity**
+
+-  After an ORCA optimization job is done, one can use the output file from the previous job to run a
+   new optimization with different charge and multiplicity, e.g.:
+
+   .. code:: console
+
+      chemsmart sub -s SLURM ORCA -p project1 -f k_atom_opt.out -c 1 -m 1 -l k_cation_opt opt
+
+   ``-c`` and ``-m`` will override the charge and multiplicity in the original ORCA out file (from K_atom to
+   K_cation).
+
 
 ***************************
  Single Point Calculations

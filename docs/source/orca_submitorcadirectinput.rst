@@ -12,6 +12,8 @@ ChemSmart provides additional ORCA job types for direct input file execution.
 **********************************
 
 This option allows you to run pre-prepared ORCA input files directly without any modifications by ChemSmart.
+Additional files required for the calculation can be specified in the ``inp`` file, and  should be included
+in the same directory as the ``.inp`` file.
 
 .. code:: console
 
