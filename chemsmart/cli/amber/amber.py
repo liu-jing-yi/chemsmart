@@ -13,11 +13,6 @@ import os
 
 import click
 
-from chemsmart.cli.amber.energy import energy
-
-# Import and register subcommands
-from chemsmart.cli.amber.md import md
-from chemsmart.cli.amber.opt import opt
 from chemsmart.cli.job import (
     click_file_label_and_index_options,
     click_filename_options,
@@ -242,13 +237,3 @@ def amber(
 
     logger.debug(f"Loaded {len(molecules)} molecule(s)")
     logger.debug(f"Job label: {label}")
-
-
-# Import and register subcommands will be done after the main command is defined
-
-
-# Import and register subcommands
-
-amber.add_command(md)
-amber.add_command(energy)
-amber.add_command(opt)
