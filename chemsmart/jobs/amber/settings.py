@@ -195,6 +195,15 @@ class AmberFFParamJobSettings(AmberJobSettings):
         gaussian_logfile (str): Path to Gaussian log file
         gaussian_fchkfile (str): Path to Gaussian fchk file
         parameter (str): Force field parameter set to use
+
+    Properties:
+        ligand_pdb (str): Path to extracted ligand PDB file
+        metal_pdb (str): Path to extracted metal PDB file
+        reduced_ligand (str): Path to ligand PDB with added hydrogens
+        ligand_mol2_file (str): Path to ligand mol2 file
+        ligand_frcmod_file (str): Path to ligand frcmod file
+        water_mol2_file (str): Path to water mol2 file
+        hpp_pdb_file (str or None): Path to PDB file with AMBER naming scheme
     """
 
     def __init__(
@@ -235,11 +244,27 @@ class AmberFFParamJobSettings(AmberJobSettings):
 
     @property
     def ligand_pdb(self):
-        return self._get_ligand_pdb()
+        """
+        Extract ligand lines from a PDB input file and write them to <ligand>.pdb
+
+        Returns:
+            str: Path to the created ligand PDB file
+        """
+        if not self.ligand:
+            raise ValueError("Ligand name must be specified")
+        return self._get_residue_pdb(self.ligand)
 
     @property
     def metal_pdb(self):
-        return self._get_metal_pdb()
+        """
+        Extract metal lines from a PDB input file and write them to <element>.pdb
+
+        Returns:
+            str: Path to the created metal PDB file
+        """
+        if not self.element:
+            raise ValueError("Element name must be specified")
+        return self._get_residue_pdb(self.element)
 
     @property
     def reduced_ligand(self):
@@ -270,15 +295,91 @@ class AmberFFParamJobSettings(AmberJobSettings):
 
         return self._run_parmchk2()
 
-    def _get_ligand_pdb(self):
+    @property
+    def water_mol2_file(self):
         """
-        Extract ligand lines from a PDB input file and write them to <ligand>.pdb
+        Get the water mol2 file by running tleap and antechamber.
 
         Returns:
-            str: Path to the created ligand PDB file
+            str: Path to the WAT.mol2 file
         """
-        if not self.ligand:
-            raise ValueError("Ligand name must be specified")
+        return self._run_tleap()
+
+    @property
+    def hpp_pdb_file(self):
+        """
+        Generate PDB file with AMBER naming scheme from topology and coordinate files.
+
+        Uses ambpdb to convert topology/coordinate files to PDB format, useful
+        after H++ processing to get proper AMBER residue names.
+
+        Returns:
+            str or None: Path to the generated PDB file if topology file exists, None otherwise
+        """
+        return self._run_ambpdb()
+
+    def combine_pdb_files(self, input_files, output_file):
+        """
+        Combine multiple PDB files into a single PDB file.
+
+        Convenience method to combine PDB files, equivalent to concatenation.
+
+        Args:
+            input_files (list): List of input PDB file paths to combine
+            output_file (str): Path to the output combined PDB file
+
+        Returns:
+            str: Path to the combined PDB file
+
+        Example:
+            # Equivalent to: cat 1OKL_Hpp_fixed.pdb ZN.pdb MNS_fixed_H.pdb > 1OKL_H.pdb
+            combined_file = settings.combine_pdb_files(
+                ['1OKL_Hpp_fixed.pdb', 'ZN.pdb', 'MNS_fixed_H.pdb'],
+                '1OKL_H.pdb'
+            )
+        """
+        return self._combine(input_files, output_file)
+
+    def fix_pdb_file(self, input_pdb_file, output_pdb_file=None):
+        """
+        Fix and renumber PDB file using pdb4amber.
+
+        Convenience method to run pdb4amber for PDB file processing.
+
+        Args:
+            input_pdb_file (str): Path to input PDB file to process
+            output_pdb_file (str, optional): Path to output PDB file. If not specified,
+                                           defaults to <input_basename>_fixed.pdb
+
+        Returns:
+            str: Path to the output fixed PDB file
+
+        Example:
+            # Equivalent to: pdb4amber -i 1OKL_H.pdb -o 1OKL_fixed_H.pdb
+            fixed_file = settings.fix_pdb_file('1OKL_H.pdb', '1OKL_fixed_H.pdb')
+        """
+        return self._run_pdb4amber(input_pdb_file, output_pdb_file)
+
+    def _get_residue_pdb(self, residue_name, residue_aliases=None):
+        """
+        Extract residue lines from a PDB input file and write them to <residue>.pdb.
+
+        This unified method can extract any type of residue (ligand, metal, water, etc.)
+        based on the residue name and optional aliases.
+
+        Args:
+            residue_name (str): Primary residue name to search for
+            residue_aliases (list, optional): Additional residue names to search for
+                                            (useful for water: ['HOH', 'WAT', 'TIP3', 'SOL'])
+
+        Returns:
+            str: Path to the created residue PDB file
+
+        Raises:
+            ValueError: If residue name, input file not specified, or no residue found
+        """
+        if not residue_name:
+            raise ValueError("Residue name must be specified")
 
         if not self.input_file:
             raise ValueError("Input file must be specified")
@@ -286,75 +387,55 @@ class AmberFFParamJobSettings(AmberJobSettings):
         if not os.path.exists(self.input_file):
             raise ValueError(f"Input file {self.input_file} does not exist")
 
-        # Format ligand name )
-        ligand_upper = self._residue_formatting(self.ligand)
-        ligand_pdb_filename = f"{self.ligand}.pdb"
+        # Format residue name using _residue_formatting (includes warning if needed)
+        residue_upper = self._residue_formatting(residue_name)
+        residue_pdb_filename = f"{residue_name}.pdb"
+
+        # Read input file
         with open(self.input_file, "r") as f:
             lines = f.readlines()
 
-        ligand_lines = [line for line in lines if self.ligand in line]
+        # Build list of residue names to search for
+        search_names = [residue_name]
+        if residue_aliases:
+            search_names.extend(residue_aliases)
 
-        if not ligand_lines:
-            raise ValueError(
-                f"No lines containing ligand '{self.ligand}' found in {self.input_file}"
-            )
+        # Filter lines containing any of the search names
+        residue_lines = []
+        for line in lines:
+            if any(search_name in line for search_name in search_names):
+                residue_lines.append(line)
 
-        # Ensure ligand names are capitalized
+        if not residue_lines:
+            if residue_aliases:
+                all_names = ", ".join([f"'{name}'" for name in search_names])
+                raise ValueError(
+                    f"No lines containing residue names {all_names} found in {self.input_file}"
+                )
+            else:
+                raise ValueError(
+                    f"No lines containing residue '{residue_name}' found in {self.input_file}"
+                )
+
+        # Process lines to ensure residue names are properly formatted
         processed_lines = []
-        for line in ligand_lines:
-            processed_line = line.replace(self.ligand, ligand_upper)
-            processed_lines.append(processed_line)
-
-        with open(ligand_pdb_filename, "w") as out:
-            out.writelines(processed_lines)
-
-        return ligand_pdb_filename
-
-    def _get_metal_pdb(self):
-        """
-        Extract metal lines from a PDB input file and write them to <element>.pdb
-        using pure Python (no grep/subprocess).
-
-        Returns:
-            str: Path to the created metal PDB file
-        """
-        if not self.element:
-            raise ValueError("Element name must be specified")
-
-        if not self.input_file:
-            raise ValueError("Input file must be specified")
-
-        if not os.path.exists(self.input_file):
-            raise ValueError(f"Input file {self.input_file} does not exist")
-
-        # Format element name using _residue_formatting (includes warning if needed)
-        element_upper = self._residue_formatting(self.element)
-
-        metal_pdb_filename = f"{self.element}.pdb"
-
-        # Read and filter lines containing element name
-        with open(self.input_file, "r") as f:
-            lines = f.readlines()
-
-        metal_lines = [line for line in lines if self.element in line]
-
-        if not metal_lines:
-            raise ValueError(
-                f"No lines containing element '{self.element}' found in {self.input_file}"
-            )
-
-        # Process lines to ensure element names are capitalized
-        processed_lines = []
-        for line in metal_lines:
-            # Replace element name with uppercase version in the line
-            processed_line = line.replace(self.element, element_upper)
+        for line in residue_lines:
+            processed_line = line
+            # Replace the primary residue name with uppercase version
+            if residue_name in line:
+                processed_line = processed_line.replace(
+                    residue_name, residue_upper
+                )
             processed_lines.append(processed_line)
 
         # Write processed lines to new PDB file
-        with open(metal_pdb_filename, "w") as out:
+        with open(residue_pdb_filename, "w") as out:
             out.writelines(processed_lines)
 
-        return metal_pdb_filename
+        logger.info(
+            f"Extracted {len(residue_lines)} residue lines to {residue_pdb_filename}"
+        )
+        return residue_pdb_filename
 
     def _residue_formatting(self, resi):
         """
@@ -614,3 +695,464 @@ class AmberFFParamJobSettings(AmberJobSettings):
             raise RuntimeError(error_msg)
 
         return mol2_file
+
+    def _run_tleap(self):
+        """
+        Execute tleap to add hydrogens to water molecules.
+
+        Creates tleap input file and runs:
+        tleap -s -f wat_tleap.in > wat_tleap.out
+
+        Then uses antechamber to generate mol2 file:
+        antechamber -fi pdb -fo mol2 -i WAT_H.pdb -o WAT.mol2 -at amber -c bcc -pf y
+
+        Returns:
+            str: Path to the output WAT.mol2 file
+
+        Raises:
+            ValueError: If required parameters are not specified
+            RuntimeError: If tleap or antechamber commands fail
+        """
+        if not self.input_file:
+            raise ValueError("Input file must be specified to run tleap")
+
+        # First extract water molecules to WAT.pdb
+        water_pdb = self._get_water_pdb()
+
+        # Create tleap input file
+        tleap_input_file = "wat_tleap.in"
+        tleap_output_file = "wat_tleap.out"
+        water_with_h_pdb = "WAT_H.pdb"
+        water_mol2_file = "WAT.mol2"
+
+        # Write tleap input file
+        tleap_commands = [
+            "loadoff solvents.lib",
+            "HOH = TIP3",
+            f"wat = loadpdb {water_pdb}",
+            f"savepdb wat {water_with_h_pdb}",
+            "quit",
+        ]
+
+        try:
+            with open(tleap_input_file, "w") as f:
+                f.write("\n".join(tleap_commands) + "\n")
+
+            logger.info(f"Created tleap input file: {tleap_input_file}")
+
+            # Run tleap command
+            tleap_command = f"tleap -s -f {tleap_input_file}"
+
+            with open(tleap_output_file, "w") as output:
+                subprocess.run(
+                    tleap_command,
+                    shell=True,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True,
+                )
+
+            logger.info(f"Successfully ran tleap command: {tleap_command}")
+            logger.info(f"Output written to: {tleap_output_file}")
+
+            # Verify WAT_H.pdb was created
+            if not os.path.exists(water_with_h_pdb):
+                raise RuntimeError(
+                    f"Tleap completed but output file {water_with_h_pdb} was not created"
+                )
+
+            # Run antechamber on the water with hydrogens
+            antechamber_command = [
+                "antechamber",
+                "-fi",
+                "pdb",
+                "-fo",
+                "mol2",
+                "-i",
+                water_with_h_pdb,
+                "-o",
+                water_mol2_file,
+                "-at",
+                "amber",
+                "-c",
+                "bcc",
+                "-pf",
+                "y",
+            ]
+
+            subprocess.run(
+                antechamber_command, capture_output=True, text=True, check=True
+            )
+
+            logger.info(
+                f"Successfully ran antechamber command: {' '.join(antechamber_command)}"
+            )
+            logger.info(f"Water mol2 output written to: {water_mol2_file}")
+
+            # Verify WAT.mol2 was created
+            if not os.path.exists(water_mol2_file):
+                raise RuntimeError(
+                    f"Antechamber completed but output file {water_mol2_file} was not created"
+                )
+
+            # Modify water mol2 file to use HW atom type for water hydrogens
+            self._fix_water_mol2_atomtypes(water_mol2_file)
+
+        except subprocess.CalledProcessError as e:
+            error_msg = (
+                f"Tleap/Antechamber command failed: {e}\nStderr: {e.stderr}"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except FileNotFoundError as e:
+            if "tleap" in str(e):
+                error_msg = "Tleap command not found. Please ensure AmberTools is installed and in PATH."
+            elif "antechamber" in str(e):
+                error_msg = "Antechamber command not found. Please ensure AmberTools is installed and in PATH."
+            else:
+                error_msg = f"Command not found: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Failed to process water molecules: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        return water_mol2_file
+
+    def _get_water_pdb(self):
+        """
+        Extract water molecules from input file and write them to WAT.pdb.
+
+        Returns:
+            str: Path to the created water PDB file
+
+        Raises:
+            ValueError: If input file is not specified or no water found
+        """
+        # Use common water residue names as aliases
+        water_aliases = ["HOH", "WAT", "TIP3", "SOL"]
+        return self._get_residue_pdb("WAT", residue_aliases=water_aliases)
+
+    def _fix_water_mol2_atomtypes(self, mol2_file):
+        """
+        Modify WAT.mol2 file to change H1 and H2 atom types from "HO" to "HW".
+
+        Args:
+            mol2_file (str): Path to the mol2 file to modify
+
+        Raises:
+            RuntimeError: If file operations fail
+        """
+        if not os.path.exists(mol2_file):
+            raise RuntimeError(f"Mol2 file {mol2_file} does not exist")
+
+        try:
+            # Read the file
+            with open(mol2_file, "r") as f:
+                lines = f.readlines()
+
+            # Modify H1 and H2 atom types from HO to HW
+            modified_lines = []
+            in_atom_section = False
+
+            for line in lines:
+                if line.strip() == "@<TRIPOS>ATOM":
+                    in_atom_section = True
+                    modified_lines.append(line)
+                elif (
+                    line.strip().startswith("@<TRIPOS>")
+                    and line.strip() != "@<TRIPOS>ATOM"
+                ):
+                    in_atom_section = False
+                    modified_lines.append(line)
+                elif in_atom_section:
+                    # Check if this is a hydrogen atom line and modify atom type
+                    parts = line.split()
+                    if len(parts) >= 6:
+                        atom_name = parts[1]  # H1 or H2
+                        atom_type = parts[5]  # Current atom type
+
+                        # If it's a hydrogen in water and atom type is HO, change to HW
+                        if atom_name in ["H1", "H2"] and atom_type == "HO":
+                            parts[5] = "HW"
+                            line = "     ".join(
+                                f"{part:>8}" if i > 1 else f"{part:<8}"
+                                for i, part in enumerate(parts[:6])
+                            )
+                            if len(parts) > 6:
+                                line += "     " + "     ".join(parts[6:])
+                            line += "\n"
+                            logger.info(
+                                f"Changed atom type for {atom_name} from HO to HW"
+                            )
+
+                    modified_lines.append(line)
+                else:
+                    modified_lines.append(line)
+
+            # Write back the modified file
+            with open(mol2_file, "w") as f:
+                f.writelines(modified_lines)
+
+            logger.info(f"Modified water atom types in {mol2_file}")
+
+        except Exception as e:
+            error_msg = f"Failed to modify water mol2 atom types: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+    def _run_ambpdb(self):
+        """
+        Execute ambpdb command to generate PDB file from topology and coordinate files.
+
+        Runs: ambpdb -p <topology_file> -c <coordinate_file> > <output_pdb>
+        where the output PDB name is derived from the base name of the topology file.
+
+        This is useful after H++ processing to generate a PDB file using AMBER
+        naming scheme for residues (e.g., HID, HIE, HIP instead of HIS for histidine).
+
+        Returns:
+            str or None: Path to the generated PDB file if topology file exists, None otherwise
+
+        Raises:
+            ValueError: If topology file is specified but coordinate file is missing
+            RuntimeError: If ambpdb command fails or ambpdb is not available
+        """
+        # Check if topology file is provided
+        if not self.topology_file:
+            logger.info(
+                "No topology file specified, skipping ambpdb generation"
+            )
+            return None
+
+        if not os.path.exists(self.topology_file):
+            logger.warning(
+                f"Topology file {self.topology_file} does not exist, skipping ambpdb generation"
+            )
+            return None
+
+        # Check for coordinate file
+        if not self.coordinate_file:
+            raise ValueError(
+                "Coordinate file must be specified when topology file is provided for ambpdb"
+            )
+
+        if not os.path.exists(self.coordinate_file):
+            raise ValueError(
+                f"Coordinate file {self.coordinate_file} does not exist"
+            )
+
+        # Generate output filename based on topology file base name
+        topology_basename = os.path.splitext(
+            os.path.basename(self.topology_file)
+        )[0]
+        output_file = f"{topology_basename}_Hpp.pdb"
+
+        # Construct the ambpdb command
+        ambpdb_command = (
+            f"ambpdb -p {self.topology_file} -c {self.coordinate_file}"
+        )
+
+        try:
+            result = subprocess.run(
+                ambpdb_command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            # Write stdout to output file
+            with open(output_file, "w") as f:
+                f.write(result.stdout)
+
+            logger.info(f"Successfully ran ambpdb command: {ambpdb_command}")
+            logger.info(f"PDB output written to: {output_file}")
+
+            # Verify output file was created and has content
+            if (
+                not os.path.exists(output_file)
+                or os.path.getsize(output_file) == 0
+            ):
+                raise RuntimeError(
+                    f"Ambpdb completed but output file {output_file} was not created or is empty"
+                )
+
+        except subprocess.CalledProcessError as e:
+            error = f"Ambpdb command failed: {e}\nStderr: {e.stderr}\nStdout: {e.stdout}"
+            logger.error(error)
+            raise RuntimeError(error)
+        except FileNotFoundError:
+            error = "Ambpdb command not found. Please ensure AmberTools is installed and in PATH."
+            logger.error(error)
+            raise RuntimeError(error)
+
+        return output_file
+
+    def _combine(self, input_files, output_file):
+        """
+        Combine multiple PDB files into a single PDB file.
+
+        Equivalent to: cat file1.pdb file2.pdb file3.pdb > combined.pdb
+
+        Args:
+            input_files (list): List of input PDB file paths to combine
+            output_file (str): Path to the output combined PDB file
+
+        Returns:
+            str: Path to the combined PDB file
+
+        Raises:
+            ValueError: If input_files is empty or contains invalid files
+            RuntimeError: If file operations fail
+        """
+        if not input_files:
+            raise ValueError("Input files list cannot be empty")
+
+        if not isinstance(input_files, (list, tuple)):
+            raise ValueError("Input files must be provided as a list or tuple")
+
+        # Validate input files exist
+        missing_files = []
+        for file_path in input_files:
+            if not os.path.exists(file_path):
+                missing_files.append(file_path)
+
+        if missing_files:
+            raise ValueError(
+                f"The following input files do not exist: {missing_files}"
+            )
+
+        try:
+            # Combine files by reading each and writing to output
+            with open(output_file, "w") as output:
+                for i, file_path in enumerate(input_files):
+                    logger.info(
+                        f"Adding content from {file_path} to {output_file}"
+                    )
+
+                    with open(file_path, "r") as input_file:
+                        content = input_file.read()
+
+                        # Write content to output file
+                        output.write(content)
+
+                        # Add newline between files if the current file doesn't end with one
+                        # and it's not the last file
+                        if (
+                            not content.endswith("\n")
+                            and i < len(input_files) - 1
+                        ):
+                            output.write("\n")
+
+            # Verify output file was created and has content
+            if not os.path.exists(output_file):
+                raise RuntimeError(
+                    f"Failed to create output file {output_file}"
+                )
+
+            if os.path.getsize(output_file) == 0:
+                raise RuntimeError(f"Output file {output_file} is empty")
+
+            logger.info(
+                f"Successfully combined {len(input_files)} files into {output_file}"
+            )
+
+            # Log file sizes for verification
+            total_size = sum(os.path.getsize(f) for f in input_files)
+            output_size = os.path.getsize(output_file)
+            logger.info(
+                f"Input files total size: {total_size} bytes, output size: {output_size} bytes"
+            )
+
+        except IOError as e:
+            error_msg = f"Failed to combine PDB files: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error while combining files: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        return output_file
+
+    def _run_pdb4amber(self, input_pdb_file, output_pdb_file=None):
+        """
+        Execute pdb4amber command to renumber and fix PDB file.
+
+        Runs: pdb4amber -i <input_pdb_file> -o <output_pdb_file>
+
+        Args:
+            input_pdb_file (str): Path to input PDB file to process
+            output_pdb_file (str, optional): Path to output PDB file. If not specified,
+                                           defaults to <input_basename>_fixed.pdb
+
+        Returns:
+            str: Path to the output fixed PDB file
+
+        Raises:
+            ValueError: If input file is not specified or doesn't exist
+            RuntimeError: If pdb4amber command fails or pdb4amber is not available
+        """
+        if not input_pdb_file:
+            raise ValueError("Input PDB file must be specified")
+
+        if not os.path.exists(input_pdb_file):
+            raise ValueError(f"Input PDB file {input_pdb_file} does not exist")
+
+        # Generate output filename if not provided
+        if output_pdb_file is None:
+            # Extract basename without extension and add _fixed suffix
+            basename = os.path.splitext(os.path.basename(input_pdb_file))[0]
+            output_pdb_file = f"{basename}_fixed.pdb"
+
+        # Construct the pdb4amber command
+        pdb4amber_command = [
+            "pdb4amber",
+            "-i",
+            input_pdb_file,
+            "-o",
+            output_pdb_file,
+        ]
+
+        try:
+            result = subprocess.run(
+                pdb4amber_command,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            logger.info(
+                f"Successfully ran pdb4amber command: {' '.join(pdb4amber_command)}"
+            )
+            logger.info(f"Output written to: {output_pdb_file}")
+
+            # Log stdout/stderr for debugging
+            if result.stdout:
+                logger.debug(f"pdb4amber stdout: {result.stdout}")
+            if result.stderr:
+                logger.debug(f"pdb4amber stderr: {result.stderr}")
+
+            # Verify output file was created
+            if not os.path.exists(output_pdb_file):
+                raise RuntimeError(
+                    f"pdb4amber completed but output file {output_pdb_file} was not created"
+                )
+
+            # Verify output file has content
+            if os.path.getsize(output_pdb_file) == 0:
+                raise RuntimeError(f"Output file {output_pdb_file} is empty")
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"pdb4amber command failed: {e}\nStderr: {e.stderr}\nStdout: {e.stdout}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except FileNotFoundError:
+            error_msg = "pdb4amber command not found. Please ensure AmberTools is installed and in PATH."
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        return output_pdb_file
