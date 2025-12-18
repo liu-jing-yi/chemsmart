@@ -1,0 +1,20 @@
+VERSION
+%FORMAT(10I8)
+      5       4       2       1       1       1       1       1       1       0
+%FLAG TITLE                                                                     
+%FORMAT(20a4)
+test topology file with ZN metal and ligands
+%FLAG POINTERS                                                                 
+%FORMAT(10I8)
+       5       4       2       1       0       0       0       0       0       0
+       0       0       0       0       0       0       0       0       0       0
+       0       0       0       0       0       0       0       0       1       0
+%FLAG ATOM_NAME                                                                
+%FORMAT(20a4)
+N   CA  NE2 SG  ZN  
+%FLAG CHARGE                                                                   
+%FORMAT(5E16.8)
+ -0.41570000E+00 -0.02520000E+00 -0.27000000E+00 -0.31100000E+00  1.20000000E+00
+%FLAG MASS                                                                     
+%FORMAT(5E16.8)
+  1.40067000E+01  1.20110000E+01  1.40067000E+01  3.20600000E+01  6.53900000E+01
