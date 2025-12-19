@@ -264,3 +264,87 @@ class NCIPLOTExecutable(Executable):
         if self.executable_folder is not None:
             executable_path = os.path.join(self.executable_folder, "nciplot")
             return executable_path
+
+
+class AmberExecutable(Executable):
+    """
+    Executable handler for Amber/AmberTools molecular dynamics software.
+
+    This class provides specific implementation for managing Amber
+    executable paths and configurations, including support for
+    MCPB.py workflows and AmberTools utilities.
+    """
+
+    PROGRAM = "AMBER"
+
+    def __init__(self, executable_folder=None, **kwargs):
+        """
+        Initialize AmberExecutable instance.
+
+        Args:
+            executable_folder (str, optional): Path to Amber executable directory.
+            **kwargs: Additional arguments passed to parent Executable class.
+        """
+        super().__init__(executable_folder=executable_folder, **kwargs)
+
+    def get_executable(self):
+        """
+        Get the full path to the main Amber executable.
+
+        Returns:
+            str or None: Full path to sander/pmemd executable if executable_folder is set,
+                        None otherwise.
+        """
+        if self.executable_folder is not None:
+            # Check for CUDA-enabled pmemd first, then regular sander
+            for executable in ["pmemd.cuda", "pmemd", "sander"]:
+                executable_path = os.path.join(
+                    self.executable_folder, executable
+                )
+                if os.path.exists(executable_path):
+                    return executable_path
+            # Fallback to sander path
+            return os.path.join(self.executable_folder, "sander")
+        return None
+
+    def get_mcpb_executable(self):
+        """
+        Get the path to MCPB.py executable.
+
+        Returns:
+            str: Path to MCPB.py, typically in PATH or AmberTools bin directory.
+        """
+        if self.executable_folder is not None:
+            mcpb_path = os.path.join(self.executable_folder, "MCPB.py")
+            if os.path.exists(mcpb_path):
+                return mcpb_path
+        # Fallback to system PATH
+        return "MCPB.py"
+
+    def get_antechamber_executable(self):
+        """
+        Get the path to antechamber executable.
+
+        Returns:
+            str: Path to antechamber.
+        """
+        if self.executable_folder is not None:
+            antechamber_path = os.path.join(
+                self.executable_folder, "antechamber"
+            )
+            if os.path.exists(antechamber_path):
+                return antechamber_path
+        return "antechamber"
+
+    def get_tleap_executable(self):
+        """
+        Get the path to tleap executable.
+
+        Returns:
+            str: Path to tleap.
+        """
+        if self.executable_folder is not None:
+            tleap_path = os.path.join(self.executable_folder, "tleap")
+            if os.path.exists(tleap_path):
+                return tleap_path
+        return "tleap"

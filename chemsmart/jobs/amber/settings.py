@@ -195,7 +195,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
         gaussian_logfile (str): Path to Gaussian log file
         gaussian_fchkfile (str): Path to Gaussian fchk file
         parameter (str): Force field parameter set to use
-        input_pdb_file (str): Path to input PDB file for processing
+        input_pdb (str): Path to input PDB file for processing
         cutoff (float): Cutoff distance for metal binding
         large_opt (int): Large optimization setting
         mcpb_job_type (str): Type of quantum chemistry job for MCPB ("gaussian" or "gamess")
@@ -221,6 +221,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
     def __init__(
         self,
         element: str = None,
+        element_charge: int = None,
         ligand: str = None,
         ligand_charge: int = None,
         ligand_multiplicity: int = None,
@@ -228,7 +229,8 @@ class AmberFFParamJobSettings(AmberJobSettings):
         gaussian_logfile: str = None,
         gaussian_fchkfile: str = None,
         parameter: str = None,
-        input_pdb_file: str = None,
+        input_pdb: str = None,
+        fixed_H_input_pdb_file: str = None,
         cutoff: float = 2.8,
         large_opt: int = 1,
         mcpb_job_type: str = "gaussian",
@@ -245,7 +247,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
             gaussian_logfile: Path to Gaussian log file
             gaussian_fchkfile: Path to Gaussian fchk file
             parameter: Force field parameter set to use
-            input_pdb_file: Path to input PDB file for processing
+            input_pdb: Path to input PDB file for processing
             cutoff: Cutoff distance for metal binding (default: 2.8)
             large_opt: Large optimization setting (default: 1)
             mcpb_job_type: Type of quantum chemistry job ("gaussian" or "gamess", default: "gaussian")
@@ -254,6 +256,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
         super().__init__(**kwargs)
 
         self.element = element
+        self.element_charge = element_charge
         self.ligand = ligand
         self.ligand_charge = ligand_charge
         self.ligand_multiplicity = ligand_multiplicity
@@ -261,7 +264,8 @@ class AmberFFParamJobSettings(AmberJobSettings):
         self.parameter = parameter
         self.gaussian_logfile = gaussian_logfile
         self.gaussian_fchkfile = gaussian_fchkfile
-        self.input_pdb_file = input_pdb_file
+        self.input_pdb = input_pdb
+        self.fixed_H_input_pdb_file = fixed_H_input_pdb_file
         self.cutoff = cutoff
         self.large_opt = large_opt
         self.mcpb_job_type = mcpb_job_type.lower()
@@ -291,33 +295,127 @@ class AmberFFParamJobSettings(AmberJobSettings):
         return self._get_residue_pdb(self.element)
 
     @property
-    def reduced_ligand(self):
+    def reduce_command(self):
+        """the reduce command for adding hydrogens to ligand pdb file.
+
+        Example command:
+            reduce LIGAND.pdb > LIGAND_H.pdb
         """
-        Run the reduce command to add hydrogens to the ligand PDB file.
-        """
-        return self._run_reduce()
+        return self._get_reduce_command()
 
     @property
-    def ligand_mol2_file(self):
-        """
-        Get the ligand mol2 file name based on the ligand name.
+    def antechamber_mol2_command(self):
+        """get antechamber command for generating mol2 jobs.
 
-        Returns:
-            str: Ligand mol2 file name
+        Example command:
+            antechamber -fi pdb -fo mol2 -i LIGAND_H.pdb -o LIGAND_pre.mol2 -c bcc -pf y -nc 0
         """
-
-        return self._run_antechamber()
+        return self._get_antechamber_command()
 
     @property
-    def ligand_frcmod_file(self):
-        """
-        Get the ligand frcmod file name based on the ligand name.
+    def rename_antechamber_output_command(self):
+        """get command to rename antechamber output mol2 file.
 
-        Returns:
-            str: Ligand frcmod file name
+        Example command:
+            mv LIGAND_pre.mol2 LIGAND.mol2
         """
+        if not self.ligand:
+            raise ValueError(
+                "Ligand name must be specified to rename antechamber output"
+            )
+        return f"mv {self.ligand}_pre.mol2 {self.ligand}.mol2"
 
-        return self._run_parmchk2()
+    @property
+    def parmchk2_command(self):
+        """get parmchk2 command for generating frcmod files.
+
+        Example command:
+            parmchk2 -i LIGAND_pre.mol2 -f mol2 -o LIGAND.frcmod -s gaff
+        """
+        return self._get_parmchk2_command()
+
+    @property
+    def metalpdb2mol_command(self):
+        """get metalpdb2mol command for generating metal mol2 files.
+
+        Example command:
+            metalpdb2mol.py -i ELEMENT.pdb -o ELEMENT.mol2 -c ELEMENT_CHARGE
+        """
+        return self._get_metalpdb2mol_command()
+
+    @property
+    def ambpdb_command(self):
+        """get ambpdb command for generating pdb file from topology/coordinate files.
+
+        Example command:
+            ambpdb -p TOPOLOGY_FILE -c COORDINATE_FILE > OUTPUT_PDB_FILE
+        """
+        if not self.topology_file or not self.coordinate_file:
+            return None
+        return self._get_ambpdb_command()
+
+    @property
+    def combine_command(self):
+        """get command to combine multiple pdb files into one.
+
+        Example command:
+            cat PROTEIN_H_fixed.pdb ELEMENT.pdb LIGAND_H.pdb > COMPLEX_H.pdb
+        """
+        return self._get_combine_command()
+
+    @property
+    def pdb4amber_command(self):
+        """get pdb4amber command for fixing and renumbering pdb files."""
+        return self._get_pdb4amber_command()
+
+    @property
+    def mcpb_step1_command(self):
+        """get MCPB.py step 1 command for generating optimization and RESP files.
+
+        Example command:
+            MCPB.py -i MCPB_INPUT_FILE -s 1
+        """
+        return self._get_mcpb_step_command(step=1)
+
+    @property
+    def mcpb_step2_command(self):
+        """get MCPB.py step 2 command for generating force field parameters.
+
+        Other options are available:
+        Z-matrix (with step_number 2z)；
+        Empirical (with step_number 2e) methods.
+        The Empirical method doesn't need any Gaussian calculations to obtain the force constants
+        (but still needs Gaussian calculation for getting the RESP charges),
+        but it only supports zinc ion modeling in the current version.
+
+        Example command:
+            MCPB.py -i MCPB_INPUT_FILE -s 2
+        """
+        return self._get_mcpb_step_command(step=2)
+
+    @property
+    def mcpb_step3_command(self):
+        """get MCPB.py step 3 command for generating force field parameters.
+
+        Use ChgModB to perform the REWSP charge fitting and generate the mol2 files for the metal center and coordinating residues.
+        Other options are also available:
+        ChgModA, ChgModC and ChgModD (as 3a, 3c and 3d respectively)
+
+        Example command:
+            MCPB.py -i MCPB_INPUT_FILE -s 3
+        """
+        return self._get_mcpb_step_command(step=3)
+
+    @property
+    def mcpb_step4_command(self):
+        """get MCPB.py step 4 command for generating force field parameters.
+
+        Other options are available: Z-matrix (with step_number 2z) and Empirical (with step_number 2e) methods. The Empirical method doesn't need any Gaussian calculations to obtain the force constants (but still needs Gaussian calculation for getting the RESP charges), but it only supports zinc ion modeling in the current version.
+
+        Example command:
+            MCPB.py -i MCPB_INPUT_FILE -s 2
+        """
+        return self._get_mcpb_step_command(step=2)
 
     @property
     def water_mol2_file(self):
@@ -351,24 +449,22 @@ class AmberFFParamJobSettings(AmberJobSettings):
         """
         Get the group name based on the basename of the input PDB file.
 
-        Returns the filename without path and extension from the input_pdb_file.
+        Returns the filename without path and extension from the input_pdb.
 
         Returns:
-            str or None: Basename of input PDB file if input_pdb_file is specified, None otherwise
+            str or None: Basename of input PDB file if input_pdb is specified, None otherwise
 
         Raises:
-            ValueError: If input_pdb_file doesn't exist
+            ValueError: If input_pdb doesn't exist
         """
-        if not self.input_pdb_file:
+        if not self.input_pdb:
             return None
 
-        if not os.path.exists(self.input_pdb_file):
-            raise ValueError(
-                f"Input PDB file {self.input_pdb_file} does not exist"
-            )
+        if not os.path.exists(self.input_pdb):
+            raise ValueError(f"Input PDB file {self.input_pdb} does not exist")
 
         # Extract basename without extension
-        basename = os.path.splitext(os.path.basename(self.input_pdb_file))[0]
+        basename = os.path.splitext(os.path.basename(self.input_pdb))[0]
         return basename
 
     @property
@@ -489,28 +585,6 @@ class AmberFFParamJobSettings(AmberJobSettings):
         """
         return self._run_tleap_mcpb()
 
-    def combine_pdb_files(self, input_files, output_file):
-        """
-        Combine multiple PDB files into a single PDB file.
-
-        Convenience method to combine PDB files, equivalent to concatenation.
-
-        Args:
-            input_files (list): List of input PDB file paths to combine
-            output_file (str): Path to the output combined PDB file
-
-        Returns:
-            str: Path to the combined PDB file
-
-        Example:
-            # Equivalent to: cat 1OKL_Hpp_fixed.pdb ZN.pdb MNS_fixed_H.pdb > 1OKL_H.pdb
-            combined_file = settings.combine_pdb_files(
-                ['1OKL_Hpp_fixed.pdb', 'ZN.pdb', 'MNS_fixed_H.pdb'],
-                '1OKL_H.pdb'
-            )
-        """
-        return self._combine(input_files, output_file)
-
     def fix_pdb_file(self, input_pdb_file, output_pdb_file=None):
         """
         Fix and renumber PDB file using pdb4amber.
@@ -518,7 +592,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
         Convenience method to run pdb4amber for PDB file processing.
 
         Args:
-            input_pdb_file (str): Path to input PDB file to process
+            input_pdb (str): Path to input PDB file to process
             output_pdb_file (str, optional): Path to output PDB file. If not specified,
                                            defaults to <input_basename>_fixed.pdb
 
@@ -688,53 +762,16 @@ class AmberFFParamJobSettings(AmberJobSettings):
 
         return resi.upper()
 
-    def _run_reduce(self):
-        """
-        Execute the reduce command to add hydrogens to ligand PDB file.
-
-        Runs: reduce {ligand}.pdb > {ligand}_H.pdb
-
-        Returns:
-            str: Path to the output file with added hydrogens
-
-        Raises:
-            ValueError: If ligand is not specified
-            RuntimeError: If reduce command fails or reduce is not available
-        """
-
+    def _get_reduce_command(self):
         if not self.ligand:
             raise ValueError("Ligand name must be specified to run reduce")
 
         ligand_pdb_file = self.ligand_pdb
         output_file = f"{self.ligand}_H.pdb"
-        reduce_command = f"reduce {ligand_pdb_file}"
+        reduce_command = f"reduce {ligand_pdb_file} > {output_file}"
+        return reduce_command
 
-        try:
-            result = subprocess.run(
-                reduce_command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            with open(output_file, "w") as f:
-                f.write(result.stdout)
-
-            logger.info(f"Successfully ran reduce command: {reduce_command}")
-            logger.info(f"Output written to: {output_file}")
-
-        except subprocess.CalledProcessError as e:
-            error = f"Reduce command failed: {e}\nStderr: {e.stderr}"
-            logger.error(error)
-            raise RuntimeError(error)
-        except FileNotFoundError:
-            error = "Reduce command not found. Please ensure reduce is installed and in PATH."
-            logger.error(error)
-            raise RuntimeError(error)
-
-        return output_file
-
-    def _run_antechamber(self):
+    def _get_antechamber_command(self):
         """
         Execute the antechamber command to convert PDB to mol2 format.
 
@@ -782,141 +819,54 @@ class AmberFFParamJobSettings(AmberJobSettings):
             str(self.ligand_charge),
         ]
 
-        try:
-            subprocess.run(
-                antechamber_command, capture_output=True, text=True, check=True
-            )
+        return antechamber_command
 
-            logger.info(
-                f"Successfully ran antechamber command: {' '.join(antechamber_command)}"
-            )
-            logger.info(f"Output written to: {output_file}")
+    def _get_parmchk2_command(self):
+        """Construct the parmchk2 command to generate force field modification file.
 
-            # Verify output file was created
-            if not os.path.exists(output_file):
-                raise RuntimeError(
-                    f"Antechamber completed but output file {output_file} was not created"
-                )
-
-        except subprocess.CalledProcessError as e:
-            error = f"Antechamber command failed: {e}\nStderr: {e.stderr}\nStdout: {e.stdout}"
-            logger.error(error)
-            raise RuntimeError(error)
-        except FileNotFoundError:
-            error = "Antechamber command not found. Please ensure AmberTools is installed and in PATH."
-            logger.error(error)
-            raise RuntimeError(error)
-
-        return output_file
-
-    def _run_parmchk2(self):
+        Example:
+            parmchk2 -i {LIGAND}.mol2 -o {LIGAND}.frcmod -f mol2
         """
-        Execute the parmchk2 command to generate force field modification file.
+        assert self.ligand, "Ligand name must be specified to run parmchk2"
+        parmchk2_command = (
+            f"parmchk2 -i {self.ligand}.mol2 -o {self.ligand}.frcmod -f mol2"
+        )
+        return parmchk2_command
 
-        First renames {ligand}_pre.mol2 to {ligand}.mol2, then runs:
-        parmchk2 -i {ligand}.mol2 -o {ligand}.frcmod -f mol2
+    def _get_metalpdb2mol_command(self):
+        """Construct the metalpdb2mol command to generate metal mol2 file.
 
-        Returns:
-            str: Path to the output frcmod file
-
-        Raises:
-            ValueError: If ligand is not specified
-            RuntimeError: If parmchk2 command fails or parmchk2 is not available
+        Example:
+            metalpdb2mol.py -i {ELEMENT}.pdb -o {ELEMENT}.mol2 -c {ELEMENT_CHARGE}
         """
-        if not self.ligand:
-            raise ValueError("Ligand name must be specified to run parmchk2")
+        assert (
+            self.element
+        ), "Element name must be specified to run metalpdb2mol"
+        assert (
+            self.element_charge is not None
+        ), "Element charge must be specified to run metalpdb2mol"
+        metalpdb2mol_command = f"metalpdb2mol.py -i {self.element}.pdb -o {self.element}.mol2 -c {self.element_charge}"
+        return metalpdb2mol_command
 
-        pre_mol2_file = self.ligand_mol2_file
+    def _get_ambpdb_command(self):
+        """Construct the ambpdb command to generate PDB file from topology/coordinate files.
 
-        # Rename from _pre.mol2 to .mol2
-        mol2_file = self._rename_mol2_file(pre_mol2_file)
-
-        output_file = f"{self.ligand}.frcmod"
-
-        # Construct the parmchk2 command
-        parmchk2_command = [
-            "parmchk2",
-            "-i",
-            mol2_file,
-            "-o",
-            output_file,
-            "-f",
-            "mol2",
-        ]
-
-        try:
-            subprocess.run(
-                parmchk2_command, capture_output=True, text=True, check=True
-            )
-
-            logger.info(
-                f"Successfully ran parmchk2 command: {' '.join(parmchk2_command)}"
-            )
-            logger.info(f"Output written to: {output_file}")
-
-            # Verify output file was created
-            if not os.path.exists(output_file):
-                raise RuntimeError(
-                    f"Parmchk2 completed but output file {output_file} was not created"
-                )
-
-        except subprocess.CalledProcessError as e:
-            error = f"Parmchk2 command failed: {e}\nStderr: {e.stderr}\nStdout: {e.stdout}"
-            logger.error(error)
-            raise RuntimeError(error)
-        except FileNotFoundError:
-            error = "Parmchk2 command not found. Please ensure AmberTools is installed and in PATH."
-            logger.error(error)
-            raise RuntimeError(error)
-
-        return output_file
-
-    def _rename_mol2_file(self, pre_mol2_file):
+        Example:
+            ambpdb -p TOPOLOGY_FILE -c COORDINATE_FILE > OUTPUT_PDB_FILE
         """
-        Rename {ligand}_pre.mol2 to {ligand}.mol2.
-
-        This is needed because parmchk2 expects the standard naming convention
-        without the "_pre" suffix.
-
-        Args:
-            pre_mol2_file (str): Path to the {ligand}_pre.mol2 file
-
-        Returns:
-            str: Path to the renamed {ligand}.mol2 file
-
-        Raises:
-            ValueError: If ligand is not specified
-            RuntimeError: If file operations fail
-        """
-        if not self.ligand:
-            raise ValueError(
-                "Ligand name must be specified to rename mol2 file"
-            )
-
-        if not os.path.exists(pre_mol2_file):
-            raise RuntimeError(f"Source file {pre_mol2_file} does not exist")
-
-        # Target filename
-        mol2_file = f"{self.ligand}.mol2"
-
-        try:
-            # Copy the file to the new name
-            import shutil
-
-            shutil.copy2(pre_mol2_file, mol2_file)
-
-            logger.info(f"Renamed {pre_mol2_file} to {mol2_file}")
-
-            # Verify the new file exists
-            if not os.path.exists(mol2_file):
-                raise RuntimeError(f"Failed to create {mol2_file}")
-
-        except Exception as e:
-            error_msg = f"Failed to rename {pre_mol2_file} to {mol2_file}: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-
-        return mol2_file
+        assert (
+            self.topology_file
+        ), "Topology file must be specified to run ambpdb"
+        assert (
+            self.coordinate_file
+        ), "Coordinate file must be specified to run ambpdb"
+        output_pdb_file = (
+            f"{self.group_name}_hpp.pdb"
+            if self.group_name
+            else "output_hpp.pdb"
+        )
+        ambpdb_command = f"ambpdb -p {self.topology_file} -c {self.coordinate_file} > {output_pdb_file}"
+        return ambpdb_command
 
     def _run_tleap(self):
         """
@@ -1213,101 +1163,46 @@ class AmberFFParamJobSettings(AmberJobSettings):
 
         return output_file
 
-    def _combine(self, input_files, output_file):
-        """
-        Combine multiple PDB files into a single PDB file.
+    def _get_combine_command(self):
+        if self.hpp_pdb_file:
+            combine_command = f"cat {self.hpp_pdb_file} {self.metal_pdb} {self.ligand}_fixed_H.pdb > {self.group_name}.pdb"
+            return combine_command
+        return None
 
-        Equivalent to: cat file1.pdb file2.pdb file3.pdb > combined.pdb
-
-        Args:
-            input_files (list): List of input PDB file paths to combine
-            output_file (str): Path to the output combined PDB file
-
-        Returns:
-            str: Path to the combined PDB file
-
-        Raises:
-            ValueError: If input_files is empty or contains invalid files
-            RuntimeError: If file operations fail
-        """
-        if not input_files:
-            raise ValueError("Input files list cannot be empty")
-
-        if not isinstance(input_files, (list, tuple)):
-            raise ValueError("Input files must be provided as a list or tuple")
-
-        # Validate input files exist
-        missing_files = []
-        for file_path in input_files:
-            if not os.path.exists(file_path):
-                missing_files.append(file_path)
-
-        if missing_files:
+    def _get_pdb4amber_command(self):
+        if not os.path.exists(f"{self.group_name}_H.pdb"):
             raise ValueError(
-                f"The following input files do not exist: {missing_files}"
+                f"{self.group_name}_H.pdb does not exist for running pdb4amber"
             )
 
-        try:
-            # Combine files by reading each and writing to output
-            with open(output_file, "w") as output:
-                for i, file_path in enumerate(input_files):
-                    logger.info(
-                        f"Adding content from {file_path} to {output_file}"
-                    )
+        # Generate output filename based on input PDB base name
+        basename = os.path.splitext(os.path.basename(self.input_pdb))[0]
+        output_pdb_file = f"{basename}_fixed.pdb"
 
-                    with open(file_path, "r") as input_file:
-                        content = input_file.read()
+        pdb4amber_command = (
+            f"pdb4amber -i {self.group_name}_H.pdb -o {output_pdb_file}"
+        )
+        return pdb4amber_command
 
-                        # Write content to output file
-                        output.write(content)
-
-                        # Add newline between files if the current file doesn't end with one
-                        # and it's not the last file
-                        if (
-                            not content.endswith("\n")
-                            and i < len(input_files) - 1
-                        ):
-                            output.write("\n")
-
-            # Verify output file was created and has content
-            if not os.path.exists(output_file):
-                raise RuntimeError(
-                    f"Failed to create output file {output_file}"
-                )
-
-            if os.path.getsize(output_file) == 0:
-                raise RuntimeError(f"Output file {output_file} is empty")
-
-            logger.info(
-                f"Successfully combined {len(input_files)} files into {output_file}"
+    def _get_mcpb_step_command(self, step):
+        """
+        Construct the MCPB.py command for a specific step."""
+        if not self.mcpb_input:
+            raise ValueError(
+                "MCPB input file must be specified to run MCPB.py"
             )
 
-            # Log file sizes for verification
-            total_size = sum(os.path.getsize(f) for f in input_files)
-            output_size = os.path.getsize(output_file)
-            logger.info(
-                f"Input files total size: {total_size} bytes, output size: {output_size} bytes"
-            )
-
-        except IOError as e:
-            error_msg = f"Failed to combine PDB files: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-        except Exception as e:
-            error_msg = f"Unexpected error while combining files: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-
-        return output_file
+        mcpb_command = f"MCPB.py -i {self.mcpb_input} -s {step}"
+        return mcpb_command
 
     def _run_pdb4amber(self, input_pdb_file, output_pdb_file=None):
         """
         Execute pdb4amber command to renumber and fix PDB file.
 
-        Runs: pdb4amber -i <input_pdb_file> -o <output_pdb_file>
+        Runs: pdb4amber -i <input_pdb> -o <output_pdb_file>
 
         Args:
-            input_pdb_file (str): Path to input PDB file to process
+            input_pdb (str): Path to input PDB file to process
             output_pdb_file (str, optional): Path to output PDB file. If not specified,
                                            defaults to <input_basename>_fixed.pdb
 
@@ -1553,7 +1448,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
         # Validate required parameters
         if not self.input_pdb_file:
             raise ValueError(
-                "input_pdb_file must be specified for MCPB input generation"
+                "input_pdb must be specified for MCPB input generation"
             )
 
         if not self.group_name:
@@ -1634,7 +1529,7 @@ class AmberFFParamJobSettings(AmberJobSettings):
         if not self.element:
             raise ValueError("Element must be specified to get metal ID")
 
-        # Use input_pdb_file if available, otherwise fall back to input_file
+        # Use input_pdb if available, otherwise fall back to input_file
         input_file = self.input_pdb_file or self.input_file
 
         if not input_file:
