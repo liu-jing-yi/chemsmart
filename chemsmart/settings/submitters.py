@@ -4,6 +4,7 @@ from abc import abstractmethod
 from typing import Optional
 
 from chemsmart.settings.executable import (
+    AmberExecutable,
     GaussianExecutable,
     NCIPLOTExecutable,
     ORCAExecutable,
@@ -245,7 +246,8 @@ class Submitter(RegistryMixin):
             executable = ORCAExecutable.from_servername(self.server.name)
         elif self.job.PROGRAM.lower() == "nciplot":
             executable = NCIPLOTExecutable.from_servername(self.server.name)
-
+        elif self.job.PROGRAM.lower() == "amber":
+            executable = AmberExecutable.from_servername(self.server.name)
         else:
             # Need to add programs here to be supported for other types of programs
             raise ValueError(f"Program {self.job.PROGRAM} not supported.")
@@ -773,3 +775,345 @@ class FUGAKUSubmitter(Submitter):
             f: File handle for writing directory change command.
         """
         f.write("cd $PJM_O_WORKDIR\n\n")
+
+
+class AmberMCPBSLURMSubmitter(SLURMSubmitter):
+    """
+    Specialized SLURM submitter for Amber MCPB workflows.
+
+    This submitter creates sequential MCPB workflow scripts that execute
+    multiple steps in order: preparation, small model generation, large model
+    generation, QM calculations, and finalization.
+    """
+
+    NAME = "AMBER_MCPB_SLURM"
+
+    def __init__(
+        self, name="AMBER_MCPB_SLURM", job=None, server=None, **kwargs
+    ):
+        """
+        Initialize Amber MCPB SLURM submitter.
+
+        Args:
+            name (str): Name identifier for this submitter.
+            job: Amber MCPB job instance to be submitted.
+            server: Server configuration for SLURM submission.
+            **kwargs: Additional submission parameters.
+        """
+        super().__init__(name=name, job=job, server=server, **kwargs)
+
+    def _write_scheduler_options(self, f):
+        """
+        Write SLURM directives optimized for MCPB workflows.
+
+        Uses longer time limits and appropriate resource allocation
+        for sequential MCPB processing.
+
+        Args:
+            f: File handle for writing SLURM directives.
+        """
+        # Use mcpb_workflow as default job name for MCPB jobs
+        job_name = getattr(self.job, "mcpb_job_name", "mcpb_workflow")
+        f.write(f"#SBATCH --job-name={job_name}\n")
+        f.write(f"#SBATCH --output={self.job.label}.slurmout\n")
+        f.write(f"#SBATCH --error={self.job.label}.slurmerr\n")
+
+        # MCPB workflows typically need longer time limits
+        time_hours = self.server.num_hours if self.server.num_hours else 48
+        f.write(f"#SBATCH --time={time_hours}:00:00\n")
+
+        # Use cpus-per-task instead of ntasks-per-node for MCPB
+        f.write(f"#SBATCH --cpus-per-task={self.server.num_cores}\n")
+        f.write(f"#SBATCH --mem={self.server.mem_gb}G\n")
+
+        if self.server.queue_name:
+            f.write(f"#SBATCH --partition={self.server.queue_name}\n")
+
+        if user_settings is not None:
+            if user_settings.data.get("PROJECT"):
+                f.write(f"#SBATCH --account={user_settings.data['PROJECT']}\n")
+            if user_settings.data.get("EMAIL"):
+                f.write(f"#SBATCH --mail-user={user_settings.data['EMAIL']}\n")
+                f.write("#SBATCH --mail-type=END,FAIL\n")
+        f.write("\n")
+
+    def _write_job_command(self, f):
+        """
+        Write the sequential MCPB workflow commands instead of the standard run script.
+
+        Creates a sequential workflow that executes MCPB steps in order,
+        running QM calculations between steps as needed. The filenames and
+        commands are dynamically generated based on the job's settings.
+
+        Args:
+            f: File handle for writing job commands.
+        """
+        settings = self.job.settings
+
+        # Get system-specific names from job settings
+        reduce_command = getattr(settings, "reduce_command", None)
+        antechamber_mol2_command = getattr(
+            settings, "antechamber_mol2_command", None
+        )
+        rename_antechamber_output_command = getattr(
+            settings, "rename_antechamber_output_command", None
+        )
+        parmchk2_command = getattr(settings, "parmchk2_command", None)
+        metalpdb2mol_command = getattr(settings, "metalpdb2mol_command", None)
+        ambpdb_command = getattr(settings, "ambpdb_command", None)
+        combine_command = getattr(settings, "combine_command", None)
+        pdb4amber_command = getattr(settings, "pdb4amber_command", None)
+        mcpb_step1_command = getattr(settings, "mcpb_step1_command", None)
+        mcpb_step2_command = getattr(settings, "mcpb_step2_command", None)
+
+        group_name = getattr(settings, "group_name", "system")
+        gaussian_exe = getattr(settings, "gaussian_exe", "g16")
+
+        # Define QM input and output files based on group_name
+        opt_com = f"{group_name}_small_opt.com"
+        opt_log = f"{group_name}_small_opt.log"
+        opt_chk = f"{group_name}_small_opt.chk"
+        opt_fchk = f"{group_name}_small_opt.fchk"
+
+        fc_com = f"{group_name}_small_fc.com"
+        fc_log = f"{group_name}_small_fc.log"
+
+        mk_com = f"{group_name}_large_mk.com"
+        mk_log = f"{group_name}_large_mk.log"
+
+        f.write("# Amber Force Field Parameterization Sequential Workflow\n")
+        f.write("# Prepare PDB and mol2 files for the ligand\n")
+        f.write(f"{reduce_command}\n ")
+        f.write(f"{antechamber_mol2_command}\n")
+        f.write(f"{rename_antechamber_output_command}\n")
+        f.write(f"{parmchk2_command}\n")
+
+        f.write("# Prepare PDB and mol2 files for the metal ion\n")
+        f.write(f"{metalpdb2mol_command}\n")
+        # todo: processing for water molecules
+        # f.write("# Prepare PDB and mol2 files for the water\n")
+
+        f.write("# Standard pdb file preparation\n")
+        if ambpdb_command:
+            f.write(f"{antechamber_mol2_command}\n")
+            f.write(f"{combine_command}\n")
+        # write pdb4chamber command directly if ambpdb is not used
+        f.write(f"{pdb4amber_command}\n")
+
+        f.write(
+            "# Amber MCPB Sequential Workflow\n"
+            "# Generate the PDB, Gaussian, GAMESS-US and fingerprint modeling files.\n"
+        )
+        # Step 1: Preparation
+        f.write('echo "Step 1: MCPB Preparation"\n')
+        f.write(f"{mcpb_step1_command}\n")
+        f.write("set -e  # Exit on any error\n\n")
+
+        # Step2 running QM calculations
+        # QM calculations
+        if getattr(settings, "auto_submit_qm", False):
+            f.write(
+                'echo "Running Gaussian calculations for small model..."\n'
+            )
+
+            # Run optimization
+            f.write(f"if [ -f {opt_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {opt_com} > {opt_log}\n")
+            f.write(
+                f"    if [ -f {opt_chk} ]; then formchk {opt_chk} {opt_fchk}; fi\n"
+            )
+            f.write("fi\n\n")
+
+            # Run frequency calculation
+            f.write(f"if [ -f {fc_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {fc_com} > {fc_log}\n")
+            f.write("fi\n\n")
+
+            # Run RESP calculation
+            f.write(f"if [ -f {mk_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {mk_com} > {mk_log}\n")
+            f.write("fi\n\n")
+        else:
+            f.write(
+                'echo "QM calculations must be run manually before continuing to step 4"\n'
+            )
+            f.write(f'echo "Files to run: {opt_com}, {fc_com}, {mk_com}"\n\n')
+
+        # Step 3: final modelling
+        f.write('echo "Step 2: Small Model Generation"\n')
+        f.write(f"{mcpb_step2_command}\n")
+
+        # Step 3: Large model
+        # f.write('echo "Step 3: Large Model Generation"\n')
+        # f.write(f"MCPB.py -i {mcpb_input} -s 3\n\n")
+        #
+        # # Step 4: Finalization
+        # if getattr(settings, "auto_submit_qm", False):
+        #     f.write('echo "Step 4: MCPB Finalization"\n')
+        #     f.write(f"MCPB.py -i {mcpb_input} -s 4\n\n")
+        #
+        #     # Run tleap to generate topology files
+        #     tleap_in = f"{group_name}_tleap.in"
+        #     tleap_out = f"{group_name}_tleap.out"
+        #     f.write('echo "Running tleap to generate topology files..."\n')
+        #     f.write(f"if [ -f {tleap_in} ]; then\n")
+        #     f.write(f"    tleap -s -f {tleap_in} > {tleap_out}\n")
+        #     f.write("fi\n\n")
+        #
+        #     f.write('echo "MCPB workflow completed successfully!"\n')
+        #     f.write(
+        #         f'echo "Generated files: {group_name}_solv.prmtop, {group_name}_solv.inpcrd"\n'
+        #     )
+        #
+        # f.write("\n")
+
+
+class AmberMCPBPBSSubmitter(PBSSubmitter):
+    """
+    Specialized PBS submitter for Amber MCPB workflows.
+
+    Similar to AmberMCPBSLURMSubmitter but for PBS scheduler systems.
+    """
+
+    NAME = "AMBER_MCPB_PBS"
+
+    def __init__(self, name="AMBER_MCPB_PBS", job=None, server=None, **kwargs):
+        """
+        Initialize Amber MCPB PBS submitter.
+
+        Args:
+            name (str): Name identifier for this submitter.
+            job: Amber MCPB job instance to be submitted.
+            server: Server configuration for PBS submission.
+            **kwargs: Additional submission parameters.
+        """
+        super().__init__(name=name, job=job, server=server, **kwargs)
+
+    def _write_scheduler_options(self, f):
+        """
+        Write PBS directives optimized for MCPB workflows.
+
+        Args:
+            f: File handle for writing PBS directives.
+        """
+        job_name = getattr(self.job, "mcpb_job_name", "mcpb_workflow")
+        f.write(f"#PBS -N {job_name}\n")
+        f.write(f"#PBS -o {self.job.label}.pbsout\n")
+        f.write(f"#PBS -e {self.job.label}.pbserr\n")
+
+        # MCPB workflows typically need longer time limits
+        time_hours = self.server.num_hours if self.server.num_hours else 48
+        f.write(f"#PBS -l walltime={time_hours}:00:00\n")
+
+        f.write(
+            f"#PBS -l select=1:ncpus={self.server.num_cores}:mem={self.server.mem_gb}GB\n"
+        )
+
+        if self.server.queue_name:
+            f.write(f"#PBS -q {self.server.queue_name}\n")
+
+        if user_settings is not None:
+            if user_settings.data.get("PROJECT"):
+                f.write(f"#PBS -P {user_settings.data['PROJECT']}\n")
+            if user_settings.data.get("EMAIL"):
+                f.write(f"#PBS -M {user_settings.data['EMAIL']}\n")
+                f.write("#PBS -m abe\n")
+        f.write("\n")
+
+    def _write_job_command(self, f):
+        """
+        Write the sequential MCPB workflow commands for PBS.
+
+        Uses the same workflow logic as the SLURM version, generating
+        dynamic, system-specific filenames for all commands.
+
+        Args:
+            f: File handle for writing job commands.
+        """
+        # This method now directly implements the workflow logic
+        # instead of calling the SLURM version's method.
+        settings = self.job.settings
+
+        mcpb_input = getattr(
+            settings,
+            "mcpb_input",
+            f"{getattr(settings, 'group_name', 'system')}.in",
+        )
+        group_name = getattr(settings, "group_name", "system")
+        gaussian_exe = getattr(settings, "gaussian_exe", "g16")
+
+        opt_com = f"{group_name}_small_opt.com"
+        opt_log = f"{group_name}_small_opt.log"
+        opt_chk = f"{group_name}_small_opt.chk"
+        opt_fchk = f"{group_name}_small_opt.fchk"
+
+        fc_com = f"{group_name}_small_fc.com"
+        fc_log = f"{group_name}_small_fc.log"
+        fc_chk = f"{group_name}_small_fc.chk"
+        fc_fchk = f"{group_name}_small_fc.fchk"
+
+        mk_com = f"{group_name}_small_mk.com"
+        mk_log = f"{group_name}_small_mk.log"
+        mk_chk = f"{group_name}_small_mk.chk"
+        mk_fchk = f"{group_name}_small_mk.fchk"
+
+        f.write("# Amber MCPB Sequential Workflow (PBS)\n")
+        f.write("set -e  # Exit on any error\n\n")
+
+        f.write('echo "Step 1: MCPB Preparation"\n')
+        f.write(f"MCPB.py -i {mcpb_input} -s 1\n\n")
+
+        f.write('echo "Step 2: Small Model Generation"\n')
+        f.write(f"MCPB.py -i {mcpb_input} -s 2\n\n")
+
+        f.write('echo "Step 3: Large Model Generation"\n')
+        f.write(f"MCPB.py -i {mcpb_input} -s 3\n\n")
+
+        if getattr(settings, "auto_submit_qm", False):
+            f.write(
+                'echo "Running Gaussian calculations for small model..."\n'
+            )
+
+            f.write(f"if [ -f {opt_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {opt_com} > {opt_log}\n")
+            f.write(
+                f"    if [ -f {opt_chk} ]; then formchk {opt_chk} {opt_fchk}; fi\n"
+            )
+            f.write("fi\n\n")
+
+            f.write(f"if [ -f {fc_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {fc_com} > {fc_log}\n")
+            f.write(
+                f"    if [ -f {fc_chk} ]; then formchk {fc_chk} {fc_fchk}; fi\n"
+            )
+            f.write("fi\n\n")
+
+            f.write(f"if [ -f {mk_com} ]; then\n")
+            f.write(f"    {gaussian_exe} < {mk_com} > {mk_log}\n")
+            f.write(
+                f"    if [ -f {mk_chk} ]; then formchk {mk_chk} {mk_fchk}; fi\n"
+            )
+            f.write("fi\n\n")
+        else:
+            f.write(
+                'echo "QM calculations must be run manually before continuing to step 4"\n'
+            )
+            f.write(f'echo "Files to run: {opt_com}, {fc_com}, {mk_com}"\n\n')
+
+        if getattr(settings, "auto_submit_qm", False):
+            f.write('echo "Step 4: MCPB Finalization"\n')
+            f.write(f"MCPB.py -i {mcpb_input} -s 4\n\n")
+
+            tleap_in = f"{group_name}_tleap.in"
+            tleap_out = f"{group_name}_tleap.out"
+            f.write('echo "Running tleap to generate topology files..."\n')
+            f.write(f"if [ -f {tleap_in} ]; then\n")
+            f.write(f"    tleap -s -f {tleap_in} > {tleap_out}\n")
+            f.write("fi\n\n")
+
+            f.write('echo "MCPB workflow completed successfully!"\n')
+            f.write(
+                f'echo "Generated files: {group_name}_solv.prmtop, {group_name}_solv.inpcrd"\n'
+            )
+
+        f.write("\n")
