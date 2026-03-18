@@ -3,6 +3,7 @@
 """Script for calculating Fukui reactivity indices based on charges.
 Structures for the neutral, radical cationic and radical anionic
  systems should be based on the optimised neural system."""
+
 import logging
 import os
 
