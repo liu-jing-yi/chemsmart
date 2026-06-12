@@ -2945,6 +2945,23 @@ class TestORCAQMMMJobSettings:
         s.high_level_atoms = None
         assert s._get_partition_string() == ""
 
+    def test_ionic_crystal_qmmm_ignores_project_qm2_settings(self):
+        """Crystal QMMM jobs do not use a QM2 layer."""
+        from chemsmart.jobs.orca.settings import ORCAQMMMJobSettings
+
+        s = ORCAQMMMJobSettings(
+            jobtype="IONIC-CRYSTAL-QMMM",
+            high_level_functional="PBE",
+            high_level_basis="def2-SVP",
+            intermediate_level_functional="PBEPBE",
+            intermediate_level_basis="6-31g(d,p)",
+            low_level_method="NaCl.ORCAFF.prms",
+            charge_total=0,
+            charge_high=19,
+            mult_high=1,
+        )
+        s.re_init_and_validate()
+
 
 class TestORCANEB:
     def test_read_neb_output(self, orca_neb_output_file):

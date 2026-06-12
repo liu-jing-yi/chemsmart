@@ -1345,6 +1345,10 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
                        or if intermediate parameters are
                        provided but QM2 layer is not required.
         """
+        crystal_qmmm_jobtypes = ["IONIC-CRYSTAL-QMMM", "MOL-CRYSTAL-QMMM"]
+        if self.jobtype and self.jobtype.upper() in crystal_qmmm_jobtypes:
+            return
+
         # Check if intermediate parameters are provided
         has_intermediate_params = (
             self.intermediate_level_functional is not None

@@ -643,3 +643,52 @@ class TestORCALabelAndAuxBasisOptions:
         assert result.exit_code == 0, result.output
         assert mock.call_args is not None
         assert mock.call_args.kwargs["settings"].aux_basis == "def2/J"
+
+
+class TestORCAQMMMCLISpCommand:
+    """CLI accepts structure files for ORCA QMMM submission."""
+
+    def test_pdb_structure_file_accepted_for_ionic_crystal_qmmm(
+        self,
+        single_model_pdb_file,
+        run_orca_and_capture_settings,
+        tmpdir,
+    ):
+        """``.pdb`` inputs should not raise an unrecognised filetype error."""
+        from unittest.mock import MagicMock
+
+        prms_file = tmpdir.join("NaCl.ORCAFF.prms")
+        prms_file.write("dummy force field parameters")
+
+        result, settings = run_orca_and_capture_settings(
+            "chemsmart.jobs.orca.qmmm.ORCAQMMMJob",
+            [
+                "-p",
+                "gas_solv",
+                "-f",
+                single_model_pdb_file,
+                "sp",
+                "qmmm",
+                "-j",
+                "IONIC-CRYSTAL-QMMM",
+                "-hx",
+                "PBE",
+                "-hb",
+                "def2-SVP",
+                "-lm",
+                str(prms_file),
+                "-ct",
+                "0",
+                "-ch",
+                "19",
+                "-mh",
+                "1",
+            ],
+            ctx_obj={"jobrunner": MagicMock()},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert settings is not None, "ORCAQMMMJob was never instantiated"
+        assert settings.jobtype == "IONIC-CRYSTAL-QMMM"
+        assert settings.high_level_functional == "PBE"
+        assert settings.low_level_method == str(prms_file)

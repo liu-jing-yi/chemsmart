@@ -520,9 +520,11 @@ def orca(
         # do not use any defaults!
         job_settings = ORCAJobSettings.from_filepath(filename)
         logger.info(f"Loaded ORCA settings from file: {filename}")
-    elif filename.endswith(".xyz"):
+    elif filename.endswith((".xyz", ".pdb", ".sdf", ".gro", ".cdx", ".cdxml")):
         job_settings = ORCAJobSettings.default()
-        logger.info(f"Using default ORCA settings for XYZ file: {filename}")
+        logger.info(
+            f"Using default ORCA settings for structure file: {filename}"
+        )
     elif filename.endswith(".db"):
         if is_chemsmart_db:
             job_settings = ORCAJobSettings.from_database(
@@ -539,9 +541,10 @@ def orca(
             )
             job_settings = ORCAJobSettings.default()
     else:
-        raise ValueError(
-            f"Unrecognised filetype {filename} to obtain ORCAJobSettings"
+        logger.debug(
+            f"Falling back to default ORCA job settings for file {filename}."
         )
+        job_settings = ORCAJobSettings.default()
 
     # Update keywords based on command-line arguments
     keywords = (
