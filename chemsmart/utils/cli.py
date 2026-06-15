@@ -303,6 +303,13 @@ class CtxObjArguments:
                     command_line_string += [self._value(v)]
                 elif isinstance(v, (list, tuple)):
                     command_line_string += [self._value(i) for i in v]
+                elif (
+                    not arg_is_flag
+                    and arg_type is not None
+                    and getattr(arg_type, "name", None) == "boolean"
+                    and isinstance(v, bool)
+                ):
+                    command_line_string += ["true" if v else "false"]
                 else:
                     command_line_string += [self._value(v)]
         logger.debug(f"Command line string: {command_line_string}")

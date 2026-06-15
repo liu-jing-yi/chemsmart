@@ -692,3 +692,73 @@ class TestORCAQMMMCLISpCommand:
         assert settings.jobtype == "IONIC-CRYSTAL-QMMM"
         assert settings.high_level_functional == "PBE"
         assert settings.low_level_method == str(prms_file)
+
+    def test_conv_charges_false_survives_cli_reconstruction(
+        self,
+        single_molecule_xyz_file,
+        run_orca_and_capture_settings,
+        tmpdir,
+    ):
+        """``-cc false`` must round-trip when ``sub`` rebuilds the CLI."""
+        from unittest.mock import MagicMock, patch
+
+        from click.testing import CliRunner
+
+        from chemsmart.cli.orca.orca import orca as orca_cli
+        from chemsmart.utils.cli import CtxObjArguments
+
+        prms_file = tmpdir.join("NaCl.ORCAFF.prms")
+        prms_file.write("dummy force field parameters")
+
+        ctx_obj = {"jobrunner": MagicMock()}
+        runner = CliRunner()
+        cli_args = [
+            "-p",
+            "gas_solv",
+            "-f",
+            single_molecule_xyz_file,
+            "sp",
+            "qmmm",
+            "-j",
+            "IONIC-CRYSTAL-QMMM",
+            "-hx",
+            "PBE",
+            "-hb",
+            "def2-SVP",
+            "-lm",
+            str(prms_file),
+            "-cc",
+            "false",
+            "-ecp",
+            "SDD",
+            "-ct",
+            "0",
+            "-ch",
+            "19",
+            "-mh",
+            "1",
+        ]
+
+        with patch("chemsmart.jobs.orca.qmmm.ORCAQMMMJob") as mock_job:
+            mock_job.return_value = MagicMock()
+            first = runner.invoke(
+                orca_cli, cli_args, obj=ctx_obj, catch_exceptions=False
+            )
+            assert first.exit_code == 0, first.output
+
+            reconstructed = CtxObjArguments(
+                ctx_obj["subcommand"], entry_point="orca"
+            ).reconstruct_command_line()[1:]
+            cc_idx = reconstructed.index("--conv-charges")
+            assert reconstructed[cc_idx + 1] == "false"
+
+            second = runner.invoke(
+                orca_cli,
+                reconstructed,
+                obj={"jobrunner": MagicMock()},
+                catch_exceptions=False,
+            )
+            assert second.exit_code == 0, second.output
+            settings = mock_job.call_args.kwargs["settings"]
+            assert settings.conv_charges is False
+            assert settings.ecp_layer_ecp == "SDD"
