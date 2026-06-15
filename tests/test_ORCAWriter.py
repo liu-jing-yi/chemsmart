@@ -1645,3 +1645,67 @@ class TestORCAInputWriter:
             )  # from route line, not from solventfilename
         finally:
             os.unlink(fname)
+
+
+class TestORCAIonicCrystalQMMMWriter:
+    def test_write_ionic_crystal_qmmm_input(
+        self,
+        tmpdir,
+        single_model_pdb_file,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.jobs.orca import ORCAQMMMJob
+        from chemsmart.jobs.orca.settings import ORCAQMMMJobSettings
+
+        molecule = Molecule.from_filepath(single_model_pdb_file)
+        settings = ORCAQMMMJobSettings(
+            jobtype="IONIC-CRYSTAL-QMMM",
+            high_level_functional="PBE",
+            high_level_basis="def2-SVP",
+            additional_route_parameters="TightSCF",
+            low_level_method="NaCl.cif_15x15x15.ORCAFF.prms",
+            use_qm_info_from_pdb=True,
+            use_qm3_info_from_pdb=True,
+            ecp_layer_ecp="SDD",
+            conv_charges=False,
+            enforce_total_charge=True,
+            charge_total=0,
+            print_level=4,
+            charge_high=19,
+            mult_high=1,
+            pdb_filename=os.path.basename(single_model_pdb_file),
+        )
+        settings.re_init_and_validate()
+
+        job = ORCAQMMMJob(
+            molecule=molecule,
+            settings=settings,
+            label="ionic_crystal_qmmm",
+            jobrunner=orca_jobrunner_no_scratch,
+            structure_filename=single_model_pdb_file,
+        )
+
+        writer = ORCAInputWriter(job=job)
+        writer.write(target_directory=tmpdir)
+
+        inp_file = os.path.join(tmpdir, "ionic_crystal_qmmm.inp")
+        assert os.path.isfile(inp_file)
+        with open(inp_file) as handle:
+            contents = handle.read()
+
+        assert "! IONIC-CRYSTAL-QMMM PBE def2-SVP TightSCF" in contents
+        assert "#Include Method" in contents
+        assert 'ORCAFFFilename= "NaCl.cif_15x15x15.ORCAFF.prms"' in contents
+        assert "Use_QM_InfoFromPDB true" in contents
+        assert "Use_QM3_InfoFromPDB true" in contents
+        assert 'ECPLayerECP= "SDD"' in contents
+        assert "CONV_Charges false" in contents
+        assert "ENFORCETOTALCHARGE true" in contents
+        assert "CHARGE_TOTAL    0" in contents
+        assert "PrintLevel 4" in contents
+        assert (
+            f"*pdbfile 19  1 {os.path.basename(single_model_pdb_file)}"
+            in contents
+        )
+        assert "* xyz" not in contents

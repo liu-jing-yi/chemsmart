@@ -1139,6 +1139,11 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
         ecp_layer_ecp (str): ECP type for boundary region
         ecp_layer (int): Number of ECP layers
         scale_formal_charge_ecp_atom (float): ECP charge scaling factor
+        use_qm_info_from_pdb (bool): Read QM region from PDB (ionic crystal)
+        use_qm3_info_from_pdb (bool): Read QM3 region from PDB (ionic crystal)
+        enforce_total_charge (bool): Enforce total charge in %qmmm block
+        print_level (int): ORCA print level in %qmmm block
+        pdb_filename (str): PDB file referenced by *pdbfile line
     """
 
     # Class attribute: Built-in methods supported for intermediate level (QM2)
@@ -1190,6 +1195,11 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
         ecp_layer_ecp=None,
         ecp_layer=None,
         scale_formal_charge_ecp_atom=None,
+        use_qm_info_from_pdb=False,
+        use_qm3_info_from_pdb=False,
+        enforce_total_charge=None,
+        print_level=None,
+        pdb_filename=None,
         parent_jobtype=None,
         **kwargs,
     ):
@@ -1236,6 +1246,11 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
             ecp_layer_ecp: ECP type for boundary region
             ecp_layer: Number of ECP layers around QM region
             scale_formal_charge_ecp_atom: ECP atomic charge scaling factor
+            use_qm_info_from_pdb: Use QM atom info from PDB file
+            use_qm3_info_from_pdb: Use QM3 atom info from PDB file
+            enforce_total_charge: Enforce total system charge
+            print_level: Print level for %qmmm block
+            pdb_filename: PDB filename for *pdbfile coordinate line
         """
         super().__init__(**kwargs)
         self.intermediate_solv_scheme = intermediate_solv_scheme
@@ -1280,6 +1295,11 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
         self.ecp_layer_ecp = ecp_layer_ecp
         self.ecp_layer = ecp_layer
         self.scale_formal_charge_ecp_atom = scale_formal_charge_ecp_atom
+        self.use_qm_info_from_pdb = use_qm_info_from_pdb
+        self.use_qm3_info_from_pdb = use_qm3_info_from_pdb
+        self.enforce_total_charge = enforce_total_charge
+        self.print_level = print_level
+        self.pdb_filename = pdb_filename
 
         # Set parent class attributes from high-level (QM) region
         self.functional = self.high_level_functional
@@ -1408,6 +1428,13 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
                 )
 
     @property
+    def is_ionic_crystal_qmmm(self):
+        """Whether this job is an IONIC-CRYSTAL-QMMM calculation."""
+        return bool(
+            self.jobtype and self.jobtype.upper() == "IONIC-CRYSTAL-QMMM"
+        )
+
+    @property
     def qmmm_route_string(self):
         return self._get_level_of_theory_string()
 
@@ -1506,6 +1533,12 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
             or self.jobtype.upper() == "MOL-CRYSTAL-QMMM"
         ):
             level_of_theory = f"! {self.jobtype.upper()}"
+            if self.high_level_functional and self.high_level_basis:
+                level_of_theory += (
+                    f" {self.high_level_functional} {self.high_level_basis}"
+                )
+            if self.additional_route_parameters:
+                level_of_theory += f" {self.additional_route_parameters}"
         else:
             level_of_theory = "!"
             parent_jobtype = self.parent_jobtype.lower()
@@ -1770,6 +1803,9 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
             ORCAFFFilename "system.prms"
             end
         """
+        if self.is_ionic_crystal_qmmm:
+            return self._write_ionic_crystal_qmmm_block()
+
         full_qm_block = "%qmmm\n"
 
         # Add atom partition specifications
@@ -1873,6 +1909,67 @@ class ORCAQMMMJobSettings(ORCAJobSettings):
 
         full_qm_block += "end\n"
         return full_qm_block
+
+    def _write_ionic_crystal_qmmm_block(self):
+        """
+        Generate %qmmm block for IONIC-CRYSTAL-QMMM calculations.
+
+        Returns:
+            str: Ionic-crystal %qmmm block ready for ORCA input file
+        """
+        assert (
+            self.low_level_method is not None
+        ), "Force field file missing for IONIC-CRYSTAL-QMMM job!"
+
+        block = "%qmmm\n"
+        block += f'ORCAFFFilename= "{self.low_level_method}"\n'
+        if self.use_qm_info_from_pdb:
+            block += "Use_QM_InfoFromPDB true\n"
+        if self.use_qm3_info_from_pdb:
+            block += "Use_QM3_InfoFromPDB true\n"
+        if self.ecp_layer_ecp is not None:
+            block += f'ECPLayerECP= "{self.ecp_layer_ecp}"\n'
+        if self.conv_charges is not None:
+            block += (
+                f"CONV_Charges {'true' if self.conv_charges else 'false'}\n"
+            )
+        if self.enforce_total_charge is not None:
+            block += (
+                "ENFORCETOTALCHARGE "
+                f"{'true' if self.enforce_total_charge else 'false'}\n"
+            )
+        if self.charge_total is not None:
+            block += f"CHARGE_TOTAL    {self.charge_total}\n"
+        if self.print_level is not None:
+            block += f"PrintLevel {self.print_level}\n"
+        block += self._write_ionic_crystal_qmmm_extras()
+        block += "end\n"
+        return block
+
+    def _write_ionic_crystal_qmmm_extras(self):
+        """Optional ionic-crystal %qmmm keywords not in the main template."""
+        extras = ""
+        if self.conv_charges_max_n_cycles is not None:
+            extras += (
+                f"Conv_Charges_MaxNCycles {self.conv_charges_max_n_cycles}\n"
+            )
+        if self.conv_charges_conv_thresh is not None:
+            extras += (
+                f"Conv_Charges_ConvThresh {self.conv_charges_conv_thresh}\n"
+            )
+        if self.scale_formal_charge_mm_atom is not None:
+            extras += (
+                "Scale_FormalCharge_MMAtom "
+                f"{self.scale_formal_charge_mm_atom}\n"
+            )
+        if self.ecp_layer is not None:
+            extras += f"ECPLayers {self.ecp_layer}\n"
+        if self.scale_formal_charge_ecp_atom is not None:
+            extras += (
+                "Scale_FormalCharge_ECPAtom "
+                f"{self.scale_formal_charge_ecp_atom}\n"
+            )
+        return extras
 
     def _write_crystal_qmmm_subblock(self):
         """

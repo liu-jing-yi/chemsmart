@@ -2,6 +2,7 @@
 
 import ast
 import logging
+import os
 
 import click
 
@@ -221,6 +222,38 @@ def create_orca_qmmm_subcommand(parent_command):
         type=float,
         help="ECP atom charge scaling factor",
     )
+    @click.option(
+        "-uq",
+        "--use-qm-info-from-pdb",
+        is_flag=True,
+        default=False,
+        help="Use QM region info from PDB (IONIC-CRYSTAL-QMMM)",
+    )
+    @click.option(
+        "-uq3",
+        "--use-qm3-info-from-pdb",
+        is_flag=True,
+        default=False,
+        help="Use QM3 region info from PDB (IONIC-CRYSTAL-QMMM)",
+    )
+    @click.option(
+        "-etc",
+        "--enforce-total-charge",
+        type=bool,
+        help="Enforce total system charge (IONIC-CRYSTAL-QMMM)",
+    )
+    @click.option(
+        "-pl",
+        "--print-level",
+        type=int,
+        help="Print level for %%qmmm block (IONIC-CRYSTAL-QMMM)",
+    )
+    @click.option(
+        "-pf",
+        "--pdb-filename",
+        type=str,
+        help="PDB filename for *pdbfile coordinate line",
+    )
     @click.pass_context
     def qmmm(
         ctx,
@@ -255,6 +288,11 @@ def create_orca_qmmm_subcommand(parent_command):
         ecp_layer_ecp,
         ecp_layer,
         scale_formal_charge_ecp_atom,
+        use_qm_info_from_pdb,
+        use_qm3_info_from_pdb,
+        enforce_total_charge,
+        print_level,
+        pdb_filename,
         skip_completed,
         **kwargs,
     ):
@@ -390,6 +428,16 @@ def create_orca_qmmm_subcommand(parent_command):
             qmmm_settings.scale_formal_charge_ecp_atom = (
                 scale_formal_charge_ecp_atom
             )
+        if use_qm_info_from_pdb:
+            qmmm_settings.use_qm_info_from_pdb = True
+        if use_qm3_info_from_pdb:
+            qmmm_settings.use_qm3_info_from_pdb = True
+        if enforce_total_charge is not None:
+            qmmm_settings.enforce_total_charge = enforce_total_charge
+        if print_level is not None:
+            qmmm_settings.print_level = print_level
+        if pdb_filename is not None:
+            qmmm_settings.pdb_filename = pdb_filename
 
         if parent_settings is not None:
             inherited_keywords = [
@@ -416,6 +464,14 @@ def create_orca_qmmm_subcommand(parent_command):
         qmmm_settings.re_init_and_validate()
 
         _populate_charge_and_multiplicity_on_settings(qmmm_settings)
+
+        structure_filename = ctx.obj.get("filename")
+        if (
+            qmmm_settings.pdb_filename is None
+            and structure_filename
+            and structure_filename.lower().endswith(".pdb")
+        ):
+            qmmm_settings.pdb_filename = os.path.basename(structure_filename)
 
         molecules = ctx.obj["molecules"]
         molecule = molecules[-1]
@@ -451,6 +507,7 @@ def create_orca_qmmm_subcommand(parent_command):
             label=label,
             skip_completed=effective_skip_completed,
             jobrunner=jobrunner,
+            structure_filename=structure_filename,
             **combined_kwargs,
         )
 

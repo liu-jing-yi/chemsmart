@@ -163,6 +163,11 @@ class ORCAInputWriter(InputWriter):
             route_string = self.settings.qmmm_route_string
 
         f.write(route_string + "\n")
+        if (
+            isinstance(self.settings, ORCAQMMMJobSettings)
+            and self.settings.is_ionic_crystal_qmmm
+        ):
+            f.write("#Include Method\n")
 
     def _write_processors(self, f):
         """
@@ -1043,7 +1048,36 @@ class ORCAInputWriter(InputWriter):
         assert (
             charge is not None and multiplicity is not None
         ), "Charge and multiplicity must be specified!"
+
+        if (
+            isinstance(self.settings, ORCAQMMMJobSettings)
+            and self.settings.is_ionic_crystal_qmmm
+        ):
+            pdb_filename = self._ionic_crystal_pdb_filename()
+            f.write(f"*pdbfile {charge}  {multiplicity} {pdb_filename}\n")
+            return
+
         f.write(f"* xyz {charge} {multiplicity}\n")
+
+    def _ionic_crystal_pdb_filename(self):
+        """
+        Resolve the PDB filename for IONIC-CRYSTAL-QMMM *pdbfile lines.
+
+        Returns:
+            str: Basename of the PDB structure file.
+
+        Raises:
+            AssertionError: If no PDB filename can be resolved.
+        """
+        if self.settings.pdb_filename:
+            return os.path.basename(self.settings.pdb_filename)
+        structure_filename = getattr(self.job, "structure_filename", None)
+        if structure_filename:
+            return os.path.basename(structure_filename)
+        raise AssertionError(
+            "PDB filename required for IONIC-CRYSTAL-QMMM. "
+            "Provide --pdb-filename or submit from a .pdb structure file."
+        )
 
     def _write_cartesian_coordinates(self, f):
         """
@@ -1055,6 +1089,16 @@ class ORCAInputWriter(InputWriter):
         Raises:
             AssertionError: If molecular geometry is not available
         """
+        if (
+            isinstance(self.settings, ORCAQMMMJobSettings)
+            and self.settings.is_ionic_crystal_qmmm
+        ):
+            logger.debug(
+                "Skipping embedded coordinates for IONIC-CRYSTAL-QMMM "
+                "(using *pdbfile reference)."
+            )
+            return
+
         logger.debug(
             f"Writing Cartesian coordinates of molecule: {self.job.molecule}"
         )

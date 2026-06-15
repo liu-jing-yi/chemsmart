@@ -2962,6 +2962,42 @@ class TestORCAQMMMJobSettings:
         )
         s.re_init_and_validate()
 
+    def test_ionic_crystal_qmmm_block_contains_expected_keywords(self):
+        """IONIC-CRYSTAL-QMMM should emit the crystal-specific %%qmmm block."""
+        from chemsmart.jobs.orca.settings import ORCAQMMMJobSettings
+
+        settings = ORCAQMMMJobSettings(
+            jobtype="IONIC-CRYSTAL-QMMM",
+            high_level_functional="PBE",
+            high_level_basis="def2-SVP",
+            additional_route_parameters="TightSCF",
+            low_level_method="NaCl.cif_15x15x15.ORCAFF.prms",
+            use_qm_info_from_pdb=True,
+            use_qm3_info_from_pdb=True,
+            ecp_layer_ecp="SDD",
+            conv_charges=False,
+            enforce_total_charge=True,
+            charge_total=0,
+            print_level=4,
+            charge_high=19,
+            mult_high=1,
+        )
+
+        route = settings.qmmm_route_string
+        block = settings.qmmm_block
+
+        assert route == "! IONIC-CRYSTAL-QMMM PBE def2-SVP TightSCF"
+        assert 'ORCAFFFilename= "NaCl.cif_15x15x15.ORCAFF.prms"' in block
+        assert "Use_QM_InfoFromPDB true" in block
+        assert "Use_QM3_InfoFromPDB true" in block
+        assert 'ECPLayerECP= "SDD"' in block
+        assert "CONV_Charges false" in block
+        assert "ENFORCETOTALCHARGE true" in block
+        assert "CHARGE_TOTAL    0" in block
+        assert "PrintLevel 4" in block
+        assert "QMAtoms" not in block
+        assert block.strip().endswith("end")
+
 
 class TestORCANEB:
     def test_read_neb_output(self, orca_neb_output_file):
