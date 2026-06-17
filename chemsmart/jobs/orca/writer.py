@@ -8,6 +8,8 @@ based on job settings and molecular structures.
 
 import logging
 import os
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.orca.settings import (
@@ -1105,3 +1107,154 @@ class ORCAInputWriter(InputWriter):
         assert self.job.molecule is not None, "No molecular geometry found!"
         self.job.molecule.write_coordinates(f, program="orca")
         f.write("*\n")
+
+
+@dataclass(frozen=True)
+class CrystalPrepAtomType:
+    """One entry in the CrystalPrep ``NAtomTypes`` block."""
+
+    symbol: str
+    type_index: int
+    formal_charge: float
+    spin: float
+
+
+@dataclass
+class CrystalPrepOptions:
+    """Options for an ORCA_crystalprep template input file."""
+
+    input_cif: str
+    sc_dimension: str
+    atom_types: Sequence[CrystalPrepAtomType]
+    do_cif: bool = True
+    do_supercell: bool = True
+    do_embedding: bool = True
+    do_layers: bool = True
+    do_icqmmm_input: bool = True
+    space_group_number: Optional[int] = None
+    neutralize: Optional[bool] = None
+    qc_charge: Optional[int] = None
+    qc_mult: Optional[int] = None
+    template_out: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.input_cif:
+            raise ValueError(
+                "input_cif is required for CrystalPrep template generation."
+            )
+        if self.do_supercell and not self.sc_dimension:
+            raise ValueError(
+                "sc_dimension is required when do_supercell is enabled."
+            )
+        if not self.atom_types:
+            raise ValueError("At least one atom type is required.")
+
+
+class CrystalPrepInputWriter:
+    """Write ORCA_crystalprep template input files from :class:`CrystalPrepOptions`."""
+
+    def __init__(self, options: CrystalPrepOptions) -> None:
+        self.options = options
+
+    @staticmethod
+    def _format_bool(value: bool) -> str:
+        """Format a boolean for ORCA_crystalprep keyword values."""
+        return "true" if value else "false"
+
+    def render(self) -> str:
+        """Return the CrystalPrep template file contents."""
+        opts = self.options
+        fmt = self._format_bool
+        lines = [
+            "#Read CIF/XYZ",
+            "#************************",
+            f"DoCIF {fmt(opts.do_cif)}",
+            "",
+            "#------------------------",
+            "#INPUT CIF/XYZ",
+            "#------------------------",
+            f'InputCIF "{opts.input_cif}"',
+            "",
+        ]
+
+        if opts.space_group_number is not None:
+            lines.extend(
+                [
+                    "#------------------------",
+                    "#Set Special Tasks",
+                    "#------------------------",
+                    f"SpaceGroupNumber {opts.space_group_number}",
+                    "",
+                ]
+            )
+
+        lines.extend(
+            [
+                "#************************",
+                "#Generate SuperCell",
+                "#************************",
+                f"DoSuperCell {fmt(opts.do_supercell)}",
+            ]
+        )
+        if opts.do_supercell:
+            lines.append(f'SCDimension "{opts.sc_dimension}"')
+        lines.append("")
+
+        lines.extend(
+            [
+                "#************************",
+                "#Setup Embedding Approach",
+                "#************************",
+                f"DoEmbedding {fmt(opts.do_embedding)}",
+                f"DoLayers {fmt(opts.do_layers)}",
+                "",
+                "#------------------------",
+                "#Atom Type Charge Spin",
+                "#------------------------",
+                f"NAtomTypes {len(opts.atom_types)}",
+            ]
+        )
+        for atom_type in opts.atom_types:
+            lines.append(
+                f"{atom_type.symbol} {atom_type.type_index} "
+                f"{atom_type.formal_charge} {atom_type.spin}"
+            )
+        lines.append("")
+
+        lines.extend(
+            [
+                "#************************",
+                "#Generate Inputs",
+                "#************************",
+                "",
+                "#------------------------",
+                "# Simple/IC-QMMM inputs",
+                "#------------------------",
+                f"DoICQMMMInput {fmt(opts.do_icqmmm_input)}",
+            ]
+        )
+        if opts.neutralize is not None:
+            lines.append(f"Neutralize {fmt(opts.neutralize)}")
+        if opts.qc_charge is not None:
+            lines.append(f"QCCharge {opts.qc_charge}")
+        if opts.qc_mult is not None:
+            lines.append(f"QCMult {opts.qc_mult}")
+        lines.append("end")
+        return "\n".join(lines) + "\n"
+
+    def default_output_path(self) -> str:
+        """Default template filename derived from the input CIF basename."""
+        basename = os.path.basename(self.options.input_cif)
+        stem, _ = os.path.splitext(basename)
+        return f"{stem}.cp.inp"
+
+    def write(self, filepath: Optional[str] = None) -> str:
+        """Write the template file and return the output path."""
+        output_path = (
+            filepath or self.options.template_out or self.default_output_path()
+        )
+        contents = self.render()
+        with open(output_path, "w", encoding="utf-8") as handle:
+            handle.write(contents)
+        logger.info(f"Wrote CrystalPrep template: {output_path}")
+        return output_path

@@ -1,16 +1,49 @@
 """Helper utilities for attaching ORCA QMMM subcommands to Click commands."""
 
+from __future__ import annotations
+
 import ast
 import logging
 import os
+from typing import Optional
 
 import click
 
 from chemsmart.cli.job import click_job_options
+from chemsmart.jobs.orca.writer import (
+    CrystalPrepInputWriter,
+    CrystalPrepOptions,
+)
 from chemsmart.utils.cli import MyCommand
 from chemsmart.utils.utils import convert_string_to_slices
 
 logger = logging.getLogger(__name__)
+
+
+def write_crystalprep_template(
+    options: CrystalPrepOptions,
+    target_directory: Optional[str] = None,
+) -> str:
+    """
+    Write an ORCA_crystalprep template input file for ionic-crystal QM/MM.
+
+    Args:
+        options: CrystalPrep template options.
+        target_directory: Optional output directory. When omitted, writes to
+            the current working directory or ``template_out`` if set.
+
+    Returns:
+        str: Path to the written CrystalPrep template file.
+    """
+    writer = CrystalPrepInputWriter(options)
+    filename = options.template_out or writer.default_output_path()
+    if target_directory is not None:
+        output_path = os.path.join(
+            target_directory, os.path.basename(filename)
+        )
+    else:
+        output_path = filename
+    return writer.write(output_path)
 
 
 def create_orca_qmmm_subcommand(parent_command):
