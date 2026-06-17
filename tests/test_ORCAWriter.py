@@ -3,6 +3,9 @@ import re
 import shutil
 from filecmp import cmp
 
+import pytest
+
+from chemsmart.cli.orca.qmmm import write_crystalprep_template
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.orca import (
     ORCAModredJob,
@@ -12,7 +15,12 @@ from chemsmart.jobs.orca import (
     ORCATSJob,
 )
 from chemsmart.jobs.orca.neb import ORCANEBJob
-from chemsmart.jobs.orca.writer import ORCAInputWriter
+from chemsmart.jobs.orca.writer import (
+    CrystalPrepAtomType,
+    CrystalPrepInputWriter,
+    CrystalPrepOptions,
+    ORCAInputWriter,
+)
 from chemsmart.settings.orca import ORCAJobSettings, ORCAProjectSettings
 
 
@@ -1709,3 +1717,151 @@ class TestORCAIonicCrystalQMMMWriter:
             in contents
         )
         assert "* xyz" not in contents
+
+    def test_crystalprep_render_nacl_template(self):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="15x15x15",
+            atom_types=[
+                CrystalPrepAtomType("Na", 0, 1.0, 0.0),
+                CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
+            ],
+        )
+        contents = CrystalPrepInputWriter(options).render()
+
+        assert "DoCIF true" in contents
+        assert 'InputCIF "NaCl.cif"' in contents
+        assert "DoSuperCell true" in contents
+        assert 'SCDimension "15x15x15"' in contents
+        assert "DoEmbedding true" in contents
+        assert "DoLayers true" in contents
+        assert "NAtomTypes 2" in contents
+        assert "Na 0 1.0 0.0" in contents
+        assert "Cl 1 -1.0 0.0" in contents
+        assert "DoICQMMMInput true" in contents
+        assert contents.strip().endswith("end")
+
+    def test_crystalprep_render_includes_optional_keywords_when_set(self):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="2x2x2",
+            atom_types=[CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+            space_group_number=200,
+            neutralize=True,
+            qc_charge=0,
+            qc_mult=1,
+        )
+        contents = CrystalPrepInputWriter(options).render()
+
+        assert "SpaceGroupNumber 200" in contents
+        assert "Neutralize true" in contents
+        assert "QCCharge 0" in contents
+        assert "QCMult 1" in contents
+
+    def test_crystalprep_render_omits_optional_keywords_when_unset(self):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="2x2x2",
+            atom_types=[CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+        )
+        contents = CrystalPrepInputWriter(options).render()
+
+        assert "SpaceGroupNumber" not in contents
+        assert "Neutralize" not in contents
+        assert "QCCharge" not in contents
+        assert "QCMult" not in contents
+
+    def test_crystalprep_render_respects_disabled_supercell(self):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="15x15x15",
+            do_supercell=False,
+            atom_types=[CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+        )
+        contents = CrystalPrepInputWriter(options).render()
+
+        assert "DoSuperCell false" in contents
+        assert "SCDimension" not in contents
+
+    def test_crystalprep_write_uses_template_out_override(self, tmpdir):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="15x15x15",
+            atom_types=[CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+            template_out=str(tmpdir.join("nacl.inp")),
+        )
+        output_path = CrystalPrepInputWriter(options).write()
+
+        assert output_path == str(tmpdir.join("nacl.inp"))
+        assert os.path.isfile(output_path)
+        with open(output_path, encoding="utf-8") as handle:
+            assert 'InputCIF "NaCl.cif"' in handle.read()
+
+    def test_crystalprep_write_defaults_to_cif_stem_cp_inp(self, tmpdir):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="15x15x15",
+            atom_types=[CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+        )
+        cwd = os.getcwd()
+        os.chdir(str(tmpdir))
+        try:
+            output_path = CrystalPrepInputWriter(options).write()
+        finally:
+            os.chdir(cwd)
+
+        assert output_path == "NaCl.cp.inp"
+        assert os.path.isfile(str(tmpdir.join("NaCl.cp.inp")))
+
+    @pytest.mark.parametrize(
+        "kwargs,match",
+        [
+            (
+                {
+                    "input_cif": "",
+                    "sc_dimension": "15x15x15",
+                    "atom_types": [CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+                },
+                "input_cif is required",
+            ),
+            (
+                {
+                    "input_cif": "NaCl.cif",
+                    "sc_dimension": "",
+                    "do_supercell": True,
+                    "atom_types": [CrystalPrepAtomType("Na", 0, 1.0, 0.0)],
+                },
+                "sc_dimension is required",
+            ),
+            (
+                {
+                    "input_cif": "NaCl.cif",
+                    "sc_dimension": "15x15x15",
+                    "atom_types": [],
+                },
+                "At least one atom type is required",
+            ),
+        ],
+    )
+    def test_crystalprep_options_validation(self, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            CrystalPrepOptions(**kwargs)
+
+    def test_crystalprep_write_template_to_directory(self, tmpdir):
+        options = CrystalPrepOptions(
+            input_cif="NaCl.cif",
+            sc_dimension="15x15x15",
+            atom_types=[
+                CrystalPrepAtomType("Na", 0, 1.0, 0.0),
+                CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
+            ],
+            template_out="nacl.inp",
+        )
+        output_path = write_crystalprep_template(
+            options, target_directory=str(tmpdir)
+        )
+
+        assert output_path == str(tmpdir.join("nacl.inp"))
+        assert os.path.isfile(output_path)
+        with open(output_path, encoding="utf-8") as handle:
+            assert 'InputCIF "NaCl.cif"' in handle.read()
