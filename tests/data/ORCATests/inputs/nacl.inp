@@ -1,0 +1,63 @@
+%crystalprep
+
+
+#************************
+#Read CIF/XYZ
+#************************
+DoCIF true  
+
+#------------------------
+#INPUT CIF/XYZ
+#------------------------
+InputCIF "NaCl.cif"
+#------------------------
+#Set Special Tasks
+#------------------------
+#SpaceGroupNumber 200
+
+#************************
+#Generate SuperCell      
+#************************
+DoSuperCell true
+SCDimension "15x15x15"
+
+#************************
+#Setup Embedding Approach
+#************************
+DoEmbedding true
+DoLayers true
+
+#------------------------
+#Call the Mol-QMMM
+#------------------------
+#DoMolecularFragments true
+
+#------------------------
+#------------------------
+#Atom Type Charge Spin
+#------------------------
+NAtomTypes 2
+Na 0 1.0  0.0
+Cl 1 -1.0  0.0
+
+#************************
+#Generate Inputs
+#************************
+#------------------------
+# Simple/IC-QMMM inputs
+#------------------------
+#DoSimpleInput true
+DoICQMMMInput true
+
+#Neutralize true
+#------------------------
+#Mol-QMMM inputs
+#------------------------
+#DoMCQMMMInput true
+
+#------------------------
+#QCCharge 0
+#QCMult 1
+#------------------------
+end
+
