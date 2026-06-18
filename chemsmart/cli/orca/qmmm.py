@@ -5,12 +5,13 @@ from __future__ import annotations
 import ast
 import logging
 import os
-from typing import Optional
+from typing import Optional, Sequence, Tuple
 
 import click
 
 from chemsmart.cli.job import click_job_options
 from chemsmart.jobs.orca.writer import (
+    CrystalPrepAtomType,
     CrystalPrepInputWriter,
     CrystalPrepOptions,
 )
@@ -18,6 +19,91 @@ from chemsmart.utils.cli import MyCommand
 from chemsmart.utils.utils import convert_string_to_slices
 
 logger = logging.getLogger(__name__)
+
+_CP_ATOMTYPE_NARGS = 4
+_IONIC_CRYSTAL_QMMM_JOBTYPE = "IONIC-CRYSTAL-QMMM"
+
+
+def validate_geninput_jobtype(jobtype: Optional[str]) -> None:
+    """Reject ``--geninput`` unless the job type is ionic-crystal QMMM."""
+    if jobtype is None or jobtype.upper() != _IONIC_CRYSTAL_QMMM_JOBTYPE:
+        raise click.UsageError(
+            "--geninput is only supported with --jobtype IONIC-CRYSTAL-QMMM."
+        )
+
+
+def resolve_crystalprep_input_cif(
+    cp_input_cif: Optional[str],
+    structure_filename: Optional[str],
+) -> str:
+    """
+    Resolve the CrystalPrep CIF path from ``--cp-input-cif`` or ``-f``.
+
+    When ``--cp-input-cif`` is omitted, ``structure_filename`` is used only
+    if it ends with ``.cif``.
+    """
+    if cp_input_cif:
+        return cp_input_cif
+    if structure_filename and structure_filename.lower().endswith(".cif"):
+        return structure_filename
+    raise click.UsageError(
+        "--geninput requires a .cif input via --cp-input-cif or -f."
+    )
+
+
+def build_crystalprep_options_from_cli(
+    *,
+    cp_input_cif: Optional[str],
+    structure_filename: Optional[str],
+    cp_scdimension: Optional[str],
+    cp_atomtype: Sequence[Tuple[str, int, float, float]],
+    cp_docif: Optional[bool] = None,
+    cp_dosupercell: Optional[bool] = None,
+    cp_doembedding: Optional[bool] = None,
+    cp_dolayers: Optional[bool] = None,
+    cp_doicqmmminput: Optional[bool] = None,
+    cp_qccharge: Optional[int] = None,
+    cp_qcmult: Optional[int] = None,
+    cp_neutralize: Optional[bool] = None,
+    cp_template_out: Optional[str] = None,
+) -> CrystalPrepOptions:
+    """Build :class:`CrystalPrepOptions` from parsed QMMM CLI flags."""
+    input_cif = resolve_crystalprep_input_cif(cp_input_cif, structure_filename)
+
+    if not cp_scdimension:
+        raise click.UsageError("--geninput requires --cp-scdimension.")
+
+    if not cp_atomtype:
+        raise click.UsageError(
+            "--geninput requires at least one --cp-atomtype."
+        )
+
+    atom_types = [
+        CrystalPrepAtomType(symbol, type_index, formal_charge, spin)
+        for symbol, type_index, formal_charge, spin in cp_atomtype
+    ]
+
+    options_kwargs = {
+        "input_cif": input_cif,
+        "sc_dimension": cp_scdimension,
+        "atom_types": atom_types,
+        "qc_charge": cp_qccharge,
+        "qc_mult": cp_qcmult,
+        "neutralize": cp_neutralize,
+        "template_out": cp_template_out,
+    }
+    if cp_docif is not None:
+        options_kwargs["do_cif"] = cp_docif
+    if cp_dosupercell is not None:
+        options_kwargs["do_supercell"] = cp_dosupercell
+    if cp_doembedding is not None:
+        options_kwargs["do_embedding"] = cp_doembedding
+    if cp_dolayers is not None:
+        options_kwargs["do_layers"] = cp_dolayers
+    if cp_doicqmmminput is not None:
+        options_kwargs["do_icqmmm_input"] = cp_doicqmmminput
+
+    return CrystalPrepOptions(**options_kwargs)
 
 
 def write_crystalprep_template(
@@ -287,6 +373,86 @@ def create_orca_qmmm_subcommand(parent_command):
         type=str,
         help="PDB filename for *pdbfile coordinate line",
     )
+    @click.option(
+        "--geninput",
+        is_flag=True,
+        default=False,
+        help="Enable CrystalPrep/ORCA_mm preparation (IONIC-CRYSTAL-QMMM only)",
+    )
+    @click.option(
+        "--cp-input-cif",
+        type=str,
+        default=None,
+        help="Input CIF for CrystalPrep (defaults to -f when it is a .cif)",
+    )
+    @click.option(
+        "--cp-docif",
+        type=bool,
+        default=None,
+        help="CrystalPrep DoCIF keyword",
+    )
+    @click.option(
+        "--cp-dosupercell",
+        type=bool,
+        default=None,
+        help="CrystalPrep DoSuperCell keyword",
+    )
+    @click.option(
+        "--cp-scdimension",
+        type=str,
+        default=None,
+        help='CrystalPrep supercell dimensions (e.g. "15x15x15")',
+    )
+    @click.option(
+        "--cp-doembedding",
+        type=bool,
+        default=None,
+        help="CrystalPrep DoEmbedding keyword",
+    )
+    @click.option(
+        "--cp-dolayers",
+        type=bool,
+        default=None,
+        help="CrystalPrep DoLayers keyword",
+    )
+    @click.option(
+        "--cp-doicqmmminput",
+        type=bool,
+        default=None,
+        help="CrystalPrep DoICQMMMInput keyword",
+    )
+    @click.option(
+        "--cp-atomtype",
+        "cp_atomtype",
+        multiple=True,
+        nargs=_CP_ATOMTYPE_NARGS,
+        type=(str, int, float, float),
+        help="CrystalPrep atom type: SYMBOL INDEX CHARGE SPIN (repeatable)",
+    )
+    @click.option(
+        "--cp-qccharge",
+        type=int,
+        default=None,
+        help="CrystalPrep QCCharge keyword",
+    )
+    @click.option(
+        "--cp-qcmult",
+        type=int,
+        default=None,
+        help="CrystalPrep QCMult keyword",
+    )
+    @click.option(
+        "--cp-neutralize",
+        type=bool,
+        default=None,
+        help="CrystalPrep Neutralize keyword",
+    )
+    @click.option(
+        "--cp-template-out",
+        type=str,
+        default=None,
+        help="CrystalPrep template output filename override",
+    )
     @click.pass_context
     def qmmm(
         ctx,
@@ -326,6 +492,19 @@ def create_orca_qmmm_subcommand(parent_command):
         enforce_total_charge,
         print_level,
         pdb_filename,
+        geninput,
+        cp_input_cif,
+        cp_docif,
+        cp_dosupercell,
+        cp_scdimension,
+        cp_doembedding,
+        cp_dolayers,
+        cp_doicqmmminput,
+        cp_atomtype,
+        cp_qccharge,
+        cp_qcmult,
+        cp_neutralize,
+        cp_template_out,
         skip_completed,
         **kwargs,
     ):
@@ -472,6 +651,35 @@ def create_orca_qmmm_subcommand(parent_command):
         if pdb_filename is not None:
             qmmm_settings.pdb_filename = pdb_filename
 
+        structure_filename = ctx.obj.get("filename")
+
+        if geninput:
+            validate_geninput_jobtype(qmmm_settings.jobtype)
+            crystalprep_options = build_crystalprep_options_from_cli(
+                cp_input_cif=cp_input_cif,
+                structure_filename=structure_filename,
+                cp_scdimension=cp_scdimension,
+                cp_atomtype=cp_atomtype,
+                cp_docif=cp_docif,
+                cp_dosupercell=cp_dosupercell,
+                cp_doembedding=cp_doembedding,
+                cp_dolayers=cp_dolayers,
+                cp_doicqmmminput=cp_doicqmmminput,
+                cp_qccharge=cp_qccharge,
+                cp_qcmult=cp_qcmult,
+                cp_neutralize=cp_neutralize,
+                cp_template_out=cp_template_out,
+            )
+            ctx.obj["geninput"] = True
+            ctx.obj["crystalprep_options"] = crystalprep_options
+            logger.debug(
+                "Parsed CrystalPrep options for --geninput: %s",
+                crystalprep_options,
+            )
+        else:
+            ctx.obj["geninput"] = False
+            ctx.obj["crystalprep_options"] = None
+
         if parent_settings is not None:
             inherited_keywords = [
                 "modred",
@@ -498,7 +706,6 @@ def create_orca_qmmm_subcommand(parent_command):
 
         _populate_charge_and_multiplicity_on_settings(qmmm_settings)
 
-        structure_filename = ctx.obj.get("filename")
         if (
             qmmm_settings.pdb_filename is None
             and structure_filename
