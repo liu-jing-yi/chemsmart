@@ -157,3 +157,146 @@ class TestRunScriptGeneration:
         assert "wait\n" in contents
         assert "run_prejob_hooks" not in contents
         assert "ORCA_crystalprep" not in contents
+
+
+class TestORCAIonicCrystalGeninputRegression:
+    """Regression tests for --geninput prejob workflow script generation."""
+
+    @staticmethod
+    def _standard_orca_qmmm_cli_args():
+        return [
+            "orca",
+            "-p",
+            "gas_solv",
+            "-f",
+            "NaCl.cif_15x15x15.pdb",
+            "sp",
+            "qmmm",
+            "-j",
+            "IONIC-CRYSTAL-QMMM",
+            "-hx",
+            "PBE",
+            "-hb",
+            "def2-SVP",
+            "-lm",
+            "NaCl.cif_15x15x15.ORCAFF.prms",
+            "-ch",
+            "19",
+            "-mh",
+            "1",
+        ]
+
+    @staticmethod
+    def _geninput_orca_qmmm_cli_args():
+        return [
+            *TestORCAIonicCrystalGeninputRegression._standard_orca_qmmm_cli_args(),
+            "--geninput",
+            "--cp-input-cif",
+            "NaCl.cif",
+            "--cp-scdimension",
+            "15x15x15",
+            "--cp-atomtype",
+            "Na",
+            "0",
+            "1.0",
+            "0.0",
+            "--cp-atomtype",
+            "Cl",
+            "1",
+            "-1.0",
+            "0.0",
+        ]
+
+    def test_standard_orca_qmmm_run_script_still_calls_run(self):
+        contents = render_run_script_contents(
+            self._standard_orca_qmmm_cli_args()
+        )
+
+        assert "run(CLI_ARGS)" in contents
+        assert "def run_job():" in contents
+        assert "run_prejob_hooks(CLI_ARGS)" in contents
+
+    def test_standard_orca_qmmm_run_script_has_no_crystalprep_commands(self):
+        contents = render_run_script_contents(
+            self._standard_orca_qmmm_cli_args()
+        )
+
+        assert "ORCA_crystalprep" not in contents
+        assert "ORCA_mm" not in contents
+
+    def test_geninput_run_script_also_uses_prejob_then_run_pipeline(self):
+        contents = render_run_script_contents(
+            self._geninput_orca_qmmm_cli_args()
+        )
+
+        assert "run_prejob_hooks(CLI_ARGS)" in contents
+        assert "run(CLI_ARGS)" in contents
+        assert contents.index("run_prejob_hooks(CLI_ARGS)") < contents.index(
+            "run(CLI_ARGS)"
+        )
+        assert "ORCA_crystalprep" not in contents
+
+    def test_submit_script_remains_scheduler_and_environment_focused(self):
+        submitter = _pbs_submitter(label="nacl_qmmm", program="orca")
+        scheduler_buffer = StringIO()
+        job_buffer = StringIO()
+
+        submitter._write_scheduler_options(scheduler_buffer)
+        submitter._write_job_command(job_buffer)
+
+        scheduler_contents = scheduler_buffer.getvalue()
+        job_contents = job_buffer.getvalue()
+
+        assert "#PBS -o nacl_qmmm.pbsout\n" in scheduler_contents
+        assert "#PBS -l select=" in scheduler_contents
+        assert "chmod +x ./chemsmart_run_nacl_qmmm.py\n" in job_contents
+        assert "./chemsmart_run_nacl_qmmm.py &\n" in job_contents
+        assert "ORCA_crystalprep" not in scheduler_contents
+        assert "ORCA_crystalprep" not in job_contents
+        assert "run_prejob_hooks" not in scheduler_contents
+        assert "run_prejob_hooks" not in job_contents
+
+    def test_prejob_hook_noop_for_standard_orca_qmmm_without_geninput(self):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.subprocess.run"
+        ) as mock_subprocess:
+            run_prejob_hooks(self._standard_orca_qmmm_cli_args())
+
+        mock_subprocess.assert_not_called()
+
+    def test_prejob_hook_noop_without_ionic_crystal_jobtype_even_with_geninput(
+        self,
+    ):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        cli_args = self._geninput_orca_qmmm_cli_args()
+        cli_args[cli_args.index("IONIC-CRYSTAL-QMMM")] = "QMMM"
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.subprocess.run"
+        ) as mock_subprocess:
+            run_prejob_hooks(cli_args)
+
+        mock_subprocess.assert_not_called()
+
+    def test_prejob_hook_requires_both_geninput_and_ionic_crystal_jobtype(
+        self,
+    ):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        cli_args = self._standard_orca_qmmm_cli_args()
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.subprocess.run"
+        ) as mock_subprocess:
+            run_prejob_hooks(cli_args)
+
+        mock_subprocess.assert_not_called()
