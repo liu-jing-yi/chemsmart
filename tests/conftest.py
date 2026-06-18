@@ -1316,6 +1316,49 @@ def orca_qmmm_input_file(orca_inputs_directory):
 
 
 @pytest.fixture()
+def orca_ionic_crystal_nacl_cif_file(orca_inputs_directory):
+    """NaCl unit-cell CIF for ionic-crystal QM/MM CrystalPrep tests."""
+    return os.path.join(orca_inputs_directory, "nacl.cif")
+
+
+@pytest.fixture()
+def orca_ionic_crystal_nacl_crystalprep_inp_file(orca_inputs_directory):
+    """Reference ORCA_crystalprep template input for NaCl."""
+    return os.path.join(orca_inputs_directory, "nacl.inp")
+
+
+@pytest.fixture()
+def orca_ionic_crystal_nacl_supercell_pdb_file(orca_inputs_directory):
+    """NaCl 15x15x15 supercell PDB for ionic-crystal QM/MM tests."""
+    return os.path.join(orca_inputs_directory, "NaCl.cif_15x15x15.pdb")
+
+
+@pytest.fixture()
+def orca_ionic_crystal_nacl_crystalprep_atom_types():
+    """Atom types matching ``nacl.inp`` NAtomTypes block."""
+    from chemsmart.jobs.orca.writer import CrystalPrepAtomType
+
+    return [
+        CrystalPrepAtomType("Na", 0, 1.0, 0.0),
+        CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
+    ]
+
+
+@pytest.fixture()
+def orca_ionic_crystal_nacl_crystalprep_options(
+    orca_ionic_crystal_nacl_crystalprep_atom_types,
+):
+    """CrystalPrep options aligned with ``nacl.inp`` reference input."""
+    from chemsmart.jobs.orca.writer import CrystalPrepOptions
+
+    return CrystalPrepOptions(
+        input_cif="NaCl.cif",
+        sc_dimension="15x15x15",
+        atom_types=orca_ionic_crystal_nacl_crystalprep_atom_types,
+    )
+
+
+@pytest.fixture()
 def orca_outputs_directory(orca_test_directory):
     orca_outputs_directory = os.path.join(orca_test_directory, "outputs")
     return os.path.abspath(orca_outputs_directory)

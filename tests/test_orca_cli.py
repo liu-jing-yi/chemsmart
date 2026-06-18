@@ -824,6 +824,7 @@ class TestORCAQMMMGeninputCLI:
     def test_geninput_rejected_without_ionic_crystal_jobtype(
         self,
         single_molecule_xyz_file,
+        orca_ionic_crystal_nacl_cif_file,
         tmpdir,
     ):
         from unittest.mock import MagicMock
@@ -834,14 +835,14 @@ class TestORCAQMMMGeninputCLI:
 
         prms_file = tmpdir.join("NaCl.ORCAFF.prms")
         prms_file.write("dummy force field parameters")
-        cif_file = tmpdir.join("NaCl.cif")
-        cif_file.write("dummy cif")
 
         runner = CliRunner()
         args = self._ionic_crystal_qmmm_args(
             single_molecule_xyz_file,
             prms_file,
-            extra=self._geninput_flags(cif_file=cif_file),
+            extra=self._geninput_flags(
+                cif_file=orca_ionic_crystal_nacl_cif_file
+            ),
         )
         args[args.index("-j") + 1] = "QMMM"
 
@@ -857,7 +858,7 @@ class TestORCAQMMMGeninputCLI:
 
     def test_geninput_requires_cif_input(
         self,
-        single_model_pdb_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
         tmpdir,
     ):
         from unittest.mock import MagicMock
@@ -871,7 +872,7 @@ class TestORCAQMMMGeninputCLI:
 
         runner = CliRunner()
         args = self._ionic_crystal_qmmm_args(
-            single_model_pdb_file,
+            orca_ionic_crystal_nacl_supercell_pdb_file,
             prms_file,
             extra=self._geninput_flags(),
         )
@@ -888,7 +889,8 @@ class TestORCAQMMMGeninputCLI:
 
     def test_geninput_requires_scdimension(
         self,
-        single_model_pdb_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+        orca_ionic_crystal_nacl_cif_file,
         tmpdir,
     ):
         from unittest.mock import MagicMock
@@ -899,17 +901,15 @@ class TestORCAQMMMGeninputCLI:
 
         prms_file = tmpdir.join("NaCl.ORCAFF.prms")
         prms_file.write("dummy force field parameters")
-        cif_file = tmpdir.join("NaCl.cif")
-        cif_file.write("dummy cif")
 
         runner = CliRunner()
         args = self._ionic_crystal_qmmm_args(
-            single_model_pdb_file,
+            orca_ionic_crystal_nacl_supercell_pdb_file,
             prms_file,
             extra=[
                 "--geninput",
                 "--cp-input-cif",
-                str(cif_file),
+                orca_ionic_crystal_nacl_cif_file,
                 "--cp-atomtype",
                 "Na",
                 "0",
@@ -930,7 +930,8 @@ class TestORCAQMMMGeninputCLI:
 
     def test_geninput_requires_atomtype(
         self,
-        single_model_pdb_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+        orca_ionic_crystal_nacl_cif_file,
         tmpdir,
     ):
         from unittest.mock import MagicMock
@@ -941,17 +942,15 @@ class TestORCAQMMMGeninputCLI:
 
         prms_file = tmpdir.join("NaCl.ORCAFF.prms")
         prms_file.write("dummy force field parameters")
-        cif_file = tmpdir.join("NaCl.cif")
-        cif_file.write("dummy cif")
 
         runner = CliRunner()
         args = self._ionic_crystal_qmmm_args(
-            single_model_pdb_file,
+            orca_ionic_crystal_nacl_supercell_pdb_file,
             prms_file,
             extra=[
                 "--geninput",
                 "--cp-input-cif",
-                str(cif_file),
+                orca_ionic_crystal_nacl_cif_file,
                 "--cp-scdimension",
                 "15x15x15",
             ],
@@ -969,7 +968,8 @@ class TestORCAQMMMGeninputCLI:
 
     def test_geninput_parses_crystalprep_options_from_cli(
         self,
-        single_model_pdb_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+        orca_ionic_crystal_nacl_cif_file,
         tmpdir,
     ):
         from unittest.mock import MagicMock, patch
@@ -980,15 +980,15 @@ class TestORCAQMMMGeninputCLI:
 
         prms_file = tmpdir.join("NaCl.ORCAFF.prms")
         prms_file.write("dummy force field parameters")
-        cif_file = tmpdir.join("NaCl.cif")
-        cif_file.write("dummy cif")
 
         ctx_obj = {"jobrunner": MagicMock()}
         runner = CliRunner()
         args = self._ionic_crystal_qmmm_args(
-            single_model_pdb_file,
+            orca_ionic_crystal_nacl_supercell_pdb_file,
             prms_file,
-            extra=self._geninput_flags(cif_file=cif_file)
+            extra=self._geninput_flags(
+                cif_file=orca_ionic_crystal_nacl_cif_file
+            )
             + [
                 "--cp-neutralize",
                 "true",
@@ -1013,7 +1013,7 @@ class TestORCAQMMMGeninputCLI:
         assert result.exit_code == 0, result.output
         assert ctx_obj["geninput"] is True
         options = ctx_obj["crystalprep_options"]
-        assert options.input_cif == str(cif_file)
+        assert options.input_cif == orca_ionic_crystal_nacl_cif_file
         assert options.sc_dimension == "15x15x15"
         assert len(options.atom_types) == 2
         assert options.atom_types[0].symbol == "Na"
@@ -1023,18 +1023,30 @@ class TestORCAQMMMGeninputCLI:
         assert options.qc_mult == 1
         assert options.template_out == "custom.cp.inp"
 
-    def test_resolve_crystalprep_input_cif_prefers_explicit_flag(self, tmpdir):
+    def test_resolve_crystalprep_input_cif_prefers_explicit_flag(
+        self, orca_ionic_crystal_nacl_cif_file, tmpdir
+    ):
         from chemsmart.cli.orca.qmmm import resolve_crystalprep_input_cif
 
         explicit = str(tmpdir.join("explicit.cif"))
-        fallback = str(tmpdir.join("fallback.cif"))
-        assert resolve_crystalprep_input_cif(explicit, fallback) == explicit
+        assert (
+            resolve_crystalprep_input_cif(
+                explicit, orca_ionic_crystal_nacl_cif_file
+            )
+            == explicit
+        )
 
-    def test_resolve_crystalprep_input_cif_uses_f_when_cif(self, tmpdir):
+    def test_resolve_crystalprep_input_cif_uses_f_when_cif(
+        self, orca_ionic_crystal_nacl_cif_file
+    ):
         from chemsmart.cli.orca.qmmm import resolve_crystalprep_input_cif
 
-        cif_file = str(tmpdir.join("NaCl.cif"))
-        assert resolve_crystalprep_input_cif(None, cif_file) == cif_file
+        assert (
+            resolve_crystalprep_input_cif(
+                None, orca_ionic_crystal_nacl_cif_file
+            )
+            == orca_ionic_crystal_nacl_cif_file
+        )
 
     def test_non_ionic_qmmm_unchanged_without_geninput(
         self,
@@ -1082,22 +1094,21 @@ class TestORCAQMMMGeninputCLI:
         assert ctx_obj.get("geninput") is False
         assert ctx_obj.get("crystalprep_options") is None
 
-    def test_build_crystalprep_options_from_cli_unit(self, tmpdir):
+    def test_build_crystalprep_options_from_cli_unit(
+        self, orca_ionic_crystal_nacl_cif_file
+    ):
         from chemsmart.cli.orca.qmmm import build_crystalprep_options_from_cli
-
-        cif_file = tmpdir.join("NaCl.cif")
-        cif_file.write("dummy cif")
 
         options = build_crystalprep_options_from_cli(
             cp_input_cif=None,
-            structure_filename=str(cif_file),
+            structure_filename=orca_ionic_crystal_nacl_cif_file,
             cp_scdimension="2x2x2",
             cp_atomtype=[("Na", 0, 1.0, 0.0)],
             cp_docif=False,
             cp_dosupercell=False,
         )
 
-        assert options.input_cif == str(cif_file)
+        assert options.input_cif == orca_ionic_crystal_nacl_cif_file
         assert options.sc_dimension == "2x2x2"
         assert options.do_cif is False
         assert options.do_supercell is False

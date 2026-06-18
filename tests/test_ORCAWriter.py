@@ -1668,13 +1668,18 @@ class TestORCAIonicCrystalQMMMWriter:
     def test_write_ionic_crystal_qmmm_input(
         self,
         tmpdir,
-        single_model_pdb_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
         orca_jobrunner_no_scratch,
     ):
         from chemsmart.io.molecules.structure import Molecule
         from chemsmart.jobs.orca.settings import ORCAQMMMJobSettings
 
-        molecule = Molecule.from_filepath(single_model_pdb_file)
+        molecule = Molecule.from_filepath(
+            orca_ionic_crystal_nacl_supercell_pdb_file
+        )
+        pdb_filename = os.path.basename(
+            orca_ionic_crystal_nacl_supercell_pdb_file
+        )
         settings = ORCAQMMMJobSettings(
             jobtype="IONIC-CRYSTAL-QMMM",
             high_level_functional="PBE",
@@ -1690,7 +1695,7 @@ class TestORCAIonicCrystalQMMMWriter:
             print_level=4,
             charge_high=19,
             mult_high=1,
-            pdb_filename=os.path.basename(single_model_pdb_file),
+            pdb_filename=pdb_filename,
         )
         settings.re_init_and_validate()
 
@@ -1699,7 +1704,7 @@ class TestORCAIonicCrystalQMMMWriter:
             settings=settings,
             label="ionic_crystal_qmmm",
             jobrunner=orca_jobrunner_no_scratch,
-            structure_filename=single_model_pdb_file,
+            structure_filename=orca_ionic_crystal_nacl_supercell_pdb_file,
         )
 
         writer = ORCAInputWriter(job=job)
@@ -1720,33 +1725,41 @@ class TestORCAIonicCrystalQMMMWriter:
         assert "ENFORCETOTALCHARGE true" in contents
         assert "CHARGE_TOTAL    0" in contents
         assert "PrintLevel 4" in contents
-        assert (
-            f"*pdbfile 19  1 {os.path.basename(single_model_pdb_file)}"
-            in contents
-        )
+        assert f"*pdbfile 19  1 {pdb_filename}" in contents
         assert "* xyz" not in contents
 
-    def test_crystalprep_render_nacl_template(self):
-        options = CrystalPrepOptions(
-            input_cif="NaCl.cif",
-            sc_dimension="15x15x15",
-            atom_types=[
-                CrystalPrepAtomType("Na", 0, 1.0, 0.0),
-                CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
-            ],
-        )
-        contents = CrystalPrepInputWriter(options).render()
+    def test_crystalprep_render_nacl_template(
+        self,
+        orca_ionic_crystal_nacl_crystalprep_options,
+        orca_ionic_crystal_nacl_crystalprep_inp_file,
+        orca_ionic_crystal_nacl_cif_file,
+    ):
+        assert os.path.isfile(orca_ionic_crystal_nacl_cif_file)
+        assert os.path.isfile(orca_ionic_crystal_nacl_crystalprep_inp_file)
+
+        contents = CrystalPrepInputWriter(
+            orca_ionic_crystal_nacl_crystalprep_options
+        ).render()
+        with open(
+            orca_ionic_crystal_nacl_crystalprep_inp_file, encoding="utf-8"
+        ) as handle:
+            reference = handle.read()
 
         assert "DoCIF true" in contents
         assert 'InputCIF "NaCl.cif"' in contents
+        assert 'InputCIF "NaCl.cif"' in reference
         assert "DoSuperCell true" in contents
         assert 'SCDimension "15x15x15"' in contents
+        assert 'SCDimension "15x15x15"' in reference
         assert "DoEmbedding true" in contents
         assert "DoLayers true" in contents
         assert "NAtomTypes 2" in contents
         assert "Na 0 1.0 0.0" in contents
+        assert "Na 0 1.0" in reference
         assert "Cl 1 -1.0 0.0" in contents
+        assert "Cl 1 -1.0" in reference
         assert "DoICQMMMInput true" in contents
+        assert "DoICQMMMInput true" in reference
         assert contents.strip().endswith("end")
 
     def test_crystalprep_render_includes_optional_keywords_when_set(self):
@@ -1855,14 +1868,15 @@ class TestORCAIonicCrystalQMMMWriter:
         with pytest.raises(ValueError, match=match):
             CrystalPrepOptions(**kwargs)
 
-    def test_crystalprep_write_template_to_directory(self, tmpdir):
-        options = CrystalPrepOptions(
-            input_cif="NaCl.cif",
-            sc_dimension="15x15x15",
-            atom_types=[
-                CrystalPrepAtomType("Na", 0, 1.0, 0.0),
-                CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
-            ],
+    def test_crystalprep_write_template_to_directory(
+        self,
+        tmpdir,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        from dataclasses import replace
+
+        options = replace(
+            orca_ionic_crystal_nacl_crystalprep_options,
             template_out="nacl.inp",
         )
         output_path = write_crystalprep_template(
@@ -1874,24 +1888,37 @@ class TestORCAIonicCrystalQMMMWriter:
         with open(output_path, encoding="utf-8") as handle:
             assert 'InputCIF "NaCl.cif"' in handle.read()
 
-    def test_crystalprep_infer_default_filenames_from_cif_and_dimension(self):
+    def test_crystalprep_infer_default_filenames_from_cif_and_dimension(
+        self,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+    ):
         names = IonicCrystalPrepFilenames.infer("NaCl.cif", "15x15x15")
 
         assert names.stem == "NaCl.cif_15x15x15"
         assert names.supercell_xyz == "NaCl.cif_15x15x15.xyz"
-        assert names.supercell_pdb == "NaCl.cif_15x15x15.pdb"
+        assert names.supercell_pdb == os.path.basename(
+            orca_ionic_crystal_nacl_supercell_pdb_file
+        )
+        assert os.path.isfile(orca_ionic_crystal_nacl_supercell_pdb_file)
         assert names.orcaff_prms == "NaCl.cif_15x15x15.ORCAFF.prms"
         assert names.icqmmm_inp == "NaCl.cif_15x15x15.xyz.ICQMMM.inp"
 
-    def test_crystalprep_infer_uses_cif_basename_from_path(self):
+    def test_crystalprep_infer_uses_cif_basename_from_path(
+        self,
+        orca_ionic_crystal_nacl_cif_file,
+    ):
+        assert os.path.isfile(orca_ionic_crystal_nacl_cif_file)
         names = IonicCrystalPrepFilenames.infer(
-            "/data/crystals/NaCl.cif", "2x2x2"
+            orca_ionic_crystal_nacl_cif_file, "2x2x2"
         )
 
-        assert names.stem == "NaCl.cif_2x2x2"
-        assert names.supercell_xyz == "NaCl.cif_2x2x2.xyz"
+        assert names.stem == "nacl.cif_2x2x2"
+        assert names.supercell_xyz == "nacl.cif_2x2x2.xyz"
 
-    def test_crystalprep_infer_respects_individual_filename_overrides(self):
+    def test_crystalprep_infer_respects_individual_filename_overrides(
+        self,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+    ):
         names = IonicCrystalPrepFilenames.infer(
             "NaCl.cif",
             "15x15x15",
@@ -1901,7 +1928,9 @@ class TestORCAIonicCrystalQMMMWriter:
 
         assert names.stem == "NaCl.cif_15x15x15"
         assert names.supercell_xyz == "custom.xyz"
-        assert names.supercell_pdb == "NaCl.cif_15x15x15.pdb"
+        assert names.supercell_pdb == os.path.basename(
+            orca_ionic_crystal_nacl_supercell_pdb_file
+        )
         assert names.orcaff_prms == "custom.prms"
 
     def test_crystalprep_infer_respects_stem_override(self):
@@ -1915,24 +1944,34 @@ class TestORCAIonicCrystalQMMMWriter:
         assert names.supercell_xyz == "NaCl_custom_stem.xyz"
         assert names.icqmmm_inp == "NaCl_custom_stem.xyz.ICQMMM.inp"
 
-    def test_crystalprep_build_orca_crystalprep_commands(self):
-        geninput_cmd = build_orca_crystalprep_geninput_command("NaCl.cp.inp")
-        run_cmd = build_orca_crystalprep_run_command("NaCl.cp.inp")
+    def test_crystalprep_build_orca_crystalprep_commands(
+        self,
+        orca_ionic_crystal_nacl_crystalprep_inp_file,
+    ):
+        cp_template = orca_ionic_crystal_nacl_crystalprep_inp_file
+        assert os.path.isfile(cp_template)
 
-        assert geninput_cmd == 'ORCA_crystalprep "NaCl.cp.inp" -geninput'
-        assert run_cmd == 'ORCA_crystalprep "NaCl.cp.inp"'
-        assert build_orca_crystalprep_commands("NaCl.cp.inp") == (
+        geninput_cmd = build_orca_crystalprep_geninput_command(cp_template)
+        run_cmd = build_orca_crystalprep_run_command(cp_template)
+
+        assert geninput_cmd == f'ORCA_crystalprep "{cp_template}" -geninput'
+        assert run_cmd == f'ORCA_crystalprep "{cp_template}"'
+        assert build_orca_crystalprep_commands(cp_template) == (
             geninput_cmd,
             run_cmd,
         )
 
-    def test_crystalprep_build_orca_mm_makeff_from_atom_types(self):
-        atom_types = [
-            CrystalPrepAtomType("Na", 0, 1.0, 0.0),
-            CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
-        ]
+    def test_crystalprep_build_orca_mm_makeff_from_atom_types(
+        self,
+        orca_ionic_crystal_nacl_crystalprep_atom_types,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        filenames = ORCAQMMMJob.infer_prep_filenames_from_options(
+            orca_ionic_crystal_nacl_crystalprep_options
+        )
         command = build_orca_mm_makeff_command(
-            "NaCl.cif_15x15x15.xyz", atom_types
+            filenames.supercell_xyz,
+            orca_ionic_crystal_nacl_crystalprep_atom_types,
         )
 
         assert (
@@ -1946,39 +1985,51 @@ class TestORCAIonicCrystalQMMMWriter:
         ):
             build_orca_mm_makeff_command("NaCl.cif_15x15x15.xyz", [])
 
-    def test_crystalprep_build_prep_commands_in_order(self):
-        atom_types = [
-            CrystalPrepAtomType("Na", 0, 1.0, 0.0),
-            CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
-        ]
+    def test_crystalprep_build_prep_commands_in_order(
+        self,
+        orca_ionic_crystal_nacl_crystalprep_inp_file,
+        orca_ionic_crystal_nacl_crystalprep_atom_types,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        filenames = ORCAQMMMJob.infer_prep_filenames_from_options(
+            orca_ionic_crystal_nacl_crystalprep_options
+        )
         commands = build_ionic_crystal_prep_commands(
-            "NaCl.cp.inp",
-            "NaCl.cif_15x15x15.xyz",
-            atom_types,
+            orca_ionic_crystal_nacl_crystalprep_inp_file,
+            filenames.supercell_xyz,
+            orca_ionic_crystal_nacl_crystalprep_atom_types,
         )
 
         assert commands == (
-            'ORCA_crystalprep "NaCl.cp.inp" -geninput',
-            'ORCA_crystalprep "NaCl.cp.inp"',
+            f'ORCA_crystalprep "{orca_ionic_crystal_nacl_crystalprep_inp_file}" '
+            "-geninput",
+            f'ORCA_crystalprep "{orca_ionic_crystal_nacl_crystalprep_inp_file}"',
             'ORCA_mm -makeff "NaCl.cif_15x15x15.xyz" '
             "-CEL Na 1.0 -CEL Cl -1.0",
         )
 
-    def test_crystalprep_orca_qmmm_job_build_prep_commands_from_options(self):
-        options = CrystalPrepOptions(
-            input_cif="NaCl.cif",
-            sc_dimension="15x15x15",
-            atom_types=[
-                CrystalPrepAtomType("Na", 0, 1.0, 0.0),
-                CrystalPrepAtomType("Cl", 1, -1.0, 0.0),
-            ],
+    def test_crystalprep_orca_qmmm_job_build_prep_commands_from_options(
+        self,
+        orca_ionic_crystal_nacl_crystalprep_options,
+        orca_ionic_crystal_nacl_crystalprep_inp_file,
+        orca_ionic_crystal_nacl_supercell_pdb_file,
+    ):
+        filenames = ORCAQMMMJob.infer_prep_filenames_from_options(
+            orca_ionic_crystal_nacl_crystalprep_options
         )
-        filenames = ORCAQMMMJob.infer_prep_filenames_from_options(options)
         commands = ORCAQMMMJob.build_prep_commands_from_options(
-            "NaCl.cp.inp", options
+            orca_ionic_crystal_nacl_crystalprep_inp_file,
+            orca_ionic_crystal_nacl_crystalprep_options,
         )
 
+        assert filenames.supercell_pdb == os.path.basename(
+            orca_ionic_crystal_nacl_supercell_pdb_file
+        )
         assert filenames.supercell_xyz == "NaCl.cif_15x15x15.xyz"
+        assert commands[0] == (
+            f'ORCA_crystalprep "{orca_ionic_crystal_nacl_crystalprep_inp_file}" '
+            "-geninput"
+        )
         assert commands[2].startswith(
             'ORCA_mm -makeff "NaCl.cif_15x15x15.xyz"'
         )
