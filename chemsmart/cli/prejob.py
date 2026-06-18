@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 
+from chemsmart.jobs.orca.crystalprep import potential_orca_crystalprep_prejob
+
 logger = logging.getLogger(__name__)
 
 PrejobHook = Callable[[Sequence[str]], None]
@@ -29,4 +31,4 @@ def run_prejob_hooks(cli_args: Sequence[str]) -> None:
 
 def _registered_hooks() -> tuple[PrejobHook, ...]:
     """Return hook callables in execution order."""
-    return ()
+    return (potential_orca_crystalprep_prejob,)

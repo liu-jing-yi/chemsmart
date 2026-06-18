@@ -1114,3 +1114,241 @@ class TestORCAQMMMGeninputCLI:
         assert options.do_supercell is False
         assert options.do_embedding is True
         assert options.do_layers is True
+
+    @staticmethod
+    def _geninput_run_cli_args(cif_file="NaCl.cif", scdimension="15x15x15"):
+        """Reconstructed ``chemsmart run`` CLI args for ionic-crystal geninput."""
+        return [
+            "orca",
+            *TestORCAQMMMGeninputCLI._ionic_crystal_qmmm_args(
+                cif_file,
+                "NaCl.ORCAFF.prms",
+                extra=TestORCAQMMMGeninputCLI._geninput_flags(
+                    scdimension=scdimension
+                ),
+            ),
+        ]
+
+    @staticmethod
+    def _touch(path):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("stub\n")
+
+    def test_prejob_noop_for_non_orca_jobs(self):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.run_orca_crystalprep_prejob"
+        ) as mock_run:
+            run_prejob_hooks(["gaussian", "-f", "test.xyz", "sp"])
+        mock_run.assert_not_called()
+
+    def test_prejob_noop_for_orca_qmmm_without_geninput(self):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        cli_args = [
+            "orca",
+            "-p",
+            "gas_solv",
+            "-f",
+            "NaCl.cif",
+            "sp",
+            "qmmm",
+            "-j",
+            "IONIC-CRYSTAL-QMMM",
+            "-hx",
+            "PBE",
+        ]
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.run_orca_crystalprep_prejob"
+        ) as mock_run:
+            run_prejob_hooks(cli_args)
+
+        mock_run.assert_not_called()
+
+    def test_prejob_noop_for_orca_non_ionic_qmmm_with_geninput(self):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        cli_args = self._geninput_run_cli_args()
+        cli_args[cli_args.index("IONIC-CRYSTAL-QMMM")] = "QMMM"
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.run_orca_crystalprep_prejob"
+        ) as mock_run:
+            run_prejob_hooks(cli_args)
+
+        mock_run.assert_not_called()
+
+    def test_prejob_calls_crystalprep_for_ionic_geninput(self):
+        from unittest.mock import patch
+
+        from chemsmart.cli.prejob import run_prejob_hooks
+
+        cli_args = self._geninput_run_cli_args()
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.run_orca_crystalprep_prejob"
+        ) as mock_run:
+            run_prejob_hooks(cli_args)
+
+        mock_run.assert_called_once()
+        options = mock_run.call_args.args[0]
+        assert options.input_cif == "NaCl.cif"
+        assert options.sc_dimension == "15x15x15"
+        assert len(options.atom_types) == 2
+
+    def test_run_script_keeps_prejob_and_run_separate(self):
+        from chemsmart.settings.submitters import render_run_script_contents
+
+        cli_args = self._geninput_run_cli_args()
+        contents = render_run_script_contents(cli_args)
+
+        assert "run_prejob_hooks(CLI_ARGS)" in contents
+        assert "run(CLI_ARGS)" in contents
+        assert contents.index("run_prejob_hooks(CLI_ARGS)") < contents.index(
+            "run(CLI_ARGS)"
+        )
+
+    def test_prejob_runs_commands_in_order_and_checks_files(
+        self,
+        tmp_path,
+        monkeypatch,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        from unittest.mock import MagicMock, patch
+
+        from chemsmart.jobs.orca.crystalprep import run_orca_crystalprep_prejob
+
+        options = orca_ionic_crystal_nacl_crystalprep_options
+        monkeypatch.chdir(tmp_path)
+        cp_template = tmp_path / "NaCl.cp.inp"
+
+        def _side_effect(argv, check=True):
+            if argv[0] == "ORCA_crystalprep" and "-geninput" in argv:
+                self._touch(cp_template)
+            elif argv[0] == "ORCA_crystalprep":
+                self._touch(tmp_path / "NaCl.cif_15x15x15.xyz")
+                self._touch(tmp_path / "NaCl.cif_15x15x15.pdb")
+            elif argv[0] == "ORCA_mm":
+                self._touch(tmp_path / "NaCl.cif_15x15x15.ORCAFF.prms")
+                self._touch(tmp_path / "NaCl.cif_15x15x15.xyz.ICQMMM.inp")
+            return MagicMock(returncode=0)
+
+        with (
+            patch(
+                "chemsmart.jobs.orca.crystalprep.write_crystalprep_template",
+                return_value=str(cp_template),
+            ),
+            patch(
+                "chemsmart.jobs.orca.crystalprep.subprocess.run",
+                side_effect=_side_effect,
+            ) as mock_run,
+        ):
+            self._touch(cp_template)
+            run_orca_crystalprep_prejob(options)
+
+        assert [c.args[0] for c in mock_run.call_args_list] == [
+            ["ORCA_crystalprep", str(cp_template), "-geninput"],
+            ["ORCA_crystalprep", str(cp_template)],
+            [
+                "ORCA_mm",
+                "-makeff",
+                "NaCl.cif_15x15x15.xyz",
+                "-CEL",
+                "Na",
+                "1.0",
+                "-CEL",
+                "Cl",
+                "-1.0",
+            ],
+        ]
+
+    def test_prejob_missing_expected_file_raises_clear_error(
+        self,
+        tmp_path,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        from unittest.mock import MagicMock, patch
+
+        import pytest
+
+        from chemsmart.jobs.orca.crystalprep import (
+            CrystalPrepPrejobError,
+            run_orca_crystalprep_prejob,
+        )
+
+        cp_template = tmp_path / "NaCl.cp.inp"
+        self._touch(cp_template)
+
+        with (
+            patch(
+                "chemsmart.jobs.orca.crystalprep.write_crystalprep_template",
+                return_value=str(cp_template),
+            ),
+            patch(
+                "chemsmart.jobs.orca.crystalprep.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ),
+        ):
+            with pytest.raises(CrystalPrepPrejobError, match="Supercell XYZ"):
+                run_orca_crystalprep_prejob(
+                    orca_ionic_crystal_nacl_crystalprep_options
+                )
+
+    def test_prejob_subprocess_failure_raises_clear_error(
+        self,
+        tmp_path,
+        orca_ionic_crystal_nacl_crystalprep_options,
+    ):
+        import subprocess
+        from unittest.mock import patch
+
+        import pytest
+
+        from chemsmart.jobs.orca.crystalprep import (
+            CrystalPrepPrejobError,
+            run_orca_crystalprep_prejob,
+        )
+
+        cp_template = tmp_path / "NaCl.cp.inp"
+        self._touch(cp_template)
+
+        with (
+            patch(
+                "chemsmart.jobs.orca.crystalprep.write_crystalprep_template",
+                return_value=str(cp_template),
+            ),
+            patch(
+                "chemsmart.jobs.orca.crystalprep.subprocess.run",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["ORCA_crystalprep", str(cp_template), "-geninput"]
+                ),
+            ),
+        ):
+            with pytest.raises(
+                CrystalPrepPrejobError,
+                match="ORCA_crystalprep -geninput failed",
+            ):
+                run_orca_crystalprep_prejob(
+                    orca_ionic_crystal_nacl_crystalprep_options
+                )
+
+    def test_maybe_run_prejob_is_noop_for_unrelated_cli_args(self):
+        from unittest.mock import patch
+
+        from chemsmart.jobs.orca.crystalprep import (
+            potential_orca_crystalprep_prejob,
+        )
+
+        with patch(
+            "chemsmart.jobs.orca.crystalprep.run_orca_crystalprep_prejob"
+        ) as mock_run:
+            potential_orca_crystalprep_prejob(["gaussian", "sp"])
+        mock_run.assert_not_called()
