@@ -3,7 +3,27 @@ from io import StringIO
 
 from chemsmart.settings.executable import GaussianExecutable, ORCAExecutable
 from chemsmart.settings.server import Server
-from chemsmart.settings.submitters import PBSSubmitter, SLURMSubmitter
+from chemsmart.settings.submitters import (
+    PBSSubmitter,
+    SLURMSubmitter,
+    render_run_script_contents,
+)
+
+
+def _pbs_submitter(label="job1", program="orca"):
+    server = Server(
+        "custom-pbs",
+        SCHEDULER="PBS",
+        NUM_CORES=8,
+        MEM_GB=24,
+        NUM_GPUS=0,
+    )
+    job = type(
+        "DummyJob",
+        (),
+        {"label": label, "folder": ".", "PROGRAM": program},
+    )()
+    return PBSSubmitter(job=job, server=server)
 
 
 class TestServer:
@@ -111,3 +131,29 @@ export LD_LIBRARY_PATH=~/programs/openmpi-4.1.6/build/lib:$LD_LIBRARY_PATH
         buffer = StringIO()
         submitter._write_scheduler_options(buffer)
         assert "#PBS -m abe\n" in buffer.getvalue()
+
+
+class TestRunScriptGeneration:
+    def test_run_script_includes_prejob_hooks(self):
+        cli_args = ["orca", "-f", "test.xyz", "sp"]
+        contents = render_run_script_contents(cli_args)
+
+        assert "from chemsmart.cli.prejob import run_prejob_hooks" in contents
+        assert "CLI_ARGS = ['orca', '-f', 'test.xyz', 'sp']" in contents
+        assert "run_prejob_hooks(CLI_ARGS)" in contents
+        assert "run(CLI_ARGS)" in contents
+        assert contents.index("run_prejob_hooks(CLI_ARGS)") < contents.index(
+            "run(CLI_ARGS)"
+        )
+
+    def test_submit_script_only_launches_python_run_script(self):
+        submitter = _pbs_submitter(label="ionic_crystal_qmmm")
+        buffer = StringIO()
+        submitter._write_job_command(buffer)
+        contents = buffer.getvalue()
+
+        assert "chmod +x ./chemsmart_run_ionic_crystal_qmmm.py\n" in contents
+        assert "./chemsmart_run_ionic_crystal_qmmm.py &\n" in contents
+        assert "wait\n" in contents
+        assert "run_prejob_hooks" not in contents
+        assert "ORCA_crystalprep" not in contents

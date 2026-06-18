@@ -17,6 +17,33 @@ user_settings = ChemsmartUserSettings()
 logger = logging.getLogger(__name__)
 
 
+def render_run_script_contents(cli_args) -> str:
+    """
+    Render the Python run script executed on the compute node.
+
+    The script sets ``OMP_NUM_THREADS``, runs optional pre-job hooks, then
+    invokes the ``chemsmart run`` Click pipeline with the stored CLI args.
+    """
+    contents = f"""\
+    #!/usr/bin/env python
+    import os
+    os.environ['OMP_NUM_THREADS'] = '1'
+
+    from chemsmart.cli.run import run
+    from chemsmart.cli.prejob import run_prejob_hooks
+
+    CLI_ARGS = {cli_args!r}
+
+    def run_job():
+        run_prejob_hooks(CLI_ARGS)
+        run(CLI_ARGS)
+
+    if __name__ == '__main__':
+        run_job()
+    """
+    return inspect.cleandoc(contents)
+
+
 class RunScript:
     """
     Script generator for computational job execution.
@@ -64,24 +91,8 @@ class RunScript:
         Args:
             f: File handle to write the script contents to.
         """
-        contents = f"""\
-        #!/usr/bin/env python
-        import os
-        os.environ['OMP_NUM_THREADS'] = '1'
-        
-        from chemsmart.cli.run import run
-
-        def run_job():
-            run({self.cli_args!r})
-
-        if __name__ == '__main__':
-            run_job()
-        """
-
-        # Needed to remove leading whitespace in the docstring
-        contents = inspect.cleandoc(contents)
+        contents = render_run_script_contents(self.cli_args)
         logger.debug(f"{self.cli_args!r}")
-
         f.write(contents)
 
 
