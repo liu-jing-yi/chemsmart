@@ -1,8 +1,8 @@
-from __future__ import annotations
-
 """
 GROMACS job runner for executing molecular dynamics workflows.
 """
+
+from __future__ import annotations
 
 import logging
 import os
@@ -89,7 +89,7 @@ class GromacsJobRunner(JobRunner):
         # and assign the generated file back to job.mdp_file.
         self._write_input(job)
 
-        workflow =job.workflow
+        workflow = job.workflow
 
         if workflow == "prepared":
             self._validate_gromacs_inputs(job)
@@ -659,8 +659,7 @@ class GromacsJobRunner(JobRunner):
 
         if missing:
             raise FileNotFoundError(
-                "Missing required GROMACS input files: "
-                + ", ".join(missing)
+                "Missing required GROMACS input files: " + ", ".join(missing)
             )
 
     def _validate_full_setup_inputs(self, job):

@@ -53,7 +53,6 @@ class GromacsProjectSettings:
     constraints: Optional[str] = None
     constraint_algorithm: Optional[str] = None
 
-
     box_type: Optional[str] = "cubic"
     box_distance: Optional[float] = 1.0
     solvent_file: Optional[Path] = None
