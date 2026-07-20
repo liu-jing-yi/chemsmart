@@ -330,17 +330,26 @@ class RMSDGrouper(MoleculeGrouper):
             f"[{self.__class__.__name__}] Created {actual_groups} groups (requested: {self.num_groups})"
         )
 
-        if actual_groups > self.num_groups:
-            # If we have too many groups, merge the smallest ones
-            groups, index_groups = self._merge_groups_to_target(
-                groups, index_groups, adj_matrix
-            )
-
         return groups, index_groups
 
+    def _count_groups_at_threshold(
+        self, threshold, rmsd_values, indices, n
+    ) -> int:
+        """Count groups produced by complete linkage at a given threshold."""
+        adj_matrix = np.zeros((n, n), dtype=bool)
+        for (idx_i, idx_j), rmsd in zip(indices, rmsd_values):
+            if rmsd < threshold:
+                adj_matrix[idx_i, idx_j] = adj_matrix[idx_j, idx_i] = True
+        groups, _ = self._complete_linkage_grouping(adj_matrix, n)
+        return len(groups)
+
     def _find_optimal_threshold(self, rmsd_values, indices, n):
-        """Find threshold that creates approximately the desired number of groups using binary search."""
-        # Sort RMSD values to try different thresholds
+        """Find threshold that creates approximately the desired number of groups.
+
+        Phase 1: binary search until the first threshold with groups > requested.
+        Phase 2: linear scan from that threshold toward larger values, preferring
+        exact match or the closest group count above requested.
+        """
         sorted_rmsd = sorted(
             [rmsd for rmsd in rmsd_values if not np.isinf(rmsd)]
         )
@@ -348,34 +357,52 @@ class RMSDGrouper(MoleculeGrouper):
         if not sorted_rmsd:
             return 0.0
 
-        # Binary search for optimal threshold
+        # Phase 1: binary search for first threshold with groups > requested
         low, high = 0, len(sorted_rmsd) - 1
-        best_threshold = sorted_rmsd[-1]
+        upper_threshold = upper_groups = upper_index = None
 
         while low <= high:
             mid = (low + high) // 2
             threshold = sorted_rmsd[mid]
-
-            # Build adjacency matrix with this threshold
-            adj_matrix = np.zeros((n, n), dtype=bool)
-            for (idx_i, idx_j), rmsd in zip(indices, rmsd_values):
-                if rmsd < threshold:
-                    adj_matrix[idx_i, idx_j] = adj_matrix[idx_j, idx_i] = True
-
-            # Use complete linkage to count groups
-            groups, _ = self._complete_linkage_grouping(adj_matrix, n)
-            num_groups_found = len(groups)
+            num_groups_found = self._count_groups_at_threshold(
+                threshold, rmsd_values, indices, n
+            )
 
             if num_groups_found == self.num_groups:
-                # Found exact match
                 return threshold
-            elif num_groups_found > self.num_groups:
-                # Too many groups, need higher threshold (more permissive)
-                low = mid + 1
-            else:
-                # Too few groups, need lower threshold (more restrictive)
-                best_threshold = threshold
+            elif num_groups_found < self.num_groups:
                 high = mid - 1
+            else:
+                upper_threshold = threshold
+                upper_groups = num_groups_found
+                upper_index = mid
+                break
+
+        if upper_index is None:
+            return sorted_rmsd[0]
+
+        # Phase 2: linear scan toward larger thresholds
+        best_threshold = upper_threshold
+        best_groups = upper_groups
+        prev_threshold = None
+
+        for idx in range(upper_index, len(sorted_rmsd)):
+            threshold = sorted_rmsd[idx]
+            if threshold == prev_threshold:
+                continue
+            prev_threshold = threshold
+
+            num_groups = self._count_groups_at_threshold(
+                threshold, rmsd_values, indices, n
+            )
+
+            if num_groups == self.num_groups:
+                return threshold
+            if self.num_groups < num_groups < best_groups:
+                best_groups = num_groups
+                best_threshold = threshold
+            elif num_groups < self.num_groups:
+                break
 
         return best_threshold
 
