@@ -319,6 +319,49 @@ def test_rewrite_pka_batch_cli_args_replaces_table_with_submit_row():
     assert "--reference" not in rewritten
 
 
+def test_resolve_array_cli_args_pka_entries_use_rewrite_callback():
+    from types import SimpleNamespace
+
+    from chemsmart.cli.pka import rewrite_pka_batch_cli_args
+    from chemsmart.jobs.batch import (
+        resolve_array_cli_args,
+        set_job_batch_entry,
+    )
+
+    job1 = SimpleNamespace(label="acid1")
+    job2 = SimpleNamespace(label="acid2")
+    set_job_batch_entry(
+        job1,
+        {
+            "filepath": "acid1.xyz",
+            "proton_index": 2,
+            "charge": 0,
+            "multiplicity": 1,
+            "scheme": "direct",
+            "label": "acid1",
+        },
+    )
+    set_job_batch_entry(
+        job2,
+        {
+            "filepath": "acid2.xyz",
+            "proton_index": 2,
+            "charge": 1,
+            "multiplicity": 2,
+            "scheme": "direct",
+            "label": "acid2",
+        },
+    )
+    shared = ["gaussian", "-f", "table.csv", "pka", "-s", "direct", "batch"]
+    cli_lists = resolve_array_cli_args(
+        [job1, job2], shared, rewrite_cli=rewrite_pka_batch_cli_args
+    )
+    assert len(cli_lists) == 2
+    assert "acid1.xyz" in cli_lists[0]
+    assert "acid2.xyz" in cli_lists[1]
+    assert all("submit" in args for args in cli_lists)
+
+
 class TestPKa:
     """pKa CLI, batch submission, and job workflow tests."""
 
