@@ -156,6 +156,7 @@ def process_pipeline(ctx, *args, **kwargs):
             "verbose",
             "test",
             "print_command",
+            "array_concurrency",
         ]
 
         for keyword in keywords_not_in_run:

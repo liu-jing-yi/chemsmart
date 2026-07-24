@@ -938,6 +938,11 @@ class TestGaussianRunSubNoParallelIntegration:
         assert self._cli_index(cli_args[0]) == "1"
         assert self._cli_index(cli_args[1]) == "2"
         assert all("--no-run-in-parallel" in args for args in cli_args)
+        assert all(
+            "--array-concurrency" not in args
+            and "--max-concurrency" not in args
+            for args in cli_args
+        )
 
     def test_sub_default_is_serial_array_throttle(
         self,
