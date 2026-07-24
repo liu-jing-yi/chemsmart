@@ -556,7 +556,8 @@ def prepare_batch_jobs(
     """Attach per-task entries that narrow shared multi-molecule CLI args.
 
     Used by homogeneous fan-out (opt/sp/ts/…). Each entry keeps the shared
-    ``filepath`` and a single ``molecule_index`` for ``-i`` narrowing.
+    ``filepath``, a single ``molecule_index`` for ``-i`` narrowing, and the
+    child ``label`` for per-task array run scripts.
 
     Returns ``rewrite_batch_cli_args`` when entries were attached, else
     ``None``. Callers should pass the return value as ``BatchJob.rewrite_cli``.
@@ -574,6 +575,9 @@ def prepare_batch_jobs(
         entry: dict[str, Any] = {"molecule_index": int(index)}
         if filepath is not None:
             entry["filepath"] = str(filepath)
+        job_label = getattr(job, "label", None)
+        if job_label is not None:
+            entry["label"] = job_label
         paired_jobs.append(job)
         entries.append(entry)
     attach_batch_entries(paired_jobs, entries)

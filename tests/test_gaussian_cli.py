@@ -789,6 +789,13 @@ class TestGaussianRunSubNoParallelIntegration:
         raise AssertionError(f"index option missing from {args!r}")
 
     @staticmethod
+    def _cli_label(args):
+        for opt in ("-l", "--label"):
+            if opt in args:
+                return args[args.index(opt) + 1]
+        raise AssertionError(f"label option missing from {args!r}")
+
+    @staticmethod
     def _mock_opt_job_factory(*, prefix="job"):
         counter = {"n": 0}
 
@@ -937,6 +944,8 @@ class TestGaussianRunSubNoParallelIntegration:
         assert len(cli_args) == 2
         assert self._cli_index(cli_args[0]) == "1"
         assert self._cli_index(cli_args[1]) == "2"
+        assert self._cli_label(cli_args[0]) == batch_job.jobs[0].label
+        assert self._cli_label(cli_args[1]) == batch_job.jobs[1].label
         assert all("--no-run-in-parallel" in args for args in cli_args)
         assert all(
             "--array-concurrency" not in args

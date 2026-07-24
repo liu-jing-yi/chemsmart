@@ -490,6 +490,16 @@ class TestBatchCliRewrite:
         rewritten = rewrite_batch_cli_args(shared, {"child_index": 2})
         assert rewritten[rewritten.index("--child-index") + 1] == "2"
 
+    def test_rewrite_batch_cli_args_injects_label(self):
+        from chemsmart.jobs.batch import rewrite_batch_cli_args
+
+        shared = ["gaussian", "-f", "mols.xyz", "-i", "1,2", "opt"]
+        rewritten = rewrite_batch_cli_args(
+            shared,
+            {"molecule_index": 2, "label": "mols_opt_idx2"},
+        )
+        assert rewritten[rewritten.index("--label") + 1] == "mols_opt_idx2"
+
     def test_rewrite_batch_cli_args_without_entry_keeps_shared(self):
         from chemsmart.jobs.batch import rewrite_batch_cli_args
 
@@ -503,14 +513,22 @@ class TestBatchCliRewrite:
             rewrite_batch_cli_args,
         )
 
-        jobs = [SimpleNamespace(label="a"), SimpleNamespace(label="b")]
+        jobs = [
+            SimpleNamespace(label="mols_opt_idx1"),
+            SimpleNamespace(label="mols_opt_idx2"),
+        ]
         rewrite_cli = prepare_batch_jobs(jobs, [1, 2], filepath="mols.xyz")
         assert rewrite_cli is rewrite_batch_cli_args
         assert get_job_batch_entry(jobs[0]) == {
             "filepath": "mols.xyz",
             "molecule_index": 1,
+            "label": "mols_opt_idx1",
         }
-        assert get_job_batch_entry(jobs[1])["molecule_index"] == 2
+        assert get_job_batch_entry(jobs[1]) == {
+            "filepath": "mols.xyz",
+            "molecule_index": 2,
+            "label": "mols_opt_idx2",
+        }
 
     def test_prepare_batch_jobs_returns_none_for_single_job(self):
         from chemsmart.jobs.batch import (
