@@ -156,7 +156,7 @@ class ORCAQRCJob(NestableJobMixin, ORCAJob):
         Execute both QRC jobs (forward and reverse) via ``ORCABatchJob``.
 
         Forward and reverse children run serially, each with the parent
-        jobrunner's full resources. Failure policy is run-all-then-raise.
+        jobrunner's full resources.
         """
         logger.info("Running QRC jobs using ORCABatchJob")
         run_child_jobs_as_batch(
@@ -164,7 +164,6 @@ class ORCAQRCJob(NestableJobMixin, ORCAJob):
             jobs=self.get_array_child_jobs(),
             parent=self,
             label_suffix="_batch",
-            fail_fast=False,
         )
 
     def _run(self, **kwargs):

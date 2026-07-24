@@ -17,7 +17,6 @@ in-process multi-node fan-out.
 
 import logging
 import os
-from abc import ABCMeta
 from contextlib import contextmanager
 from enum import Enum
 from typing import (
@@ -32,7 +31,6 @@ from typing import (
 )
 
 from chemsmart.jobs.job import Job
-from chemsmart.utils.mixins import RegistryMeta
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +129,6 @@ def warn_legacy_job_list(*, stacklevel: int = 2) -> None:
     )
 
 
-class BatchJobMeta(RegistryMeta, ABCMeta):
-    """Metaclass combining registry support with abstract-base semantics."""
-
-
 class NestableJobMixin:
     """Shared array-child API for crest/QRC/dias/traj nestable parents.
 
@@ -180,7 +174,7 @@ class NestableJobMixin:
         ]
 
 
-class BatchJob(Job, metaclass=BatchJobMeta):
+class BatchJob(Job):
     """
     Abstract controller for running a batch of child jobs.
 
@@ -193,8 +187,6 @@ class BatchJob(Job, metaclass=BatchJobMeta):
       with full resources
     - ``local_batch`` — all children serially with full resources
 
-    ``fail_fast`` stops serial local submission after the first
-    unsuccessful outcome.
     ``rewrite_cli`` is the optional per-task CLI rewriter used by
     ``chemsmart sub`` when submitting this batch as a scheduler array.
     """
@@ -205,7 +197,6 @@ class BatchJob(Job, metaclass=BatchJobMeta):
     def __init__(
         self,
         jobs: Optional[Sequence[Job]],
-        fail_fast: bool = False,
         write_outcome_logs: bool = False,
         label: str = "batch_job",
         jobrunner: Any = None,
@@ -219,7 +210,6 @@ class BatchJob(Job, metaclass=BatchJobMeta):
             **kwargs,
         )
         self.jobs: list[Job] = list(jobs) if jobs is not None else []
-        self.fail_fast = bool(fail_fast)
         self.write_outcome_logs = bool(write_outcome_logs)
         self.rewrite_cli = rewrite_cli
         self._last_batch_outcomes: list[dict[str, Any]] = []
@@ -251,7 +241,7 @@ class BatchJob(Job, metaclass=BatchJobMeta):
         total_jobs = len(self.jobs)
         if total_jobs == 0:
             raise ValueError(f"BatchJob {self} has no child jobs to run.")
-        child_index = task_id - 1
+        child_index = task_id - 1  # use 1-based task id
         if child_index < 0 or child_index >= total_jobs:
             raise ValueError(
                 f"Array task id {task_id} out of range for {total_jobs} "
@@ -285,7 +275,7 @@ class BatchJob(Job, metaclass=BatchJobMeta):
         self._last_batch_outcomes = outcomes
         if self.write_outcome_logs:
             self._write_outcome_logs(outcomes)
-        self._raise_if_failures(outcomes, total_jobs=1)
+        self._raise_if_failures(outcomes)
 
     def _run_local_batch(self, **kwargs: Any) -> None:
         """Run all children serially with full resources per child."""
@@ -311,31 +301,16 @@ class BatchJob(Job, metaclass=BatchJobMeta):
         self._last_batch_outcomes = outcomes
         if self.write_outcome_logs:
             self._write_outcome_logs(outcomes)
-        self._raise_if_failures(outcomes, total_jobs=total_jobs)
+        self._raise_if_failures(outcomes)
 
-    def _raise_if_failures(
-        self,
-        outcomes: Sequence[dict[str, Any]],
-        *,
-        total_jobs: int,
-    ) -> None:
-        """Raise ``BatchExecutionError`` summarizing attempted failures."""
+    def _raise_if_failures(self, outcomes: Sequence[dict[str, Any]]) -> None:
+        """Raise ``BatchExecutionError`` summarizing failed outcomes."""
         failures = [item for item in outcomes if not item["success"]]
         if not failures:
             return
 
-        attempted = len(outcomes)
-        not_started = max(0, total_jobs - attempted)
         lines = [f"- {item['label']}: {item['error']}" for item in failures]
-
-        if not_started:
-            summary = (
-                f"{attempted} attempted, {len(failures)} failed, "
-                f"{not_started} not started"
-            )
-        else:
-            summary = f"{len(failures)} of {attempted} batch job(s) failed"
-
+        summary = f"{len(failures)} of {len(outcomes)} batch job(s) failed"
         raise BatchExecutionError(summary + ":\n" + "\n".join(lines))
 
     def _run_jobs_serially(
@@ -343,25 +318,10 @@ class BatchJob(Job, metaclass=BatchJobMeta):
         jobs: Sequence[Job],
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Submit child jobs one-by-one.
-
-        When ``fail_fast`` is enabled, stop after the first unsuccessful
-        outcome. Jobs not started are omitted from the returned outcomes;
-        ``_raise_if_failures`` derives the not-started count from
-        ``total_jobs - len(outcomes)``.
-        """
+        """Submit child jobs one-by-one, attempting every job."""
         outcomes: list[dict[str, Any]] = []
-        for index, job in enumerate(jobs):
-            outcome = self._submit_job(job, **kwargs)
-            outcomes.append(outcome)
-            if self.fail_fast and not outcome["success"]:
-                remaining = len(jobs) - (index + 1)
-                if remaining:
-                    logger.warning(
-                        "fail_fast enabled: stopping serial batch after "
-                        f"{job.label} failed; {remaining} job(s) not started."
-                    )
-                break
+        for job in jobs:
+            outcomes.append(self._submit_job(job, **kwargs))
         return outcomes
 
     def _submit_job(
@@ -465,7 +425,6 @@ def run_child_jobs_as_batch(
     jobs: Sequence[Job],
     parent: Job,
     label_suffix: str = "_batch",
-    fail_fast: bool = False,
 ) -> BatchJobT:
     """Run sibling jobs through an engine ``BatchJob``.
 
@@ -476,9 +435,6 @@ def run_child_jobs_as_batch(
 
     Scheduler array / ``--child-index`` selection is handled at the nestable
     parent ``_run`` boundary via ``run_nestable_job``, not in this helper.
-
-    ``fail_fast`` controls whether execution stops after the first
-    unsuccessful child (default: run all children, then raise on failures).
 
     Returns the completed ``BatchJob`` instance.
     """
@@ -498,7 +454,6 @@ def run_child_jobs_as_batch(
     )
     batch_job = batch_cls(
         jobs=jobs,
-        fail_fast=fail_fast,
         label=f"{parent.label}{label_suffix}",
         jobrunner=parent.jobrunner,
     )

@@ -464,7 +464,6 @@ class GaussianDIASJob(NestableJobMixin, GaussianJob):
             jobs=self.all_molecules_jobs,
             parent=self,
             label_suffix="_molecules_batch",
-            fail_fast=False,
         )
 
     def _run_fragment1_jobs(self):
@@ -482,7 +481,6 @@ class GaussianDIASJob(NestableJobMixin, GaussianJob):
             jobs=self.fragment1_jobs,
             parent=self,
             label_suffix="_fragment1_batch",
-            fail_fast=False,
         )
 
     def _run_fragment2_jobs(self):
@@ -499,7 +497,6 @@ class GaussianDIASJob(NestableJobMixin, GaussianJob):
             jobs=self.fragment2_jobs,
             parent=self,
             label_suffix="_fragment2_batch",
-            fail_fast=False,
         )
 
     def _run(self, **kwargs):

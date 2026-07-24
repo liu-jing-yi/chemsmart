@@ -187,7 +187,7 @@ class TestBatchJobRefactor:
         with pytest.raises(BatchExecutionError, match="fail_job"):
             batch.run()
 
-    def test_serial_fail_fast_false_attempts_all_then_raises(self, pbs_server):
+    def test_serial_attempts_all_then_raises(self, pbs_server):
         from chemsmart.jobs.batch import BatchExecutionError
 
         dummy_batch_cls = self._dummy_batch_cls()
@@ -205,51 +205,14 @@ class TestBatchJobRefactor:
 
         batch = dummy_batch_cls(
             jobs=[fail_job, ok_job],
-            fail_fast=False,
             jobrunner=runner,
         )
 
-        with pytest.raises(BatchExecutionError, match="1 of 2") as exc_info:
+        with pytest.raises(BatchExecutionError, match="1 of 2"):
             batch.run()
 
-        assert "not started" not in str(exc_info.value)
         fail_job.run.assert_called_once()
         ok_job.run.assert_called_once()
-
-    def test_serial_fail_fast_true_omits_unstarted_from_report(
-        self, pbs_server
-    ):
-        from chemsmart.jobs.batch import BatchExecutionError
-
-        dummy_batch_cls = self._dummy_batch_cls()
-        runner = JobRunner(
-            server=pbs_server, fake=True, no_run_in_parallel=True
-        )
-
-        fail_job = Mock(label="fail_job")
-        fail_job.run.side_effect = RuntimeError("fail")
-        fail_job.is_complete.return_value = False
-
-        later_job = Mock(label="later_job")
-        later_job.run.return_value = None
-        later_job.is_complete.return_value = True
-
-        batch = dummy_batch_cls(
-            jobs=[fail_job, later_job],
-            fail_fast=True,
-            jobrunner=runner,
-        )
-
-        with pytest.raises(
-            BatchExecutionError, match="1 attempted, 1 failed, 1 not started"
-        ) as exc_info:
-            batch.run()
-
-        assert "fail_job" in str(exc_info.value)
-        assert "later_job" not in str(exc_info.value)
-        fail_job.run.assert_called_once()
-        later_job.run.assert_not_called()
-        assert len(batch._last_batch_outcomes) == 1
 
     def test_parallel_request_falls_back_to_serial(self, pbs_server):
         """In-process parallel is disabled; children run serially."""
@@ -273,19 +236,18 @@ class TestBatchJobRefactor:
 
         batch = dummy_batch_cls(
             jobs=[fail_job, later_job],
-            fail_fast=True,
             jobrunner=runner,
         )
 
-        with pytest.raises(
-            BatchExecutionError, match="1 attempted, 1 failed, 1 not started"
-        ):
+        with pytest.raises(BatchExecutionError, match="1 of 2"):
             batch.run()
 
         fail_job.run.assert_called_once()
-        later_job.run.assert_not_called()
+        later_job.run.assert_called_once()
         assert fail_job.jobrunner.num_cores == 16
         assert fail_job.jobrunner.mem_gb == 32
+        assert later_job.jobrunner.num_cores == 16
+        assert later_job.jobrunner.mem_gb == 32
 
     def test_run_child_jobs_as_batch_always_serial(self, pbs_server):
         """Nested batches always run children serially with full resources."""
@@ -314,10 +276,8 @@ class TestBatchJobRefactor:
             jobs=[child_a, child_b],
             parent=parent,
             label_suffix="_batch",
-            fail_fast=False,
         )
 
-        assert batch.fail_fast is False
         assert batch.label == "parent_batch"
         child_a.run.assert_called_once()
         child_b.run.assert_called_once()
@@ -647,7 +607,6 @@ class TestGaussianBatchDelegation:
         mock_batch_cls.assert_called_once()
         call_kwargs = mock_batch_cls.call_args.kwargs
         assert call_kwargs["jobs"] == mock_jobs
-        assert call_kwargs["fail_fast"] is False
         assert call_kwargs["label"] == "test_qrc_batch"
         mock_batch.run.assert_called_once()
 

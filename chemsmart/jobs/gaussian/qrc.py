@@ -156,7 +156,7 @@ class GaussianQRCJob(NestableJobMixin, GaussianJob):
         Execute both QRC jobs (forward and reverse) via ``GaussianBatchJob``.
 
         Forward and reverse children run serially, each with the parent
-        jobrunner's full resources. Failure policy is run-all-then-raise.
+        jobrunner's full resources.
         """
         logger.info(
             f"Running QRC jobs using GaussianBatchJob for {self.label}"
@@ -167,7 +167,6 @@ class GaussianQRCJob(NestableJobMixin, GaussianJob):
                 jobs=self.get_array_child_jobs(),
                 parent=self,
                 label_suffix="_batch",
-                fail_fast=False,
             )
         except Exception as e:
             logger.error(f"Error executing QRC batch job: {e}", exc_info=True)
