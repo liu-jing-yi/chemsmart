@@ -193,9 +193,8 @@ def process_pipeline(ctx, *args, **kwargs):
     def _process_nestable_array_job(parent_job):
         """Expand nestable children and submit as a scheduler array.
 
-        Each array task re-runs the parent CLI; the parent selects one child
-        via ``--child-index``, falling back to ``SLURM_ARRAY_TASK_ID`` /
-        ``PBS_ARRAYID`` / ``LSB_JOBINDEX``.
+        Each array task re-runs the parent CLI with ``--child-index`` selecting
+        one nested child.
         """
         if kwargs.get("test"):
             logger.warning('Not submitting as "test" flag specified.')

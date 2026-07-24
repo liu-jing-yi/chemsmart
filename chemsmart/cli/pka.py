@@ -801,52 +801,66 @@ def wrap_pka_jobs_in_batch(jobs, batch_cls, jobrunner, label="pka_batch"):
 def rewrite_pka_batch_cli_args(cli_args, batch_entry):
     """Rewrite a shared ``pka batch`` CLI into a single-row ``pka submit``.
 
-    Starts from the shared batch-entry rewriter (filepath, index, charge,
-    multiplicity, label), then applies pKa-only changes: ``batch`` →
-    ``submit``, ``--proton-index``, scheme, and drop reference options for
-    the direct scheme.
+    Starts from the shared batch-entry rewriter (filepath, index, label),
+    then applies pKa-only changes: ``batch`` → ``submit``, row
+    charge/multiplicity, ``--proton-index``, scheme, and drop reference
+    options for the direct scheme.
     """
-    from chemsmart.jobs.batch import (
-        apply_shared_batch_cli_options,
-        drop_cli_option,
-        set_cli_option,
-        set_cli_option_after,
-    )
+    from chemsmart.jobs.batch import _patch_cli_option, rewrite_batch_cli_args
 
     if not batch_entry:
         return list(cli_args)
 
-    args = list(cli_args)
-    insert_before = "pka" if "pka" in args else None
-    apply_shared_batch_cli_options(
-        args, batch_entry, insert_before=insert_before
-    )
+    args = rewrite_batch_cli_args(cli_args, batch_entry)
 
     if "batch" in args:
         args[args.index("batch")] = "submit"
 
-    if batch_entry.get("proton_index") is not None:
-        set_cli_option_after(
+    insert_before = "submit" if "submit" in args else None
+
+    if "charge" in batch_entry and batch_entry["charge"] is not None:
+        _patch_cli_option(
+            args,
+            long_opt="--charge",
+            value=str(batch_entry["charge"]),
+            insert_before=insert_before,
+        )
+
+    if (
+        "multiplicity" in batch_entry
+        and batch_entry["multiplicity"] is not None
+    ):
+        _patch_cli_option(
+            args,
+            long_opt="--multiplicity",
+            value=str(batch_entry["multiplicity"]),
+            insert_before=insert_before,
+        )
+
+    proton_index = batch_entry.get("proton_index")
+    if proton_index is not None:
+        _patch_cli_option(
             args,
             long_opt="--proton-index",
             short_opt="-pi",
-            value=str(batch_entry["proton_index"]),
+            value=str(proton_index),
+            drop={"--proton-index", "-pi"},
             insert_after="submit" if "submit" in args else None,
         )
 
     batch_scheme = batch_entry.get("scheme")
     if batch_scheme is not None:
-        set_cli_option(
+        _patch_cli_option(
             args,
             long_opt="--scheme",
             short_opt="-s",
             value=str(batch_scheme),
-            insert_before="submit" if "submit" in args else insert_before,
+            insert_before=insert_before,
         )
         if batch_scheme == "direct":
-            drop_cli_option(
+            _patch_cli_option(
                 args,
-                {
+                drop={
                     "--reference",
                     "-r",
                     "--reference-proton-index",

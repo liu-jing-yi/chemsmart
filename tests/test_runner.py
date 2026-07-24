@@ -316,14 +316,14 @@ class TestBatchJobRefactor:
         child_a.run.assert_called_once()
         child_b.run.assert_called_once()
 
-    def test_dias_array_task_selects_from_flattened_phases(
+    def test_dias_child_index_selects_from_flattened_phases(
         self, pbs_server, gaussian_jobrunner_no_scratch, mocker, monkeypatch
     ):
-        """Multi-phase DIAS must index the flattened child list at ``_run``."""
+        """Multi-phase DIAS selects one flattened child via ``child_index``."""
         from chemsmart.jobs.gaussian.dias import GaussianDIASJob
         from chemsmart.jobs.gaussian.settings import GaussianJobSettings
 
-        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "4")
+        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "1")
         settings = GaussianJobSettings()
         job = GaussianDIASJob(
             molecules=[MockMolecule(), MockMolecule()],
@@ -333,6 +333,7 @@ class TestBatchJobRefactor:
             fragment_indices="1",
             every_n_points=1,
             mode="ts",
+            child_index=4,
         )
         mol_jobs = [Mock(label="mol_p1"), Mock(label="mol_p2")]
         f1_jobs = [Mock(label="f1_p1"), Mock(label="f1_p2")]
@@ -470,14 +471,14 @@ class TestGaussianBatchDelegation:
         for mock_job in mock_jobs:
             mock_job.run.assert_called_once()
 
-    def test_traj_array_task_maps_stable_end_slice(
+    def test_traj_child_index_maps_stable_end_slice(
         self, pbs_server, gaussian_jobrunner_no_scratch, mocker, monkeypatch
     ):
-        """SLURM task id indexes the stable last-N set, not incompletes."""
+        """``child_index`` indexes the stable last-N set, not incompletes."""
         from chemsmart.jobs.gaussian.settings import GaussianJobSettings
         from chemsmart.jobs.gaussian.traj import GaussianTrajJob
 
-        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "2")
+        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "1")
         molecules = [MockMolecule() for _ in range(5)]
         for index, mol in enumerate(molecules):
             mol.energy = float(index)
@@ -491,6 +492,7 @@ class TestGaussianBatchDelegation:
             proportion_structures_to_use=1.0,
             num_structures_to_run=3,
             skip_completed=False,
+            child_index=2,
         )
 
         prepared = []
@@ -610,14 +612,14 @@ class TestGaussianBatchDelegation:
         assert call_kwargs["label"] == "test_qrc_batch"
         mock_batch.run.assert_called_once()
 
-    def test_qrc_array_task_runs_selected_child_only(
+    def test_qrc_child_index_runs_selected_child_only(
         self, pbs_server, gaussian_jobrunner_no_scratch, mocker, monkeypatch
     ):
-        """SLURM_ARRAY_TASK_ID selects one QRC child via nestable helper."""
+        """``--child-index`` selects one QRC child via nestable helper."""
         from chemsmart.jobs.gaussian.qrc import GaussianQRCJob
         from chemsmart.jobs.gaussian.settings import GaussianJobSettings
 
-        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "2")
+        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "1")
         gaussian_jobrunner_no_scratch.num_cores = 16
         gaussian_jobrunner_no_scratch.mem_gb = 32
 
@@ -627,6 +629,7 @@ class TestGaussianBatchDelegation:
             settings=settings,
             label="test_qrc_array",
             jobrunner=gaussian_jobrunner_no_scratch,
+            child_index=2,
         )
         child_f = Mock(label="qrc_f")
         child_f.run.return_value = None
@@ -658,7 +661,7 @@ class TestGaussianBatchDelegation:
         assert child_r.jobrunner.mem_gb == 32
         mock_batch_cls.return_value.run.assert_not_called()
 
-    def test_qrc_array_task_raises_when_selected_child_incomplete(
+    def test_qrc_child_index_raises_when_selected_child_incomplete(
         self, pbs_server, gaussian_jobrunner_no_scratch, mocker, monkeypatch
     ):
         """Nestable array path fails if the selected child did not complete."""
@@ -666,13 +669,14 @@ class TestGaussianBatchDelegation:
         from chemsmart.jobs.gaussian.qrc import GaussianQRCJob
         from chemsmart.jobs.gaussian.settings import GaussianJobSettings
 
-        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "1")
+        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "2")
         settings = GaussianJobSettings()
         job = GaussianQRCJob(
             molecule=MockMolecule(),
             settings=settings,
             label="test_qrc_incomplete",
             jobrunner=gaussian_jobrunner_no_scratch,
+            child_index=1,
         )
         child_f = Mock(label="qrc_f")
         child_f.run.return_value = None
@@ -698,6 +702,44 @@ class TestGaussianBatchDelegation:
             job._run()
 
         child_f.run.assert_called_once()
+        child_r.run.assert_not_called()
+
+    def test_qrc_slurm_env_without_child_index_runs_local_serial(
+        self, pbs_server, gaussian_jobrunner_no_scratch, mocker, monkeypatch
+    ):
+        """Scheduler env alone does not select a nestable child."""
+        from chemsmart.jobs.gaussian.qrc import GaussianQRCJob
+        from chemsmart.jobs.gaussian.settings import GaussianJobSettings
+
+        monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "2")
+        settings = GaussianJobSettings()
+        job = GaussianQRCJob(
+            molecule=MockMolecule(),
+            settings=settings,
+            label="test_qrc_local_with_slurm_env",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        child_f = Mock(label="qrc_f")
+        child_f.run.return_value = None
+        child_f.is_complete.return_value = True
+        child_r = Mock(label="qrc_r")
+        child_r.run.return_value = None
+        child_r.is_complete.return_value = True
+        mocker.patch.object(
+            job,
+            "get_array_child_jobs",
+            return_value=[child_f, child_r],
+        )
+        mock_batch_cls = mocker.patch(
+            "chemsmart.jobs.gaussian.qrc.GaussianBatchJob"
+        )
+        mock_batch = mock_batch_cls.return_value
+
+        job._run()
+
+        mock_batch_cls.assert_called_once()
+        mock_batch.run.assert_called_once()
+        child_f.run.assert_not_called()
         child_r.run.assert_not_called()
 
     def test_qrc_child_index_prefers_explicit_over_slurm_env(

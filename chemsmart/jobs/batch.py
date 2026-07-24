@@ -22,6 +22,7 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
+    Collection,
     Iterator,
     Mapping,
     Optional,
@@ -84,9 +85,7 @@ def cleared_array_task_env() -> Iterator[None]:
     """Temporarily remove scheduler array task id environment variables.
 
     Used so nested serial ``BatchJob.run()`` stays in ``local_batch`` mode when
-    an outer scheduler array task id is present. Nestable single-child selection
-    prefers ``--child-index``; the scheduler env remains only as a legacy
-    fallback in ``run_nestable_job``.
+    an outer scheduler array task id is present.
     """
     saved: dict[str, str] = {}
     for key in _ARRAY_TASK_ID_ENV_VARS:
@@ -249,13 +248,6 @@ class BatchJob(Job):
             )
 
         child = self.jobs[child_index]
-        runner = self.jobrunner
-        if runner is not None:
-            cores = runner.num_cores
-            mem_gb = runner.mem_gb
-        else:
-            cores = None
-            mem_gb = None
 
         logger.info(
             "BatchJob %r: execution=%s, task=%s/%s, cores=%s, "
@@ -264,41 +256,41 @@ class BatchJob(Job):
             BatchExecutionMode.ARRAY_TASK.value,
             task_id,
             total_jobs,
-            cores,
-            mem_gb,
+            *self._runner_resources(),
             child.label,
         )
         # Keep nested BatchJob.run() / legacy nestable fallback off this task id.
         with cleared_array_task_env():
             outcome = self._submit_job(child, **kwargs)
-        outcomes = [outcome]
-        self._last_batch_outcomes = outcomes
-        if self.write_outcome_logs:
-            self._write_outcome_logs(outcomes)
-        self._raise_if_failures(outcomes)
+        self._finish_batch_run([outcome])
 
     def _run_local_batch(self, **kwargs: Any) -> None:
         """Run all children serially with full resources per child."""
         total_jobs = len(self.jobs)
-        runner = self.jobrunner
-        if runner is not None:
-            cores = runner.num_cores
-            mem_gb = runner.mem_gb
-        else:
-            cores = None
-            mem_gb = None
         logger.info(
             "BatchJob %r: execution=%s, children=%s, policy=serial, "
             "cores=%s, mem_gb=%s",
             self.label,
             BatchExecutionMode.LOCAL_BATCH.value,
             total_jobs,
-            cores,
-            mem_gb,
+            *self._runner_resources(),
         )
-        outcomes = self._run_jobs_serially(self.jobs, **kwargs)
+        outcomes = [self._submit_job(job, **kwargs) for job in self.jobs]
+        self._finish_batch_run(outcomes)
 
-        self._last_batch_outcomes = outcomes
+    def _runner_resources(self) -> tuple[Optional[Any], Optional[Any]]:
+        """Return ``(num_cores, mem_gb)`` from the batch runner, if set."""
+        runner = self.jobrunner
+        if runner is None:
+            return None, None
+        return runner.num_cores, runner.mem_gb
+
+    def _finish_batch_run(
+        self,
+        outcomes: Sequence[dict[str, Any]],
+    ) -> None:
+        """Store outcomes, optionally log them, and raise on failures."""
+        self._last_batch_outcomes = list(outcomes)
         if self.write_outcome_logs:
             self._write_outcome_logs(outcomes)
         self._raise_if_failures(outcomes)
@@ -312,17 +304,6 @@ class BatchJob(Job):
         lines = [f"- {item['label']}: {item['error']}" for item in failures]
         summary = f"{len(failures)} of {len(outcomes)} batch job(s) failed"
         raise BatchExecutionError(summary + ":\n" + "\n".join(lines))
-
-    def _run_jobs_serially(
-        self,
-        jobs: Sequence[Job],
-        **kwargs: Any,
-    ) -> list[dict[str, Any]]:
-        """Submit child jobs one-by-one, attempting every job."""
-        outcomes: list[dict[str, Any]] = []
-        for job in jobs:
-            outcomes.append(self._submit_job(job, **kwargs))
-        return outcomes
 
     def _submit_job(
         self,
@@ -397,13 +378,9 @@ def run_nestable_job(parent: Job, run_local: Callable[[], None]) -> None:
 
     Nestable parents (crest/QRC/dias/traj) call this from ``_run``.
 
-    Selection order:
-
-    1. Explicit ``parent.child_index`` (1-based), typically from
-       ``--child-index`` rewritten into array runscripts
-    2. Scheduler array task id (``SLURM_ARRAY_TASK_ID`` / ``PBS_ARRAYID`` /
-       ``LSB_JOBINDEX``) as a legacy fallback
-    3. Otherwise *run_local* runs the full serial nested workflow
+    When ``parent.child_index`` is set (1-based, typically from ``--child-index``
+    rewritten into array runscripts), only that child runs. Otherwise *run_local*
+    runs the full serial nested workflow.
 
     Selected children are built via ``parent.get_array_child_job`` so siblings
     are not constructed.
@@ -411,10 +388,6 @@ def run_nestable_job(parent: Job, run_local: Callable[[], None]) -> None:
     child_index = parent.child_index
     if child_index is not None:
         _run_one_nestable_child(parent, int(child_index))
-        return
-    task_id = resolve_array_task_id()
-    if task_id is not None:
-        _run_one_nestable_child(parent, task_id)
         return
     run_local()
 
@@ -517,7 +490,7 @@ def get_nestable_array_children(job: Any) -> Optional[list[Job]]:
 def prepare_nestable_batch_jobs(jobs: Sequence[Any]) -> RewriteCliFn:
     """Attach 1-based ``child_index`` entries for nestable array submit.
 
-    Returns ``rewrite_nestable_cli_args`` for ``BatchJob.rewrite_cli``.
+    Returns ``rewrite_batch_cli_args`` for ``BatchJob.rewrite_cli``.
     """
     if not jobs:
         raise ValueError("Cannot prepare nestable batch jobs: empty job list.")
@@ -526,27 +499,7 @@ def prepare_nestable_batch_jobs(jobs: Sequence[Any]) -> RewriteCliFn:
         for task_id, job in enumerate(jobs, start=1)
     ]
     attach_batch_entries(jobs, entries)
-    return rewrite_nestable_cli_args
-
-
-def rewrite_nestable_cli_args(
-    cli_args: Sequence[str],
-    batch_entry: Optional[Mapping[str, Any]],
-) -> list[str]:
-    """Inject ``--child-index`` for a nestable array child."""
-    if not batch_entry:
-        return list(cli_args)
-
-    args = list(cli_args)
-    child_index = batch_entry.get("child_index")
-    if child_index is not None:
-        set_cli_option(
-            args,
-            long_opt="--child-index",
-            value=str(child_index),
-            insert_before=find_job_subcommand_token(args),
-        )
-    return args
+    return rewrite_batch_cli_args
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +509,12 @@ def rewrite_nestable_cli_args(
 _FILENAME_OPTIONS = frozenset({"-f", "--filename"})
 _INDEX_OPTIONS = frozenset({"-i", "--index", "--si", "--structure-index"})
 _PROGRAM_TOKENS = frozenset({"gaussian", "orca", "run", "sub"})
+
+# Known ``batch_entry`` keys mapped to CLI flags. Add new shared fields here.
+_BATCH_ENTRY_OPTION_FIELDS = (
+    ("label", "--label", None),
+    ("child_index", "--child-index", None),
+)
 
 
 def get_job_batch_entry(job: Any) -> Optional[dict[str, Any]]:
@@ -621,30 +580,34 @@ def prepare_batch_jobs(
     return rewrite_batch_cli_args
 
 
-def drop_cli_option(
-    tokens: list[str], option_names: set[str] | frozenset[str]
-) -> None:
-    """Remove matching options and their following value tokens."""
-    idx = 0
-    while idx < len(tokens):
-        if tokens[idx] in option_names:
-            del tokens[idx]
-            if idx < len(tokens):
-                del tokens[idx]
-            continue
-        idx += 1
-
-
-def set_cli_option(
+def _patch_cli_option(
     tokens: list[str],
     *,
-    long_opt: str,
-    value: str,
+    long_opt: Optional[str] = None,
     short_opt: Optional[str] = None,
+    value: Optional[str] = None,
+    drop: Optional[Collection[str]] = None,
     insert_before: Optional[str] = None,
+    insert_after: Optional[str] = None,
     prefer_short: bool = False,
 ) -> None:
-    """Set or insert a long/short option pair to *value*."""
+    """Remove, update, or insert one CLI option pair in *tokens*."""
+    if drop:
+        idx = 0
+        drop_names = set(drop)
+        while idx < len(tokens):
+            if tokens[idx] in drop_names:
+                del tokens[idx]
+                if idx < len(tokens):
+                    del tokens[idx]
+                continue
+            idx += 1
+
+    if value is None:
+        return
+    if long_opt is None:
+        raise ValueError("long_opt is required when value is set")
+
     if long_opt in tokens:
         pos = tokens.index(long_opt)
         if pos + 1 < len(tokens):
@@ -657,40 +620,16 @@ def set_cli_option(
         return
 
     insert_idx = len(tokens)
-    if insert_before is not None and insert_before in tokens:
+    if insert_after is not None and insert_after in tokens:
+        insert_idx = tokens.index(insert_after) + 1
+    elif insert_before is not None and insert_before in tokens:
         insert_idx = tokens.index(insert_before)
+
     opt = short_opt if prefer_short and short_opt is not None else long_opt
     tokens[insert_idx:insert_idx] = [opt, value]
 
 
-def set_cli_option_after(
-    tokens: list[str],
-    *,
-    long_opt: str,
-    value: str,
-    short_opt: Optional[str] = None,
-    insert_after: Optional[str] = None,
-) -> None:
-    """Replace an option pair, inserting after *insert_after* when absent."""
-    names = {long_opt}
-    if short_opt is not None:
-        names.add(short_opt)
-    drop_cli_option(tokens, names)
-    insert_idx = len(tokens)
-    if insert_after is not None and insert_after in tokens:
-        insert_idx = tokens.index(insert_after) + 1
-    tokens[insert_idx:insert_idx] = [long_opt, value]
-
-
-def replace_filename_option(tokens: list[str], filepath: str) -> None:
-    """Replace the value of ``-f``/``--filename`` with *filepath*."""
-    for idx in range(len(tokens) - 1):
-        if tokens[idx] in _FILENAME_OPTIONS:
-            tokens[idx + 1] = str(filepath)
-            return
-
-
-def find_job_subcommand_token(tokens: Sequence[str]) -> Optional[str]:
+def _find_job_subcommand_token(tokens: Sequence[str]) -> Optional[str]:
     """Return the job subcommand token (e.g. ``opt``/``pka``), not a path."""
     for token in reversed(tokens):
         if token.startswith("-"):
@@ -708,58 +647,45 @@ def _resolve_index_value(batch_entry: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def apply_shared_batch_cli_options(
+def _apply_batch_entry_to_cli(
     args: list[str],
     batch_entry: Mapping[str, Any],
     *,
     insert_before: Optional[str] = None,
 ) -> None:
-    """Apply CLI options shared by homogeneous and heterogeneous batch entries."""
+    """Map known ``batch_entry`` fields onto shared submit CLI tokens."""
     filepath = batch_entry.get("filepath")
     if filepath is not None:
-        replace_filename_option(args, str(filepath))
+        _patch_cli_option(
+            args,
+            long_opt="--filename",
+            short_opt="-f",
+            value=str(filepath),
+            insert_before=insert_before,
+            prefer_short=any(token in _FILENAME_OPTIONS for token in args),
+        )
 
     index_value = _resolve_index_value(batch_entry)
     if index_value is not None:
         prefer_short = any(token in {"-i", "--si"} for token in args)
-        drop_cli_option(args, _INDEX_OPTIONS)
-        set_cli_option(
+        _patch_cli_option(
             args,
             long_opt="--index",
             short_opt="-i",
             value=index_value,
+            drop=_INDEX_OPTIONS,
             insert_before=insert_before,
             prefer_short=prefer_short,
         )
 
-    label = batch_entry.get("label")
-    if label is not None:
-        set_cli_option(
+    for entry_key, long_opt, short_opt in _BATCH_ENTRY_OPTION_FIELDS:
+        if entry_key not in batch_entry or batch_entry[entry_key] is None:
+            continue
+        _patch_cli_option(
             args,
-            long_opt="--label",
-            short_opt="-l",
-            value=str(label),
-            insert_before=insert_before,
-        )
-
-    if "charge" in batch_entry and batch_entry["charge"] is not None:
-        set_cli_option(
-            args,
-            long_opt="--charge",
-            short_opt="-c",
-            value=str(batch_entry["charge"]),
-            insert_before=insert_before,
-        )
-
-    if (
-        "multiplicity" in batch_entry
-        and batch_entry["multiplicity"] is not None
-    ):
-        set_cli_option(
-            args,
-            long_opt="--multiplicity",
-            short_opt="-m",
-            value=str(batch_entry["multiplicity"]),
+            long_opt=long_opt,
+            short_opt=short_opt,
+            value=str(batch_entry[entry_key]),
             insert_before=insert_before,
         )
 
@@ -770,18 +696,19 @@ def rewrite_batch_cli_args(
 ) -> list[str]:
     """Rewrite shared submit CLI args from a child ``batch_entry``.
 
-    Applies shared fields (filepath, index, label, charge, multiplicity).
-    Domain-specific overlays (e.g. pKa ``batch`` → ``submit``) belong in
-    their own rewriter that calls this first.
+    Applies shared ``batch_entry`` fields (filepath, index, label,
+    child_index). Domain-specific overlays (e.g. pKa charge/multiplicity
+    and ``batch`` → ``submit``) belong in their own rewriter that calls
+    this first.
     """
     if not batch_entry:
         return list(cli_args)
 
     args = list(cli_args)
-    apply_shared_batch_cli_options(
+    _apply_batch_entry_to_cli(
         args,
         batch_entry,
-        insert_before=find_job_subcommand_token(args),
+        insert_before=_find_job_subcommand_token(args),
     )
     return args
 
