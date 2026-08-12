@@ -156,6 +156,7 @@ computational chemistry software.
    :maxdepth: 2
    :caption: API Reference
 
+   api-molecule
    modules
 
 ********************
