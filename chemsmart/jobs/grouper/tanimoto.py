@@ -1,7 +1,8 @@
 """
-Tanimoto similarity-based molecular grouping.
+Fingerprint- and shape-similarity-based molecular grouping.
 
-Groups molecules by fingerprint similarity using Tanimoto coefficient.
+Binary/topological fingerprints use Tanimoto similarity, while USR/USRCAT
+3D descriptors use RDKit's native USR similarity score.
 """
 
 import logging
@@ -10,7 +11,7 @@ from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 from rdkit import Chem, DataStructs
-from rdkit.Chem import rdMolDescriptors
+from rdkit.Chem import rdDetermineBonds, rdMolDescriptors
 from rdkit.Chem.rdFingerprintGenerator import GetRDKitFPGenerator
 
 from chemsmart.io.molecules.structure import Molecule
@@ -22,10 +23,11 @@ logger = logging.getLogger(__name__)
 
 class TanimotoSimilarityGrouper(MatrixGrouper):
     """
-    Groups molecules based on fingerprint similarity using Tanimoto coefficient.
+    Groups molecules based on fingerprint or 3D-descriptor similarity using
+    hierarchical complete-linkage clustering.
 
     This class supports different fingerprint types and uses hierarchical
-    complete-linkage clustering to group structurally similar molecules.
+    complete-linkage clustering to group structurally or shape-similar molecules.
 
     Supported fingerprint types:
     - "rdkit": RDKit topological fingerprint (default)
@@ -67,9 +69,7 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
                 "torsion", "usr", "usrcat". Defaults to "rdkit".
             label (str): Label/name for output files. Defaults to None.
             ignore_hydrogens (bool): Whether to remove hydrogens before fingerprint
-                calculation. Defaults to False. Warning: For some
-                molecules, removing hydrogens may cause kekulization
-                issues. If errors occur, try setting this to False.
+                calculation. Defaults to False.
             conformer_ids (list[str]): Custom IDs for each molecule (e.g., ['c1', 'c2']).
             matrix_format (str): Output format ('xlsx', 'csv', 'txt'). Defaults to 'xlsx'.
         """
@@ -99,18 +99,35 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
         # Convert molecules to list for indexing
         self.molecules = list(molecules)
 
-        # Convert valid molecules to RDKit format
+        # 2D/topological fingerprints use RDKit-only bond perception, while
+        # USR/USRCAT preserve the previous conformer preparation pathway.
         self.rdkit_molecules = []
         self.rdkit_molecule_indices = []
         tanimoto_skipped_indices = []
         for original_idx, mol in enumerate(self.molecules):
-            rdkit_mol = mol.to_rdkit()
+            rdkit_mol = self._molecule_to_rdkit(mol)
             if rdkit_mol is not None:
-                # Remove hydrogens if requested
+                self.rdkit_molecules.append(rdkit_mol)
+                self.rdkit_molecule_indices.append(original_idx)
+            else:
+                tanimoto_skipped_indices.append(original_idx)
+
+        self._tanimoto_skipped_indices = sorted(set(tanimoto_skipped_indices))
+
+    def _molecule_to_rdkit(self, mol: Molecule) -> Optional[Chem.Mol]:
+        """Build an RDKit molecule using preparation appropriate to the descriptor."""
+        try:
+            if self.fingerprint_type in {"usr", "usrcat"}:
+                # Preserve the previous working preparation for 3D descriptors.
+                # USR/USRCAT operate on the RDKit molecule/conformer produced by
+                # CHEMSMART without re-perceiving bond orders from every XYZ conformer.
+                rdkit_mol = mol.to_rdkit()
+                if rdkit_mol is None:
+                    return None
+
                 if self.ignore_hydrogens:
                     try:
                         rdkit_mol = Chem.RemoveHs(rdkit_mol, sanitize=False)
-                        # Re-sanitize without kekulization to avoid aromatic ring issues
                         Chem.SanitizeMol(
                             rdkit_mol,
                             sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL
@@ -118,17 +135,62 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
                         )
                     except Exception as e:
                         logger.warning(
-                            f"Failed to remove hydrogens for molecule: {e}. Using original."
+                            f"Failed to remove hydrogens for {self.fingerprint_type}: {e}. "
+                            "Using the original RDKit molecule."
                         )
                         rdkit_mol = mol.to_rdkit()
-                if rdkit_mol is not None:
-                    self.rdkit_molecules.append(rdkit_mol)
-                    self.rdkit_molecule_indices.append(original_idx)
-                else:
-                    tanimoto_skipped_indices.append(original_idx)
-            else:
-                tanimoto_skipped_indices.append(original_idx)
-        self._tanimoto_skipped_indices = sorted(set(tanimoto_skipped_indices))
+
+                return rdkit_mol
+
+            xyz_lines = [str(mol.num_atoms), ""]
+            xyz_lines.extend(
+                f"{symbol} {x:.10f} {y:.10f} {z:.10f}"
+                for symbol, (x, y, z) in zip(
+                    mol.chemical_symbols, mol.positions
+                )
+            )
+            xyz_block = "\n".join(xyz_lines) + "\n"
+
+            rdkit_mol = Chem.MolFromXYZBlock(xyz_block)
+            if rdkit_mol is None:
+                return None
+
+            charge = mol.charge
+            if charge is None:
+                charge = 0
+            charge = int(charge)
+
+            # 2D/topological fingerprints require a complete, sanitized
+            # chemical graph perceived by RDKit from the input geometry.
+            try:
+                rdDetermineBonds.DetermineBonds(
+                    rdkit_mol,
+                    charge=charge,
+                )
+            except Exception as first_error:
+                if not rdDetermineBonds.hueckelEnabled():
+                    raise first_error
+
+                rdkit_mol = Chem.MolFromXYZBlock(xyz_block)
+                if rdkit_mol is None:
+                    return None
+                rdDetermineBonds.DetermineBonds(
+                    rdkit_mol,
+                    useHueckel=True,
+                    charge=charge,
+                )
+
+            Chem.SanitizeMol(rdkit_mol)
+
+            if self.ignore_hydrogens:
+                rdkit_mol = Chem.RemoveHs(rdkit_mol, sanitize=False)
+
+            return rdkit_mol
+        except Exception as e:
+            logger.warning(
+                f"RDKit molecule preparation failed for {self.fingerprint_type}: {e}"
+            )
+            return None
 
     def _get_fingerprint(self, rdkit_mol: Chem.Mol) -> Optional[object]:
         """
@@ -181,13 +243,13 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
 
     def group(self) -> Tuple[List[List[Molecule]], List[List[int]]]:
         """
-        Group molecules based on Tanimoto similarity using hierarchical
-        complete-linkage clustering.
+        Group molecules based on fingerprint or 3D-descriptor similarity using
+        hierarchical complete-linkage clustering.
 
-        Computes fingerprints for all molecules, calculates pairwise
-        Tanimoto similarities, converts them internally to distances
-        (1 - similarity), and clusters molecules with hierarchical
-        complete linkage.
+        Binary/topological fingerprints are compared with Tanimoto similarity,
+        whereas USR/USRCAT descriptors are compared with RDKit's native USR
+        similarity score. Similarities are converted internally to distances
+        (1 - similarity) before hierarchical complete-linkage clustering.
 
         Returns:
             Tuple[List[List[Molecule]], List[List[int]]]: Tuple containing:
@@ -229,9 +291,14 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
             set(self._tanimoto_skipped_indices)
             | set(fingerprint_skipped_indices)
         )
-        self._matrix_skipped_ids = [
-            self.conformer_ids[idx] for idx in self._matrix_skipped_indices
-        ]
+        if self.conformer_ids is not None:
+            self._matrix_skipped_ids = [
+                self.conformer_ids[idx] for idx in self._matrix_skipped_indices
+            ]
+        else:
+            self._matrix_skipped_ids = [
+                str(idx + 1) for idx in self._matrix_skipped_indices
+            ]
 
         num_valid = len(valid_indices)
 
@@ -252,38 +319,35 @@ class TanimotoSimilarityGrouper(MatrixGrouper):
             return groups, index_groups
 
         logger.info(
-            f"[{self.__class__.__name__}] Computing Tanimoto similarities for {num_valid} valid molecules"
+            f"[{self.__class__.__name__}] Computing pairwise similarities for {num_valid} valid molecules"
         )
 
         # Compute similarity matrix
         similarity_matrix = np.zeros((num_valid, num_valid), dtype=np.float32)
 
-        # Check if we are using numpy arrays (USR/USRCAT)
-        if valid_fps and isinstance(valid_fps[0], np.ndarray):
-            # Calculate Tanimoto for continuous variables (vectors)
-            fps_array = np.array(valid_fps)
-            dot_products = np.dot(fps_array, fps_array.T)
-            norms_sq = np.diag(dot_products)
-            denominator = norms_sq[:, None] + norms_sq[None, :] - dot_products
-            denominator[denominator == 0] = 1e-9
-            similarity_matrix = dot_products / denominator
-        else:
-            # Use RDKit DataStructs for BitVects
-            pairs = [
-                (i, j)
-                for i in range(num_valid)
-                for j in range(i + 1, num_valid)
-            ]
+        pairs = [
+            (i, j) for i in range(num_valid) for j in range(i + 1, num_valid)
+        ]
 
+        if self.fingerprint_type in {"usr", "usrcat"}:
+            # USR/USRCAT are continuous 3D descriptors and should be compared
+            # with RDKit's native USR similarity score, not Tanimoto.
+            with ThreadPool(self.num_procs) as pool:
+                similarities = pool.starmap(
+                    rdMolDescriptors.GetUSRScore,
+                    [(valid_fps[i], valid_fps[j]) for i, j in pairs],
+                )
+        else:
+            # Binary/topological fingerprints use Tanimoto similarity.
             with ThreadPool(self.num_procs) as pool:
                 similarities = pool.starmap(
                     DataStructs.FingerprintSimilarity,
                     [(valid_fps[i], valid_fps[j]) for i, j in pairs],
                 )
 
-            # Fill similarity matrix
-            for (i, j), sim in zip(pairs, similarities):
-                similarity_matrix[i, j] = similarity_matrix[j, i] = sim
+        # Fill similarity matrix
+        for (i, j), sim in zip(pairs, similarities):
+            similarity_matrix[i, j] = similarity_matrix[j, i] = sim
 
         np.fill_diagonal(similarity_matrix, 1.0)
 

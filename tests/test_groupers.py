@@ -737,19 +737,7 @@ class Test_Tanimoto_similarity_grouper:
         assert len(molecules) == 18
         grouper = TanimotoSimilarityGrouper(
             molecules,
-            threshold=0.98,
-            fingerprint_type="usrcat",
-            num_procs=self.NUM_PROCS,
-        )
-        groups, group_indices = grouper.group()
-        assert len(groups) == 4
-        assert len(group_indices) == 4
-        unique_structures = grouper.unique()
-        assert len(unique_structures) == 4
-
-        grouper = TanimotoSimilarityGrouper(
-            molecules,
-            threshold=0.999,
+            threshold=0.8,
             fingerprint_type="usrcat",
             num_procs=self.NUM_PROCS,
         )
@@ -758,6 +746,18 @@ class Test_Tanimoto_similarity_grouper:
         assert len(group_indices) == 14
         unique_structures = grouper.unique()
         assert len(unique_structures) == 14
+
+        grouper = TanimotoSimilarityGrouper(
+            molecules,
+            threshold=0.9,
+            fingerprint_type="usrcat",
+            num_procs=self.NUM_PROCS,
+        )
+        groups, group_indices = grouper.group()
+        assert len(groups) == 17
+        assert len(group_indices) == 17
+        unique_structures = grouper.unique()
+        assert len(unique_structures) == 17
 
 
 @pytest.mark.usefixtures("temporary_working_dir")
@@ -1056,10 +1056,10 @@ class Test_other_groupers:
             num_procs=self.NUM_PROCS,
         )
         groups, group_indices = grouper.group()
-        assert len(groups) == 4
-        assert len(group_indices) == 4
+        assert len(groups) == 1
+        assert len(group_indices) == 1
         unique_structures = grouper.unique()
-        assert len(unique_structures) == 4
+        assert len(unique_structures) == 1
 
     def test_rdkit_isomorphism_grouper(
         self, methanol_molecules, methanol_and_ethanol

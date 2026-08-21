@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional, Tuple
 
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import rdMolHash
+from rdkit.Chem import rdDetermineBonds, rdMolHash
 
 from chemsmart.io.molecules.structure import Molecule
 
@@ -23,8 +23,8 @@ class RDKitIsomorphismGrouper(MoleculeGrouper):
     """
     Group molecules by RDKit graph isomorphism.
 
-    Uses RDKit's molecular hashing and isomorphism detection to group
-    molecules with identical connectivity patterns. Efficient for large
+    Uses RDKit bond-order/aromaticity perception and molecular hashing to group
+    molecules with identical chemical graphs. Efficient for large
     datasets due to hash-based pre-filtering.
 
     Attributes:
@@ -51,9 +51,7 @@ class RDKitIsomorphismGrouper(MoleculeGrouper):
             molecules (Iterable[Molecule]): Collection of molecules to group.
             num_procs (int): Number of processes for parallel computation.
             ignore_hydrogens (bool): Whether to remove hydrogens before
-                isomorphism comparison. Defaults to False. Warning: For some
-                molecules, removing hydrogens may cause kekulization
-                issues. If errors occur, try setting this to False.
+                isomorphism comparison. Defaults to False.
             label (str): Label/name for output files. Defaults to None.
             conformer_ids (list[str]): Custom IDs for each molecule.
             matrix_format (str): Output format ('xlsx', 'csv', 'txt'). Defaults to 'xlsx'.
@@ -70,51 +68,37 @@ class RDKitIsomorphismGrouper(MoleculeGrouper):
         self.ignore_hydrogens = ignore_hydrogens
 
     def _mol_to_rdkit(self, mol: Molecule):
-        """Convert Molecule to RDKit mol object."""
+        """Build an RDKit molecule using RDKit bond-order and aromaticity perception."""
         try:
-            # Generate XYZ block string
             lines = [str(mol.num_atoms), ""]
             for symbol, pos in zip(mol.chemical_symbols, mol.positions):
                 lines.append(
                     f"{symbol} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}"
                 )
-            xyz_string = "\n".join(lines)
+            xyz_string = "\n".join(lines) + "\n"
 
             rdkit_mol = Chem.MolFromXYZBlock(xyz_string)
-            if rdkit_mol is not None:
-                # Determine connectivity
-                try:
-                    Chem.rdDetermineBonds.DetermineConnectivity(rdkit_mol)
-                except AttributeError:
-                    # Fallback for older RDKit versions
-                    from rdkit.Chem import rdDetermineBonds
+            if rdkit_mol is None:
+                return None
 
-                    rdDetermineBonds.DetermineConnectivity(rdkit_mol)
+            charge = getattr(mol, "charge", 0)
+            if charge is None:
+                charge = 0
 
-                # Remove hydrogens if requested
-                if self.ignore_hydrogens:
-                    try:
-                        rdkit_mol = Chem.RemoveHs(rdkit_mol, sanitize=False)
-                        # Re-sanitize without kekulization to avoid aromatic ring issues
-                        Chem.SanitizeMol(
-                            rdkit_mol,
-                            sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL
-                            ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to remove hydrogens: {e}. Using original molecule."
-                        )
-                        # Re-convert without removing hydrogens
-                        rdkit_mol = Chem.MolFromXYZBlock(xyz_string)
-                        if rdkit_mol is not None:
-                            Chem.rdDetermineBonds.DetermineConnectivity(
-                                rdkit_mol
-                            )
+            rdDetermineBonds.DetermineBonds(
+                rdkit_mol,
+                charge=int(charge),
+            )
+            Chem.SanitizeMol(rdkit_mol)
+
+            if self.ignore_hydrogens:
+                rdkit_mol = Chem.RemoveHs(rdkit_mol)
 
             return rdkit_mol
         except Exception as e:
-            logger.warning(f"Failed to convert molecule to RDKit: {e}")
+            logger.warning(
+                f"RDKit bond-order/aromaticity perception failed: {e}"
+            )
             return None
 
     def _get_mol_hash(self, rdkit_mol) -> Optional[str]:
@@ -132,8 +116,9 @@ class RDKitIsomorphismGrouper(MoleculeGrouper):
         """
         Group molecules by RDKit graph isomorphism.
 
-        Converts molecules to RDKit format, computes canonical hashes,
-        and groups molecules with identical hashes. Also saves results
+        Builds RDKit molecules from coordinates, lets RDKit perceive bond orders
+        and aromaticity, computes canonical hashes, and groups molecules with
+        identical chemical graphs. Also saves results
         to an Excel file.
 
         Returns:
