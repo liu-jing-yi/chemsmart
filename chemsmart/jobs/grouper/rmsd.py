@@ -25,12 +25,12 @@ from scipy.spatial.distance import cdist
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.utils.utils import find_irmsd_command, kabsch_align
 
-from .base import MoleculeGrouper
+from .base import MatrixGrouper, MoleculeGrouper
 
 logger = logging.getLogger(__name__)
 
 
-class RMSDGrouper(MoleculeGrouper):
+class RMSDGrouper(MatrixGrouper):
     """
     Abstract base class for RMSD-based molecular grouping.
 
@@ -72,9 +72,14 @@ class RMSDGrouper(MoleculeGrouper):
         Args:
             molecules (Iterable[Molecule]): Collection of molecules to group.
             threshold (float): RMSD threshold for grouping. Defaults to 0.5.
-                Ignored if num_groups is specified.
-            num_groups (int): Number of groups to create. When specified,
-                automatically determines threshold to create this many groups.
+                Ignored if num_groups is specified. In threshold mode,
+                clusters are formed by hierarchical complete-linkage
+                clustering with linkage distance <= threshold.
+            num_groups (int): Requested number of groups. When specified,
+                complete-linkage merges are applied level by level. If the
+                next full complete-linkage distance level would reduce the
+                number of groups below the requested value, the previous
+                level is retained.
             num_procs (int): Number of processes for parallel computation.
             align_molecules (bool): Whether to align molecules using Kabsch
                 algorithm before RMSD calculation. Defaults to True.
@@ -86,32 +91,20 @@ class RMSDGrouper(MoleculeGrouper):
             energy_type (str): Energy type for output files. Defaults to 'E'.
 
         Note:
-            Uses complete linkage clustering: a structure joins a group only if
-            its RMSD to ALL existing members is below the threshold. This prevents
-            the chaining effect where dissimilar structures end up in the same
-            group through intermediate "bridge" structures.
+            Uses standard hierarchical agglomerative complete-linkage
+            clustering based on the full pairwise RMSD matrix.
         """
         super().__init__(
             molecules,
-            num_procs,
+            threshold=threshold,
+            num_groups=num_groups,
+            num_procs=num_procs,
             label=label,
             conformer_ids=conformer_ids,
             matrix_format=matrix_format,
             energy_type=energy_type,
             **kwargs,
         )
-
-        # Validate that threshold and num_groups are mutually exclusive
-        if threshold is not None and num_groups is not None:
-            raise ValueError(
-                "Cannot specify both threshold (-T) and num_groups (-N). Please use only one."
-            )
-
-        if threshold is None and num_groups is None:
-            threshold = 0.5
-        self.threshold = threshold  # RMSD threshold for grouping
-        self.num_groups = num_groups  # Number of groups to create
-        self._auto_threshold = None  # Will be set if num_groups is used
         self.align_molecules = align_molecules
         self.ignore_hydrogens = ignore_hydrogens
         # Cache sorted chemical symbols as sets for faster comparison
@@ -149,13 +142,16 @@ class RMSDGrouper(MoleculeGrouper):
 
     def group(self) -> Tuple[List[List[Molecule]], List[List[int]]]:
         """
-        Group molecules by geometric similarity using RMSD clustering.
+        Group molecules by geometric similarity using hierarchical
+        complete-linkage RMSD clustering.
 
         Computes pairwise RMSD values between all molecules and groups
-        those within the specified threshold using connected components
-        clustering, or automatically determines threshold to create
-        the specified number of groups. Automatically saves RMSD matrix
-        to group_result folder.
+        them either by a linkage-distance threshold or by a requested
+        number of groups. In num_groups mode, if the next full
+        complete-linkage distance level would reduce the number of groups
+        below the requested value, the previous level is retained.
+        Automatically saves the full RMSD matrix to the group_result
+        folder.
 
         Returns:
             Tuple[List[List[Molecule]], List[List[int]]]: Tuple containing:
@@ -166,6 +162,7 @@ class RMSDGrouper(MoleculeGrouper):
 
         # Record start time for grouping process
         grouping_start_time = time.time()
+        self._auto_threshold = None
 
         n = len(self.molecules)
         indices = [(i, j) for i in range(n) for j in range(i + 1, n)]
@@ -192,13 +189,9 @@ class RMSDGrouper(MoleculeGrouper):
 
         # Choose grouping strategy based on parameters (do this first to set _auto_threshold)
         if self.num_groups is not None:
-            groups, index_groups = self._group_by_num_groups(
-                rmsd_matrix, rmsd_values, indices
-            )
+            groups, index_groups = self._group_by_num_groups(rmsd_matrix)
         else:
-            groups, index_groups = self._group_by_threshold(
-                rmsd_values, indices
-            )
+            groups, index_groups = self._group_by_threshold(rmsd_matrix)
 
         # Calculate total grouping time
         grouping_end_time = time.time()
@@ -210,261 +203,6 @@ class RMSDGrouper(MoleculeGrouper):
 
         # Save full matrix using unified record entrypoint
         self.record(rmsd_matrix=rmsd_matrix, grouping_time=grouping_time)
-
-        return groups, index_groups
-
-    def _group_by_threshold(self, rmsd_values, indices):
-        """
-        Threshold-based grouping using complete linkage.
-
-        A structure joins a group only if its RMSD to ALL existing members
-        is below the threshold. This prevents the chaining effect.
-        """
-        n = len(self.molecules)
-
-        # Build adjacency matrix for clustering
-        adj_matrix = np.zeros((n, n), dtype=bool)
-        for (i, j), rmsd in zip(indices, rmsd_values):
-            if rmsd < self.threshold:
-                adj_matrix[i, j] = adj_matrix[j, i] = True
-
-        # Complete linkage grouping
-        groups, index_groups = self._complete_linkage_grouping(adj_matrix, n)
-
-        return groups, index_groups
-
-    def _complete_linkage_grouping(self, adj_matrix, n):
-        """
-        Perform complete linkage grouping (from last to first).
-
-        A structure joins a group only if its RMSD to ALL existing members
-        of that group is below the threshold (i.e., all edges exist in adj_matrix).
-        This prevents the chaining effect where dissimilar structures end up
-        in the same group through intermediate "bridge" structures.
-
-        Iterates from last to first structure so that higher-energy structures
-        (typically at the end) are more likely to form singleton groups,
-        preserving lower-energy structures in larger groups.
-
-        Args:
-            adj_matrix: Boolean adjacency matrix where adj_matrix[i,j] = True
-                       if RMSD between i and j is below threshold
-            n: Number of molecules
-
-        Returns:
-            Tuple of (groups, index_groups)
-        """
-        assigned = [False] * n
-        groups = []
-        index_groups = []
-
-        # Iterate from last to first (higher energy structures first as seeds)
-        for i in range(n - 1, -1, -1):
-            if assigned[i]:
-                continue
-
-            # Start a new group with molecule i
-            current_group = [i]
-            assigned[i] = True
-
-            # Try to add unassigned molecules with lower indices (lower energy)
-            for j in range(i - 1, -1, -1):
-                if assigned[j]:
-                    continue
-
-                # Check if j is connected to ALL members in current_group
-                can_join = all(
-                    adj_matrix[j, member] for member in current_group
-                )
-
-                if can_join:
-                    current_group.append(j)
-                    assigned[j] = True
-
-            # Sort indices within group (lowest index = lowest energy first)
-            current_group.sort()
-            # Add the completed group
-            groups.append([self.molecules[idx] for idx in current_group])
-            index_groups.append(current_group)
-
-        # Reverse groups so that groups containing lower-energy structures come first
-        groups.reverse()
-        index_groups.reverse()
-
-        return groups, index_groups
-
-    def _group_by_num_groups(self, rmsd_matrix, rmsd_values, indices):
-        """Automatic grouping to create specified number of groups."""
-        n = len(self.molecules)
-
-        if self.num_groups >= n:
-            # If requesting more groups than molecules, each molecule is its own group
-            logger.info(
-                f"[{self.__class__.__name__}] Requested {self.num_groups} groups but only {n} molecules. Creating {n} groups."
-            )
-            groups = [[mol] for mol in self.molecules]
-            index_groups = [[i] for i in range(n)]
-            return groups, index_groups
-
-        # Find appropriate threshold to create desired number of groups
-        threshold = self._find_optimal_threshold(rmsd_values, indices, n)
-
-        # Store the auto-determined threshold for summary reporting
-        self._auto_threshold = threshold
-
-        logger.info(
-            f"[{self.__class__.__name__}] Auto-determined threshold: {threshold:.7f} to create {self.num_groups} groups"
-        )
-
-        # Build adjacency matrix with the determined threshold
-        adj_matrix = np.zeros((n, n), dtype=bool)
-        for (i, j), rmsd in zip(indices, rmsd_values):
-            if rmsd < threshold:
-                adj_matrix[i, j] = adj_matrix[j, i] = True
-
-        # Use complete linkage grouping
-        groups, index_groups = self._complete_linkage_grouping(adj_matrix, n)
-        actual_groups = len(groups)
-
-        logger.info(
-            f"[{self.__class__.__name__}] Created {actual_groups} groups (requested: {self.num_groups})"
-        )
-
-        return groups, index_groups
-
-    def _count_groups_at_threshold(
-        self, threshold, rmsd_values, indices, n
-    ) -> int:
-        """Count groups produced by complete linkage at a given threshold."""
-        adj_matrix = np.zeros((n, n), dtype=bool)
-        for (idx_i, idx_j), rmsd in zip(indices, rmsd_values):
-            if rmsd < threshold:
-                adj_matrix[idx_i, idx_j] = adj_matrix[idx_j, idx_i] = True
-        groups, _ = self._complete_linkage_grouping(adj_matrix, n)
-        return len(groups)
-
-    def _find_optimal_threshold(self, rmsd_values, indices, n):
-        """Find threshold that creates approximately the desired number of groups.
-
-        Phase 1: binary search until the first threshold with groups > requested.
-        Phase 2: linear scan from that threshold toward larger values, preferring
-        exact match or the closest group count above requested.
-        """
-        sorted_rmsd = sorted(
-            [rmsd for rmsd in rmsd_values if not np.isinf(rmsd)]
-        )
-
-        if not sorted_rmsd:
-            return 0.0
-
-        # Phase 1: binary search for first threshold with groups > requested
-        low, high = 0, len(sorted_rmsd) - 1
-        upper_threshold = upper_groups = upper_index = None
-
-        while low <= high:
-            mid = (low + high) // 2
-            threshold = sorted_rmsd[mid]
-            num_groups_found = self._count_groups_at_threshold(
-                threshold, rmsd_values, indices, n
-            )
-
-            if num_groups_found == self.num_groups:
-                return threshold
-            elif num_groups_found < self.num_groups:
-                high = mid - 1
-            else:
-                upper_threshold = threshold
-                upper_groups = num_groups_found
-                upper_index = mid
-                break
-
-        if upper_index is None:
-            return sorted_rmsd[0]
-
-        # Phase 2: linear scan toward larger thresholds
-        best_threshold = upper_threshold
-        best_groups = upper_groups
-        prev_threshold = None
-
-        for idx in range(upper_index, len(sorted_rmsd)):
-            threshold = sorted_rmsd[idx]
-            if threshold == prev_threshold:
-                continue
-            prev_threshold = threshold
-
-            num_groups = self._count_groups_at_threshold(
-                threshold, rmsd_values, indices, n
-            )
-
-            if num_groups == self.num_groups:
-                return threshold
-            if self.num_groups < num_groups < best_groups:
-                best_groups = num_groups
-                best_threshold = threshold
-            elif num_groups < self.num_groups:
-                break
-
-        return best_threshold
-
-    def _merge_groups_to_target(self, groups, index_groups, adj_matrix):
-        """
-        Merge groups to reach target number when using complete linkage.
-
-        Merges smallest groups into the most compatible larger groups,
-        where compatibility is determined by the number of edges in adj_matrix.
-
-        Args:
-            groups: List of molecule groups
-            index_groups: List of index groups
-            adj_matrix: Boolean adjacency matrix
-
-        Returns:
-            Tuple of (merged_groups, merged_index_groups)
-        """
-        while len(groups) > self.num_groups:
-            # Find the smallest group
-            min_size = float("inf")
-            min_idx = 0
-            for i, g in enumerate(groups):
-                if len(g) < min_size:
-                    min_size = len(g)
-                    min_idx = i
-
-            # Find the best group to merge with (most connections)
-            best_merge_idx = -1
-            best_connection_count = -1
-
-            for i, target_indices in enumerate(index_groups):
-                if i == min_idx:
-                    continue
-
-                # Count connections between source group and target group
-                connection_count = 0
-                for src_idx in index_groups[min_idx]:
-                    for tgt_idx in target_indices:
-                        if adj_matrix[src_idx, tgt_idx]:
-                            connection_count += 1
-
-                if connection_count > best_connection_count:
-                    best_connection_count = connection_count
-                    best_merge_idx = i
-
-            # Merge the smallest group into the best target
-            if best_merge_idx >= 0:
-                groups[best_merge_idx].extend(groups[min_idx])
-                index_groups[best_merge_idx].extend(index_groups[min_idx])
-            else:
-                # No connections found, merge into the largest group
-                largest_idx = max(
-                    range(len(groups)),
-                    key=lambda i: len(groups[i]) if i != min_idx else -1,
-                )
-                groups[largest_idx].extend(groups[min_idx])
-                index_groups[largest_idx].extend(index_groups[min_idx])
-
-            # Remove the merged group
-            groups.pop(min_idx)
-            index_groups.pop(min_idx)
 
         return groups, index_groups
 
@@ -543,6 +281,16 @@ class RMSDGrouper(MoleculeGrouper):
 
         if self.num_groups is not None:
             header_info.append(("Requested Groups (-N)", self.num_groups))
+            header_info.append(
+                (
+                    "Actual Groups",
+                    (
+                        len(self._cached_group_indices)
+                        if self._cached_group_indices is not None
+                        else 0
+                    ),
+                )
+            )
             if self._auto_threshold is not None:
                 header_info.append(
                     (
@@ -1123,7 +871,7 @@ class PymolRMSDGrouper(RMSDGrouper):
     def __init__(
         self,
         molecules: Iterable[Molecule],
-        threshold: float = 0.5,
+        threshold=None,
         num_groups=None,
         num_procs: int = 1,
         ignore_hydrogens: bool = False,

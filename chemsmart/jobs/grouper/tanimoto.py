@@ -15,17 +15,17 @@ from rdkit.Chem.rdFingerprintGenerator import GetRDKitFPGenerator
 
 from chemsmart.io.molecules.structure import Molecule
 
-from .base import MoleculeGrouper
+from .base import MatrixGrouper
 
 logger = logging.getLogger(__name__)
 
 
-class TanimotoSimilarityGrouper(MoleculeGrouper):
+class TanimotoSimilarityGrouper(MatrixGrouper):
     """
     Groups molecules based on fingerprint similarity using Tanimoto coefficient.
 
-    This class supports different fingerprint types and uses connected components
-    clustering to group structurally similar molecules.
+    This class supports different fingerprint types and uses hierarchical
+    complete-linkage clustering to group structurally similar molecules.
 
     Supported fingerprint types:
     - "rdkit": RDKit topological fingerprint (default)
@@ -73,9 +73,18 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
             conformer_ids (list[str]): Custom IDs for each molecule (e.g., ['c1', 'c2']).
             matrix_format (str): Output format ('xlsx', 'csv', 'txt'). Defaults to 'xlsx'.
         """
+        if threshold is None and num_groups is None:
+            threshold = 0.9
+        if threshold is not None and not (0.0 <= threshold <= 1.0):
+            raise ValueError(
+                "Tanimoto similarity threshold must be between 0.0 and 1.0."
+            )
+
         super().__init__(
             molecules,
-            num_procs,
+            threshold=threshold,
+            num_groups=num_groups,
+            num_procs=num_procs,
             label=label,
             conformer_ids=conformer_ids,
             matrix_format=matrix_format,
@@ -85,18 +94,6 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
         self.ignore_hydrogens = ignore_hydrogens
 
-        # Validate that threshold and num_groups are mutually exclusive
-        if threshold is not None and num_groups is not None:
-            raise ValueError(
-                "Cannot specify both threshold (-T) and num_groups (-N). Please use only one."
-            )
-
-        if threshold is None and num_groups is None:
-            threshold = 0.9
-        self.threshold = threshold
-        self.num_groups = num_groups
-        self._auto_threshold = None  # Will be set if num_groups is used
-
         self.fingerprint_type = fingerprint_type.lower()
 
         # Convert molecules to list for indexing
@@ -104,8 +101,9 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
         # Convert valid molecules to RDKit format
         self.rdkit_molecules = []
-        self.valid_molecules = []
-        for mol in self.molecules:
+        self.rdkit_molecule_indices = []
+        tanimoto_skipped_indices = []
+        for original_idx, mol in enumerate(self.molecules):
             rdkit_mol = mol.to_rdkit()
             if rdkit_mol is not None:
                 # Remove hydrogens if requested
@@ -123,8 +121,14 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
                             f"Failed to remove hydrogens for molecule: {e}. Using original."
                         )
                         rdkit_mol = mol.to_rdkit()
-                self.rdkit_molecules.append(rdkit_mol)
-                self.valid_molecules.append(mol)
+                if rdkit_mol is not None:
+                    self.rdkit_molecules.append(rdkit_mol)
+                    self.rdkit_molecule_indices.append(original_idx)
+                else:
+                    tanimoto_skipped_indices.append(original_idx)
+            else:
+                tanimoto_skipped_indices.append(original_idx)
+        self._tanimoto_skipped_indices = sorted(set(tanimoto_skipped_indices))
 
     def _get_fingerprint(self, rdkit_mol: Chem.Mol) -> Optional[object]:
         """
@@ -157,12 +161,12 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
                     rdkit_mol
                 )
             elif self.fingerprint_type == "usr":
-                conf = rdkit_mol.GetConformer()
+                conf = rdkit_mol.GetConformer(0)
                 return np.array(
                     rdMolDescriptors.GetUSR(rdkit_mol, confId=conf.GetId())
                 )
             elif self.fingerprint_type == "usrcat":
-                conf = rdkit_mol.GetConformer()
+                conf = rdkit_mol.GetConformer(0)
                 return np.array(
                     rdMolDescriptors.GetUSRCAT(rdkit_mol, confId=conf.GetId())
                 )
@@ -177,11 +181,13 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
     def group(self) -> Tuple[List[List[Molecule]], List[List[int]]]:
         """
-        Groups molecules based on Tanimoto similarity clustering.
+        Group molecules based on Tanimoto similarity using hierarchical
+        complete-linkage clustering.
 
         Computes fingerprints for all molecules, calculates pairwise
-        Tanimoto similarities, and groups molecules using connected
-        components clustering.
+        Tanimoto similarities, converts them internally to distances
+        (1 - similarity), and clusters molecules with hierarchical
+        complete linkage.
 
         Returns:
             Tuple[List[List[Molecule]], List[List[int]]]: Tuple containing:
@@ -192,6 +198,7 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
         # Record start time for grouping process
         grouping_start_time = time.time()
+        self._auto_threshold = None
 
         n = len(self.molecules)
         logger.info(
@@ -209,10 +216,40 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
             i for i, fp in enumerate(fingerprints) if fp is not None
         ]
         valid_fps = [fingerprints[i] for i in valid_indices]
+        valid_original_indices = [
+            self.rdkit_molecule_indices[i] for i in valid_indices
+        ]
+
+        fingerprint_skipped_indices = [
+            self.rdkit_molecule_indices[i]
+            for i, fp in enumerate(fingerprints)
+            if fp is None
+        ]
+        self._matrix_skipped_indices = sorted(
+            set(self._tanimoto_skipped_indices)
+            | set(fingerprint_skipped_indices)
+        )
+        self._matrix_skipped_ids = [
+            self.conformer_ids[idx] for idx in self._matrix_skipped_indices
+        ]
+
         num_valid = len(valid_indices)
 
         if num_valid == 0:
-            return [], []  # No valid molecules
+            groups = []
+            index_groups = []
+            self._cached_groups = groups
+            self._cached_group_indices = index_groups
+
+            grouping_time = time.time() - grouping_start_time
+            self.record(
+                tanimoto_matrix=np.empty((0, 0), dtype=np.float32),
+                valid_indices=[],
+                grouping_time=grouping_time,
+                groups=groups,
+                index_groups=index_groups,
+            )
+            return groups, index_groups
 
         logger.info(
             f"[{self.__class__.__name__}] Computing Tanimoto similarities for {num_valid} valid molecules"
@@ -248,14 +285,19 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
             for (i, j), sim in zip(pairs, similarities):
                 similarity_matrix[i, j] = similarity_matrix[j, i] = sim
 
+        np.fill_diagonal(similarity_matrix, 1.0)
+
         # Choose grouping strategy based on parameters
+        distance_matrix = 1.0 - similarity_matrix
+        np.fill_diagonal(distance_matrix, 0.0)
+
         if self.num_groups is not None:
-            groups, index_groups = self._group_by_num_groups(
-                similarity_matrix, valid_indices
+            groups, index_groups = self._group_by_num_groups_for_valid_indices(
+                distance_matrix, valid_original_indices
             )
         else:
-            groups, index_groups = self._group_by_threshold(
-                similarity_matrix, valid_indices
+            groups, index_groups = self._group_by_threshold_for_valid_indices(
+                distance_matrix, valid_original_indices
             )
 
         # Calculate total grouping time
@@ -269,7 +311,7 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
         # Save full matrix through unified record entrypoint
         self.record(
             tanimoto_matrix=similarity_matrix,
-            valid_indices=valid_indices,
+            valid_indices=valid_original_indices,
             grouping_time=grouping_time,
             groups=groups,
             index_groups=index_groups,
@@ -277,170 +319,54 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
         return groups, index_groups
 
-    def _group_by_threshold(self, similarity_matrix, valid_indices):
-        """Threshold-based grouping for Tanimoto similarity using complete linkage."""
-        adj_matrix = similarity_matrix >= self.threshold
-        n = len(valid_indices)
-        mol_groups, idx_groups = self._complete_linkage_grouping(
-            adj_matrix, n, valid_indices
-        )
-        return mol_groups, idx_groups
+    def _build_groups_from_cluster_labels_for_valid_indices(
+        self, cluster_labels: np.ndarray, valid_indices: List[int]
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        index_groups_local = super()._build_groups_from_cluster_labels(
+            cluster_labels
+        )[1]
+        index_groups = [
+            [valid_indices[idx] for idx in group]
+            for group in index_groups_local
+        ]
+        groups = [
+            [self.molecules[idx] for idx in index_group]
+            for index_group in index_groups
+        ]
+        return groups, index_groups
 
-    def _complete_linkage_grouping(self, adj_matrix, n, valid_indices):
-        """Perform complete linkage grouping for Tanimoto similarity."""
-        assigned = [False] * n
-        mol_groups = []
-        idx_groups = []
-
-        for i in range(n - 1, -1, -1):
-            if assigned[i]:
-                continue
-            current_group = [i]
-            assigned[i] = True
-
-            for j in range(i - 1, -1, -1):
-                if assigned[j]:
-                    continue
-                can_join = all(
-                    adj_matrix[j, member] for member in current_group
-                )
-                if can_join:
-                    current_group.append(j)
-                    assigned[j] = True
-
-            current_group.sort()
-            mol_groups.append(
-                [self.valid_molecules[idx] for idx in current_group]
+    def _group_by_threshold_for_valid_indices(
+        self, distance_matrix: np.ndarray, valid_indices: List[int]
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        original_threshold = self.threshold
+        try:
+            self.threshold = 1.0 - original_threshold
+            return super()._group_by_threshold(
+                distance_matrix,
+                original_indices=valid_indices,
             )
-            idx_groups.append([valid_indices[idx] for idx in current_group])
+        finally:
+            self.threshold = original_threshold
 
-        mol_groups.reverse()
-        idx_groups.reverse()
-        return mol_groups, idx_groups
-
-    def _group_by_num_groups(self, similarity_matrix, valid_indices):
-        """Automatic grouping to create specified number of groups."""
-        n = len(valid_indices)
-
-        if self.num_groups >= n:
-            logger.info(
-                f"[{self.__class__.__name__}] Requested {self.num_groups} groups but only {n} molecules. Creating {n} groups."
+    def _group_by_num_groups_for_valid_indices(
+        self, distance_matrix: np.ndarray, valid_indices: List[int]
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        original_threshold = self.threshold
+        try:
+            self.threshold = (
+                1.0 - original_threshold
+                if original_threshold is not None
+                else None
             )
-            groups = [[self.valid_molecules[i]] for i in range(n)]
-            index_groups = [[valid_indices[i]] for i in range(n)]
+            groups, index_groups = super()._group_by_num_groups(
+                distance_matrix,
+                original_indices=valid_indices,
+            )
+            if self._auto_threshold is not None:
+                self._auto_threshold = 1.0 - self._auto_threshold
             return groups, index_groups
-
-        # Extract similarity values for threshold finding
-        similarity_values = []
-        for i in range(n):
-            for j in range(i + 1, n):
-                similarity_values.append(similarity_matrix[i, j])
-
-        threshold = self._find_optimal_similarity_threshold(
-            similarity_values, similarity_matrix, n
-        )
-        self._auto_threshold = threshold
-
-        logger.info(
-            f"[{self.__class__.__name__}] Auto-determined threshold: {threshold:.7f} to create {self.num_groups} groups"
-        )
-
-        adj_matrix = similarity_matrix >= threshold
-        groups, index_groups = self._complete_linkage_grouping(
-            adj_matrix, n, valid_indices
-        )
-        actual_groups = len(groups)
-
-        logger.info(
-            f"[{self.__class__.__name__}] Created {actual_groups} groups (requested: {self.num_groups})"
-        )
-
-        if actual_groups > self.num_groups:
-            groups, index_groups = self._merge_groups_to_target(
-                groups, index_groups
-            )
-
-        return groups, index_groups
-
-    def _find_optimal_similarity_threshold(
-        self, similarity_values, similarity_matrix, n
-    ):
-        """Find similarity threshold using binary search.
-
-        For Tanimoto similarity grouping (adj_matrix = similarity >= threshold):
-        - Higher threshold → more groups (harder to merge, fewer pairs qualify)
-        - Lower threshold → fewer groups (easier to merge, more pairs qualify)
-
-        sorted_similarities is ascending so that binary search can navigate:
-        moving right (higher index) = higher threshold = more groups.
-        """
-        sorted_similarities = sorted(
-            [sim for sim in similarity_values if not np.isnan(sim)],
-        )
-
-        if not sorted_similarities:
-            return 1.0
-
-        low, high = 0, len(sorted_similarities) - 1
-        # Default: lowest threshold → fewest groups (most permissive merging)
-        best_threshold = sorted_similarities[0]
-
-        while low <= high:
-            mid = (low + high) // 2
-            threshold = sorted_similarities[mid]
-            num_groups_found = self._count_groups(
-                similarity_matrix, threshold, n
-            )
-
-            if num_groups_found == self.num_groups:
-                return threshold
-            elif num_groups_found < self.num_groups:
-                # Too few groups: need higher threshold (move right)
-                best_threshold = threshold
-                low = mid + 1
-            else:
-                # Too many groups: need lower threshold (move left)
-                high = mid - 1
-
-        return best_threshold
-
-    def _count_groups(self, similarity_matrix, threshold, n):
-        """Count number of groups produced by complete linkage at the given threshold.
-
-        Uses the same iteration order as _complete_linkage_grouping (last to first)
-        to ensure the count matches the actual grouping result.
-        """
-        adj_matrix = similarity_matrix >= threshold
-        assigned = [False] * n
-        num_groups = 0
-        for i in range(n - 1, -1, -1):
-            if assigned[i]:
-                continue
-            current_group = [i]
-            assigned[i] = True
-            for j in range(i - 1, -1, -1):
-                if assigned[j]:
-                    continue
-                can_join = all(adj_matrix[j, m] for m in current_group)
-                if can_join:
-                    current_group.append(j)
-                    assigned[j] = True
-            num_groups += 1
-        return num_groups
-
-    def _merge_groups_to_target(self, groups, index_groups):
-        """Merge groups to reach target number."""
-        while len(groups) > self.num_groups:
-            min_idx = min(range(len(groups)), key=lambda i: len(groups[i]))
-            largest_idx = max(
-                range(len(groups)),
-                key=lambda i: len(groups[i]) if i != min_idx else -1,
-            )
-            groups[largest_idx].extend(groups[min_idx])
-            index_groups[largest_idx].extend(index_groups[min_idx])
-            groups.pop(min_idx)
-            index_groups.pop(min_idx)
-        return groups, index_groups
+        finally:
+            self.threshold = original_threshold
 
     def _record_results(
         self,
@@ -474,6 +400,16 @@ class TanimotoSimilarityGrouper(MoleculeGrouper):
 
         if self.num_groups is not None:
             header_info.append(("Requested Groups (-N)", self.num_groups))
+            header_info.append(
+                (
+                    "Actual Groups",
+                    (
+                        len(self._cached_group_indices)
+                        if self._cached_group_indices is not None
+                        else 0
+                    ),
+                )
+            )
             if self._auto_threshold is not None:
                 header_info.append(
                     (

@@ -13,7 +13,7 @@ import numpy as np
 
 from chemsmart.io.molecules.structure import Molecule
 
-from .base import MoleculeGrouper
+from .base import MatrixGrouper
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ HARTREE_TO_KCAL = 627.509474
 KCAL_TO_HARTREE = 1.0 / HARTREE_TO_KCAL
 
 
-class EnergyGrouper(MoleculeGrouper):
+class EnergyGrouper(MatrixGrouper):
     """
     Energy-based molecular grouping.
 
@@ -69,12 +69,17 @@ class EnergyGrouper(MoleculeGrouper):
             matrix_format (str): Output format ('xlsx', 'csv', 'txt'). Defaults to 'xlsx'.
 
         Note:
-            Uses complete linkage clustering: a structure joins a group only if
-            its energy difference to ALL existing members is below the threshold.
+            Uses hierarchical complete-linkage clustering based on the full
+            pairwise energy-difference matrix.
         """
+        if threshold is None and num_groups is None:
+            threshold = 1.0  # Default: 1 kcal/mol
+
         super().__init__(
             molecules,
-            num_procs,
+            threshold=threshold,
+            num_groups=num_groups,
+            num_procs=num_procs,
             label=label,
             conformer_ids=conformer_ids,
             matrix_format=matrix_format,
@@ -82,22 +87,12 @@ class EnergyGrouper(MoleculeGrouper):
             **kwargs,
         )
 
-        # Validate that threshold and num_groups are mutually exclusive
-        if threshold is not None and num_groups is not None:
-            raise ValueError(
-                "Cannot specify both threshold (-T) and num_groups (-N). Please use only one."
-            )
-
-        if threshold is None and num_groups is None:
-            threshold = 1.0  # Default: 1 kcal/mol
-
         # Store threshold in kcal/mol (user-friendly unit)
         self.threshold = threshold
         # Convert to Hartree for internal calculations (only if threshold is set)
         self.threshold_hartree = (
             threshold * KCAL_TO_HARTREE if threshold is not None else None
         )
-        self.num_groups = num_groups
         self._auto_threshold = (
             None  # Will store auto-determined threshold in kcal/mol
         )
@@ -163,12 +158,13 @@ class EnergyGrouper(MoleculeGrouper):
 
     def group(self) -> Tuple[List[List[Molecule]], List[List[int]]]:
         """
-        Group molecules by energy similarity using complete linkage clustering.
+        Group molecules by energy similarity using hierarchical
+        complete-linkage clustering.
 
         Computes pairwise energy differences between all molecules and groups
-        those within the specified threshold using complete linkage clustering,
-        or automatically determines threshold to create the specified number
-        of groups.
+        those within the specified threshold, or automatically selects the
+        deepest complete-linkage distance level that does not reduce the
+        number of groups below the requested value.
 
         Returns:
             Tuple[List[List[Molecule]], List[List[int]]]: Tuple containing:
@@ -176,6 +172,7 @@ class EnergyGrouper(MoleculeGrouper):
                 - List of index groups (corresponding indices for each group)
         """
         grouping_start_time = time.time()
+        self._auto_threshold = None
 
         n = len(self.molecules)
         indices = [(i, j) for i in range(n) for j in range(i + 1, n)]
@@ -201,18 +198,22 @@ class EnergyGrouper(MoleculeGrouper):
         # matrix[i,j] = E_j - E_i (positive means j has higher energy)
         # matrix[j,i] = E_i - E_j (negative of the above)
         energy_matrix = np.zeros((n, n))
+        energy_distance_matrix = np.zeros((n, n))
         for (i, j), rel_diff in zip(indices, energy_diff_relative):
             energy_matrix[i, j] = rel_diff  # E_j - E_i
             energy_matrix[j, i] = -rel_diff  # E_i - E_j
+        for (i, j), abs_diff in zip(indices, energy_diff_absolute):
+            energy_distance_matrix[i, j] = abs_diff
+            energy_distance_matrix[j, i] = abs_diff
 
         # Choose grouping strategy based on parameters
         if self.num_groups is not None:
             groups, index_groups = self._group_by_num_groups(
-                energy_matrix, energy_diff_absolute, indices
+                energy_distance_matrix
             )
         else:
             groups, index_groups = self._group_by_threshold(
-                energy_diff_absolute, indices
+                energy_distance_matrix
             )
 
         # Calculate total grouping time
@@ -229,237 +230,51 @@ class EnergyGrouper(MoleculeGrouper):
         return groups, index_groups
 
     def _group_by_threshold(
-        self, energy_diff_values: List[float], indices: List[Tuple[int, int]]
+        self, distance_matrix: np.ndarray
     ) -> Tuple[List[List[Molecule]], List[List[int]]]:
-        """
-        Threshold-based grouping using complete linkage.
+        original_threshold = self.threshold
+        result: Tuple[List[List[Molecule]], List[List[int]]] | None = None
+        try:
+            self.threshold = self.threshold_hartree
+            result = super()._group_by_threshold(distance_matrix)
+        finally:
+            self.threshold = original_threshold
 
-        A structure joins a group only if its energy difference to ALL
-        existing members is below the threshold.
-        """
-        n = len(self.molecules)
+        assert result is not None, "Energy grouping failed to produce groups."
+        return result
 
-        # Build adjacency matrix (use threshold_hartree for comparison since energy_diff is in Hartree)
-        adj_matrix = np.zeros((n, n), dtype=bool)
-        for (i, j), diff in zip(indices, energy_diff_values):
-            if diff < self.threshold_hartree:
-                adj_matrix[i, j] = adj_matrix[j, i] = True
-
-        # Complete linkage grouping
-        groups, index_groups = self._complete_linkage_grouping(adj_matrix, n)
-
-        return groups, index_groups
-
-    def _complete_linkage_grouping(
-        self, adj_matrix: np.ndarray, n: int
-    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
-        """
-        Perform complete linkage grouping (from last to first).
-
-        A structure joins a group only if its energy difference to ALL
-        existing members of that group is below the threshold.
-
-        Args:
-            adj_matrix: Boolean adjacency matrix where adj_matrix[i,j] = True
-                       if energy diff between i and j is below threshold
-            n: Number of molecules
-
-        Returns:
-            Tuple of (groups, index_groups)
-        """
-        assigned = [False] * n
-        groups = []
-        index_groups = []
-
-        # Iterate from last to first (higher energy structures first as seeds)
-        for i in range(n - 1, -1, -1):
-            if assigned[i]:
-                continue
-
-            # Start a new group with molecule i
-            current_group = [i]
-            assigned[i] = True
-
-            # Try to add unassigned molecules with lower indices (lower energy)
-            for j in range(i - 1, -1, -1):
-                if assigned[j]:
-                    continue
-
-                # Check if j is connected to ALL members in current_group
-                can_join = all(
-                    adj_matrix[j, member] for member in current_group
-                )
-
-                if can_join:
-                    current_group.append(j)
-                    assigned[j] = True
-
-            # Sort indices within group (lowest index = lowest energy first)
-            current_group.sort()
-            groups.append([self.molecules[idx] for idx in current_group])
-            index_groups.append(current_group)
-
-        # Reverse groups so that groups containing lower-energy structures come first
-        groups.reverse()
-        index_groups.reverse()
-
-        return groups, index_groups
+    def _build_complete_linkage_tree(
+        self, distance_matrix: np.ndarray
+    ) -> np.ndarray:
+        try:
+            return super()._build_complete_linkage_tree(distance_matrix)
+        except ValueError as exc:
+            if "non-finite" in str(exc):
+                raise ValueError(
+                    "Pairwise energy-difference matrix contains non-finite values. "
+                    "Energy grouping requires all molecules to have finite energy values."
+                ) from exc
+            raise
 
     def _group_by_num_groups(
-        self,
-        energy_matrix: np.ndarray,
-        energy_diff_values: List[float],
-        indices: List[Tuple[int, int]],
+        self, distance_matrix: np.ndarray
     ) -> Tuple[List[List[Molecule]], List[List[int]]]:
-        """Automatic grouping to create specified number of groups."""
-        n = len(self.molecules)
+        original_threshold = self.threshold
+        result: Tuple[List[List[Molecule]], List[List[int]]] | None = None
+        try:
+            self.threshold = self.threshold_hartree
+            result = super()._group_by_num_groups(distance_matrix)
+        finally:
+            self.threshold = original_threshold
 
-        if self.num_groups >= n:
-            logger.info(
-                f"[{self.__class__.__name__}] Requested {self.num_groups} groups but only {n} molecules. Creating {n} groups."
-            )
-            groups = [[mol] for mol in self.molecules]
-            index_groups = [[i] for i in range(n)]
-            return groups, index_groups
+        assert (
+            result is not None
+        ), "Energy grouping failed to produce groups in num_groups mode."
 
-        # Find appropriate threshold to create desired number of groups (returns in Hartree)
-        threshold_hartree = self._find_optimal_threshold(
-            energy_diff_values, indices, n
-        )
-        # Store in kcal/mol for reporting
-        self._auto_threshold = threshold_hartree * HARTREE_TO_KCAL
+        groups, index_groups = result
 
-        logger.info(
-            f"[{self.__class__.__name__}] Auto-determined threshold: {self._auto_threshold:.4f} kcal/mol "
-            f"({threshold_hartree:.10f} Hartree) to create {self.num_groups} groups"
-        )
-
-        # Build adjacency matrix with the determined threshold
-        adj_matrix = np.zeros((n, n), dtype=bool)
-        for (i, j), diff in zip(indices, energy_diff_values):
-            if diff < threshold_hartree:
-                adj_matrix[i, j] = adj_matrix[j, i] = True
-
-        # Use complete linkage grouping
-        groups, index_groups = self._complete_linkage_grouping(adj_matrix, n)
-        actual_groups = len(groups)
-
-        logger.info(
-            f"[{self.__class__.__name__}] Created {actual_groups} groups (requested: {self.num_groups})"
-        )
-
-        if actual_groups > self.num_groups:
-            groups, index_groups = self._merge_groups_to_target(
-                groups, index_groups, adj_matrix
-            )
-
-        return groups, index_groups
-
-    def _find_optimal_threshold(
-        self,
-        energy_diff_values: List[float],
-        indices: List[Tuple[int, int]],
-        n: int,
-    ) -> float:
-        """Find threshold that creates approximately the desired number of groups using binary search."""
-        sorted_diffs = sorted(
-            [diff for diff in energy_diff_values if not np.isinf(diff)]
-        )
-
-        if not sorted_diffs:
-            return 0.0
-
-        # Binary search for optimal threshold
-        low, high = 0, len(sorted_diffs) - 1
-        best_threshold = sorted_diffs[-1]
-
-        while low <= high:
-            mid = (low + high) // 2
-            threshold = sorted_diffs[mid]
-
-            # Build adjacency matrix with this threshold
-            adj_matrix = np.zeros((n, n), dtype=bool)
-            for (idx_i, idx_j), diff in zip(indices, energy_diff_values):
-                if diff < threshold:
-                    adj_matrix[idx_i, idx_j] = adj_matrix[idx_j, idx_i] = True
-
-            # Use complete linkage to count groups
-            groups, _ = self._complete_linkage_grouping(adj_matrix, n)
-            num_groups_found = len(groups)
-
-            if num_groups_found == self.num_groups:
-                return threshold
-            elif num_groups_found > self.num_groups:
-                # Too many groups, need higher threshold (more permissive)
-                low = mid + 1
-            else:
-                # Too few groups, need lower threshold (more restrictive)
-                best_threshold = threshold
-                high = mid - 1
-
-        return best_threshold
-
-    def _merge_groups_to_target(
-        self,
-        groups: List[List[Molecule]],
-        index_groups: List[List[int]],
-        adj_matrix: np.ndarray,
-    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
-        """
-        Merge groups to reach target number when using complete linkage.
-
-        Args:
-            groups: List of molecule groups
-            index_groups: List of index groups
-            adj_matrix: Boolean adjacency matrix
-
-        Returns:
-            Tuple of (merged_groups, merged_index_groups)
-        """
-        while len(groups) > self.num_groups:
-            # Find the smallest group
-            min_size = float("inf")
-            min_idx = 0
-            for i, g in enumerate(groups):
-                if len(g) < min_size:
-                    min_size = len(g)
-                    min_idx = i
-
-            # Find the best group to merge with (most connections)
-            best_merge_idx = -1
-            best_connection_count = -1
-
-            for i, target_indices in enumerate(index_groups):
-                if i == min_idx:
-                    continue
-
-                # Count connections between source group and target group
-                connection_count = 0
-                for src_idx in index_groups[min_idx]:
-                    for tgt_idx in target_indices:
-                        if adj_matrix[src_idx, tgt_idx]:
-                            connection_count += 1
-
-                if connection_count > best_connection_count:
-                    best_connection_count = connection_count
-                    best_merge_idx = i
-
-            # Merge the smallest group into the best target
-            if best_merge_idx >= 0:
-                groups[best_merge_idx].extend(groups[min_idx])
-                index_groups[best_merge_idx].extend(index_groups[min_idx])
-            else:
-                # No connections found, merge into the largest group
-                largest_idx = max(
-                    range(len(groups)),
-                    key=lambda i: len(groups[i]) if i != min_idx else -1,
-                )
-                groups[largest_idx].extend(groups[min_idx])
-                index_groups[largest_idx].extend(index_groups[min_idx])
-
-            # Remove the merged group
-            groups.pop(min_idx)
-            index_groups.pop(min_idx)
+        if self._auto_threshold is not None:
+            self._auto_threshold *= HARTREE_TO_KCAL
 
         return groups, index_groups
 
@@ -497,6 +312,16 @@ class EnergyGrouper(MoleculeGrouper):
 
         if self.num_groups is not None:
             header_info.append(("Requested Groups (-N)", self.num_groups))
+            header_info.append(
+                (
+                    "Actual Groups",
+                    (
+                        len(self._cached_group_indices)
+                        if self._cached_group_indices is not None
+                        else 0
+                    ),
+                )
+            )
             if self._auto_threshold is not None:
                 header_info.append(
                     (

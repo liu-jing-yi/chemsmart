@@ -3,6 +3,7 @@ Base classes for molecular structure grouping algorithms.
 
 This module contains the core abstract base class and utilities:
 - MoleculeGrouper: Abstract base class for all grouper implementations
+- MatrixGrouper: Base class for pairwise-matrix-based grouping algorithms
 - ResultsRecorder: Unified results output with multiple format support
 - StructureGrouperConfig: Configuration container for structure matching
 """
@@ -14,6 +15,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
 
 from chemsmart.io.molecules.structure import Molecule
 
@@ -466,6 +469,8 @@ class MoleculeGrouper(ABC):
         # Cache for avoiding repeated grouping calculations
         self._cached_groups = None
         self._cached_group_indices = None
+        self._matrix_skipped_ids = []
+        self._matrix_skipped_indices = []
 
         self._validate_inputs()
 
@@ -546,13 +551,23 @@ class MoleculeGrouper(ABC):
         self, header_info: List[Tuple[str, Any]]
     ) -> None:
         """Append molecule usage statistics (used/skipped) to header info."""
+        combined_skipped_ids = []
+        for skipped_id in [*self.skipped_ids, *self._matrix_skipped_ids]:
+            if skipped_id not in combined_skipped_ids:
+                combined_skipped_ids.append(skipped_id)
+
+        total_molecules = len(self.molecules) + len(self.skipped_ids)
+        used_molecules = len(self.molecules) - len(
+            self._matrix_skipped_indices
+        )
         skipped_ids_text = (
-            ", ".join(self.skipped_ids) if self.skipped_ids else "None"
+            ", ".join(combined_skipped_ids) if combined_skipped_ids else "None"
         )
         header_info.extend(
             [
-                ("Used Molecules", len(self.molecules)),
-                ("Skipped Molecules", len(self.skipped_ids)),
+                ("Total Molecules", total_molecules),
+                ("Used Molecules", used_molecules),
+                ("Skipped Molecules", len(combined_skipped_ids)),
                 ("Skipped IDs", skipped_ids_text),
             ]
         )
@@ -690,3 +705,323 @@ class MoleculeGrouper(ABC):
         )
 
         return unique_molecules
+
+
+class MatrixGrouper(MoleculeGrouper):
+    """
+    Base class for groupers that operate on a pairwise distance matrix.
+
+    Provides shared matrix validation, hierarchical complete-linkage
+    clustering, threshold-based grouping, requested-num-groups grouping,
+    and simple post-clustering representative selection.
+    """
+
+    def __init__(
+        self,
+        molecules: Iterable[Molecule],
+        threshold=None,
+        num_groups=None,
+        num_procs: int = 1,
+        label: str = None,
+        conformer_ids: List[str] = None,
+        skipped_ids: List[str] = None,
+        matrix_format: str = "xlsx",
+        output_dir: str = None,
+        energy_type: str = "E",
+        thermo_parameters: str = None,
+    ):
+        super().__init__(
+            molecules,
+            num_procs=num_procs,
+            label=label,
+            conformer_ids=conformer_ids,
+            skipped_ids=skipped_ids,
+            matrix_format=matrix_format,
+            output_dir=output_dir,
+            energy_type=energy_type,
+            thermo_parameters=thermo_parameters,
+        )
+
+        if threshold is not None and num_groups is not None:
+            raise ValueError(
+                "Cannot specify both threshold (-T) and num_groups (-N). Please use only one."
+            )
+
+        if threshold is not None and threshold < 0:
+            raise ValueError("threshold must be non-negative.")
+
+        if num_groups is not None and num_groups < 1:
+            raise ValueError("num_groups must be at least 1.")
+
+        if threshold is None and num_groups is None:
+            threshold = 0.5
+
+        self.threshold = threshold
+        self.num_groups = num_groups
+        self._auto_threshold = None
+
+    def _build_singleton_groups(
+        self,
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        """Build singleton groups for the current molecule collection."""
+        index_groups = [[i] for i in range(len(self.molecules))]
+        groups = [[self.molecules[i]] for i in range(len(self.molecules))]
+        return groups, index_groups
+
+    def _get_original_index_label(self, original_index: int) -> str:
+        """Return the display label for an original molecule index."""
+        if self.conformer_ids is not None and 0 <= original_index < len(
+            self.conformer_ids
+        ):
+            return self.conformer_ids[original_index]
+        return str(original_index + 1)
+
+    def _set_matrix_skipped_indices(self, skipped_indices: List[int]) -> None:
+        """Store matrix-based skipped structure indices and display IDs."""
+        self._matrix_skipped_indices = list(skipped_indices)
+        self._matrix_skipped_ids = [
+            self._get_original_index_label(idx) for idx in skipped_indices
+        ]
+
+    def _validate_distance_matrix(
+        self, distance_matrix: np.ndarray
+    ) -> np.ndarray:
+        """Validate a pairwise distance matrix while allowing +inf placeholders."""
+        clustering_matrix = np.asarray(distance_matrix, dtype=float)
+
+        if clustering_matrix.ndim != 2:
+            raise ValueError("Distance matrix must be 2-dimensional.")
+
+        n_rows, n_cols = clustering_matrix.shape
+        if n_rows != n_cols:
+            raise ValueError("Distance matrix must be square.")
+
+        if np.any(np.isnan(clustering_matrix)):
+            raise ValueError(
+                "Pairwise distance matrix contains non-finite values. "
+                "Check that all pairwise calculations completed successfully."
+            )
+
+        if np.any(np.isneginf(clustering_matrix)):
+            raise ValueError(
+                "Distance matrix cannot contain negative distances."
+            )
+
+        if np.any(clustering_matrix < 0):
+            raise ValueError(
+                "Distance matrix cannot contain negative distances."
+            )
+
+        if not np.allclose(clustering_matrix, clustering_matrix.T):
+            raise ValueError("Distance matrix must be symmetric.")
+
+        if not np.allclose(np.diag(clustering_matrix), 0.0):
+            raise ValueError("Distance matrix diagonal must be zero.")
+
+        return clustering_matrix
+
+    def _prepare_clustering_submatrix(
+        self,
+        distance_matrix: np.ndarray,
+        original_indices: Optional[List[int]] = None,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """Remove structures involved in +inf pairs and return a finite submatrix."""
+        clustering_matrix = self._validate_distance_matrix(distance_matrix)
+        n = clustering_matrix.shape[0]
+
+        if original_indices is None:
+            original_indices = list(range(n))
+        elif len(original_indices) != n:
+            raise ValueError(
+                "original_indices must match the size of the distance matrix."
+            )
+
+        inf_mask = np.isposinf(clustering_matrix)
+        if n > 0:
+            inf_mask = inf_mask.copy()
+            inf_mask[np.diag_indices(n)] = False
+
+        skipped_local_indices = np.where(np.any(inf_mask, axis=1))[0].tolist()
+        skipped_original_indices = [
+            original_indices[idx] for idx in skipped_local_indices
+        ]
+        self._set_matrix_skipped_indices(skipped_original_indices)
+
+        valid_local_indices = [
+            idx for idx in range(n) if idx not in skipped_local_indices
+        ]
+        valid_original_indices = [
+            original_indices[idx] for idx in valid_local_indices
+        ]
+
+        if not valid_local_indices:
+            return np.zeros((0, 0), dtype=float), valid_original_indices
+
+        clean_submatrix = clustering_matrix[
+            np.ix_(valid_local_indices, valid_local_indices)
+        ]
+        return clean_submatrix, valid_original_indices
+
+    def _build_complete_linkage_tree(
+        self, distance_matrix: np.ndarray
+    ) -> Optional[np.ndarray]:
+        """Build a SciPy hierarchical complete-linkage tree from a distance matrix."""
+        clustering_matrix = self._validate_distance_matrix(distance_matrix)
+
+        if clustering_matrix.shape[0] < 2:
+            return None
+
+        if np.any(np.isposinf(clustering_matrix)):
+            raise ValueError(
+                "Distance matrix for linkage must be finite after removing skipped structures."
+            )
+
+        condensed_distances = squareform(clustering_matrix, checks=False)
+        return linkage(condensed_distances, method="complete")
+
+    def _build_groups_from_cluster_labels(
+        self,
+        cluster_labels: np.ndarray,
+        original_indices: Optional[List[int]] = None,
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        """Convert cluster labels to deterministically ordered groups."""
+        clusters: dict[int, List[int]] = {}
+        cluster_ids = np.asarray(cluster_labels, dtype=int).reshape(-1)
+        for idx, cluster_id in enumerate(cluster_ids.tolist()):
+            if cluster_id not in clusters:
+                clusters[cluster_id] = []
+            clusters[cluster_id].append(idx)
+
+        if original_indices is None:
+            original_indices = list(range(len(cluster_ids)))
+
+        index_groups = sorted(
+            (
+                sorted(original_indices[idx] for idx in indices)
+                for indices in clusters.values()
+            ),
+            key=lambda indices: indices[0],
+        )
+        groups = [
+            [self.molecules[idx] for idx in index_group]
+            for index_group in index_groups
+        ]
+        return groups, index_groups
+
+    def _cut_tree_by_threshold(
+        self, linkage_matrix: np.ndarray, threshold: float
+    ) -> np.ndarray:
+        """Cut a hierarchical linkage tree at distance <= threshold."""
+        return fcluster(linkage_matrix, t=threshold, criterion="distance")
+
+    def _group_by_threshold(
+        self,
+        distance_matrix: np.ndarray,
+        original_indices: Optional[List[int]] = None,
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        """Group by hierarchical complete linkage at distance <= threshold."""
+        clean_submatrix, valid_original_indices = (
+            self._prepare_clustering_submatrix(
+                distance_matrix, original_indices=original_indices
+            )
+        )
+
+        if len(valid_original_indices) == 0:
+            return [], []
+
+        if len(valid_original_indices) == 1:
+            original_index = valid_original_indices[0]
+            return [[self.molecules[original_index]]], [[original_index]]
+
+        linkage_matrix = self._build_complete_linkage_tree(clean_submatrix)
+        cluster_labels = self._cut_tree_by_threshold(
+            linkage_matrix, self.threshold
+        )
+        return self._build_groups_from_cluster_labels(
+            cluster_labels,
+            original_indices=valid_original_indices,
+        )
+
+    def _group_by_num_groups(
+        self,
+        distance_matrix: np.ndarray,
+        original_indices: Optional[List[int]] = None,
+    ) -> Tuple[List[List[Molecule]], List[List[int]]]:
+        """Group by requested number of groups using complete-linkage levels."""
+        clean_submatrix, valid_original_indices = (
+            self._prepare_clustering_submatrix(
+                distance_matrix, original_indices=original_indices
+            )
+        )
+        n = len(valid_original_indices)
+
+        if n == 0:
+            self._auto_threshold = None
+            return [], []
+
+        if n == 1:
+            self._auto_threshold = None
+            original_index = valid_original_indices[0]
+            return [[self.molecules[original_index]]], [[original_index]]
+
+        if self.num_groups >= n:
+            logger.info(
+                f"[{self.__class__.__name__}] Requested {self.num_groups} groups but only {n} molecules are available. Creating {n} groups."
+            )
+            self._auto_threshold = None
+            groups = [[self.molecules[idx]] for idx in valid_original_indices]
+            index_groups = [[idx] for idx in valid_original_indices]
+            return groups, index_groups
+
+        linkage_matrix = self._build_complete_linkage_tree(clean_submatrix)
+        unique_distances = np.unique(linkage_matrix[:, 2])
+
+        best_labels = np.arange(1, n + 1)
+        best_distance = None
+
+        for distance in unique_distances:
+            cluster_labels = self._cut_tree_by_threshold(
+                linkage_matrix, distance
+            )
+            num_groups = len(np.unique(cluster_labels))
+
+            if num_groups < self.num_groups:
+                break
+
+            best_labels = cluster_labels
+            best_distance = float(distance)
+
+            if num_groups == self.num_groups:
+                break
+
+        self._auto_threshold = best_distance
+
+        logger.info(
+            f"[{self.__class__.__name__}] Selected complete-linkage distance level: "
+            f"{best_distance:.7f} to keep {len(np.unique(best_labels))} groups for requested={self.num_groups}"
+            if best_distance is not None
+            else f"[{self.__class__.__name__}] No linkage merges applied; retaining {n} groups for requested={self.num_groups}"
+        )
+
+        groups, index_groups = self._build_groups_from_cluster_labels(
+            best_labels,
+            original_indices=valid_original_indices,
+        )
+        actual_groups = len(groups)
+
+        logger.info(
+            f"[{self.__class__.__name__}] Created {actual_groups} groups (requested: {self.num_groups})"
+        )
+
+        return groups, index_groups
+
+    def select_representatives(
+        self, index_groups: List[List[int]], strategy: str = "first"
+    ) -> List[int]:
+        """Select representative indices from already determined groups."""
+        if strategy != "first":
+            raise ValueError(
+                f"Unsupported representative selection strategy: {strategy}"
+            )
+
+        return [group[0] for group in index_groups if group]
