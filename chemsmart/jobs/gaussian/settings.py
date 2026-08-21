@@ -11,6 +11,7 @@ parameter combinations, and conversion to/from various input formats.
 """
 
 import copy
+import inspect
 import logging
 import os
 import re
@@ -27,6 +28,7 @@ from chemsmart.utils.repattern import (
 
 pt = PeriodicTable()
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,8 +43,9 @@ class GaussianJobSettings(MolecularJobSettings):
 
     Inherits common calculation fields from `MolecularJobSettings`, such as
     `ab_initio`, `functional`, `basis`, `semiempirical`, `charge`,
-    `multiplicity`, `job_type`, `title`, `freq`, `numfreq`, `solvent_model`,
-    `solvent_id`, `additional_solvent_options`, `additional_opt_options_in_route`,
+    `multiplicity`, `jobtype`, `title`, `freq`, `numfreq`, `solvent_model`,
+    `solvent_id`, `additional_solvent_options`,
+    `additional_opt_options_in_route`,
     `append_additional_info`, `gen_genecp_file`, `heavy_elements`,
     `heavy_elements_basis`, `light_elements_basis`, `custom_solvent`, `forces`,
     and `input_string`.
@@ -65,7 +68,7 @@ class GaussianJobSettings(MolecularJobSettings):
         charge=None,
         multiplicity=None,
         chk=True,
-        job_type=None,
+        jobtype=None,
         title=None,
         freq=False,
         numfreq=False,
@@ -101,7 +104,7 @@ class GaussianJobSettings(MolecularJobSettings):
             charge (int, optional): Molecular charge.
             multiplicity (int, optional): Spin multiplicity.
             chk (bool): Use checkpoint files (default True).
-            job_type (str, optional): Calculation type (e.g., 'opt', 'freq').
+            jobtype (str, optional): Calculation type (e.g., 'opt', 'freq').
             title (str, optional): Job title.
             freq (bool): Include frequency calculations.
             numfreq (bool): Use numerical frequencies.
@@ -135,7 +138,7 @@ class GaussianJobSettings(MolecularJobSettings):
             multiplicity=multiplicity,
             freq=freq,
             numfreq=numfreq,
-            job_type=job_type,
+            jobtype=jobtype,
             title=title,
             solvent_model=solvent_model,
             solvent_id=solvent_id,
@@ -156,6 +159,7 @@ class GaussianJobSettings(MolecularJobSettings):
         self.additional_solvent_options = additional_solvent_options
         self.additional_opt_options_in_route = additional_opt_options_in_route
         self.append_additional_info = append_additional_info
+        self._route_string = None
 
         if gen_genecp_file is not None and "~" in gen_genecp_file:
             gen_genecp_file = os.path.expanduser(gen_genecp_file)
@@ -205,9 +209,11 @@ class GaussianJobSettings(MolecularJobSettings):
         Args:
             keywords (list): Specific list of keywords to merge.
                 Defaults to charge and multiplicity.
-                If None, all settings will be merged (Caution: may cause issue if e.g.,
+                If None, all settings will be merged
+                (Caution: may cause issue if e.g.,
                 genecp log file used to prepare input without genecp).
-            other (JobSettings, dict): Settings to merge. Can also take the form of a dictionary
+            other (JobSettings, dict): Settings to
+            merge. Can also take the form of a dictionary
             merge_all (bool): If True, merge all settings.
             If False, only merge the settings specified in keywords.
         """
@@ -426,7 +432,7 @@ class GaussianJobSettings(MolecularJobSettings):
             charge=None,
             multiplicity=None,
             chk=True,
-            job_type=None,
+            jobtype=None,
             title="Gaussian job with default settings",
             freq=True,
             numfreq=False,
@@ -499,6 +505,10 @@ class GaussianJobSettings(MolecularJobSettings):
         logger.debug(f"Route for settings {self}: {route_string}")
         return route_string
 
+    @route_string.setter
+    def route_string(self, value):
+        self._route_string = value
+
     def _get_route_string_from_user_input(self):
         """
         Generate route string from user-provided route specification.
@@ -564,6 +574,19 @@ class GaussianJobSettings(MolecularJobSettings):
                 options are specified.
         """
         route_string = ""
+
+        # Get dieze tag with job route and freq string
+        dieze_tag = self._get_dieze_tag()
+        route_string += dieze_tag
+
+        level_of_theory_string = self._get_level_of_theory_string()
+        route_string += level_of_theory_string
+
+        return route_string
+
+    def _get_dieze_tag(self):
+        """Get dieze tag from job type."""
+        route_string = ""
         # Add #-tag prefix for calculation level specification
         if self.dieze_tag is not None:
             route_string += (
@@ -580,36 +603,36 @@ class GaussianJobSettings(MolecularJobSettings):
                 f"Adding additional opt options: "
                 f"{self.additional_opt_options_in_route}"
             )
-            if self.job_type == "opt":
+            if self.jobtype == "opt":
                 route_string += (
                     f" opt=({self.additional_opt_options_in_route})"
                 )
-            elif self.job_type == "ts":
+            elif self.jobtype == "ts":
                 if "calcall" not in self.additional_opt_options_in_route:
                     route_string += f" opt=(ts,calcfc,noeigentest,{self.additional_opt_options_in_route})"
                 else:
                     route_string += f" opt=(ts,noeigentest,{self.additional_opt_options_in_route})"
-            elif self.job_type == "modred":
+            elif self.jobtype == "modred":
                 route_string += f" opt=(modredundant,{self.additional_opt_options_in_route})"
                 self.freq = True
-            elif self.job_type == "scan":
+            elif self.jobtype == "scan":
                 route_string += f" opt=(modredundant,{self.additional_opt_options_in_route})"
                 self.freq = False
-            elif self.job_type == "sp":
+            elif self.jobtype == "sp":
                 route_string += ""
                 self.freq = False  # turn off freq calculation for sp job
         elif self.additional_opt_options_in_route is None:
-            if self.job_type == "opt":
+            if self.jobtype == "opt":
                 route_string += " opt"
-            elif self.job_type == "ts":
+            elif self.jobtype == "ts":
                 route_string += " opt=(ts,calcfc,noeigentest)"
-            elif self.job_type == "modred":
+            elif self.jobtype == "modred":
                 route_string += " opt=modredundant"
                 self.freq = True
-            elif self.job_type == "scan":
+            elif self.jobtype == "scan":
                 route_string += " opt=modredundant"
                 self.freq = False
-            elif self.job_type == "sp":
+            elif self.jobtype == "sp":
                 route_string += ""
                 self.freq = False  # turn off freq calculation for sp job
 
@@ -620,6 +643,15 @@ class GaussianJobSettings(MolecularJobSettings):
         elif not self.freq and self.numfreq:
             route_string += " freq=numer"
             logger.debug("Added numerical frequency calculation")
+        elif self.freq and self.numfreq:
+            raise ValueError(
+                "Both freq and numfreq cannot be True at the same time!"
+            )
+        return route_string
+
+    def _get_level_of_theory_string(self):
+        """Get level of theory string for route."""
+        route_string = ""
 
         # Determine computational method and add to route string
         if self.semiempirical is not None:
@@ -734,10 +766,10 @@ class GaussianJobSettings(MolecularJobSettings):
             )
 
         # Write job type specific route keywords
-        if self.job_type == "nci":
+        if self.jobtype == "nci":
             route_string += " output=wfn"  # output wavefunction file for NCI
             logger.debug("Added NCI-specific output=wfn keyword")
-        elif self.job_type == "wbi":
+        elif self.jobtype == "wbi":
             route_string += " pop=nboread"  # write bond order matrix
             logger.debug("Added WBI-specific pop=nboread keyword")
         return route_string
@@ -844,6 +876,63 @@ class GaussianJobSettings(MolecularJobSettings):
             set(molecule.chemical_symbols).intersection(self.heavy_elements)
         )
 
+    def determine_basis_keyword(self, molecule):
+        """
+        Determine the appropriate basis keyword
+        (gen or genecp) for the molecule.
+
+        Based on the heavy elements present in the molecule, determines whether
+        to use 'gen' (for elements that don't require ECPs) or 'genecp' (for
+        elements that require ECPs). Elements with atomic number > 36 require
+        ECPs and thus need 'genecp', while elements <= 36 only need 'gen'.
+
+        If no heavy elements are present in the molecule, returns the light
+        elements basis keyword (with hyphens removed).
+
+        Args:
+            molecule: Molecule object containing atomic information.
+
+        Returns:
+            str: 'gen' if all heavy elements have atomic number <= 36,
+                 'genecp' if any heavy element has atomic number > 36,
+                 light_elements_basis (formatted) if no heavy elements present,
+                 or the original basis keyword if not using gen/genecp.
+        """
+        # Only applies when basis is gen or genecp
+        if self.basis not in ["gen", "genecp"]:
+            return self.basis
+
+        # Get heavy elements actually present in the molecule
+        heavy_elements_in_structure = self.prune_heavy_elements(molecule)
+
+        # If no heavy elements specified or present, use light elements basis
+        if (
+            heavy_elements_in_structure is None
+            or len(heavy_elements_in_structure) == 0
+        ):
+            # Return light elements basis if available,
+            # otherwise return original basis
+            if self.light_elements_basis is not None:
+                # Remove hyphens for Gaussian compatibility
+                # (def2-SVP -> def2svp)
+                return self.light_elements_basis.replace("-", "").lower()
+            return self.basis
+
+        # Check if any heavy element requires ECP (atomic number > 36)
+        for element in heavy_elements_in_structure:
+            if pt.requires_ecp(element):
+                logger.debug(
+                    f"Element {element} requires ECP (Z > 36), using 'genecp'"
+                )
+                return "genecp"
+
+        # All heavy elements have atomic number <= 36, use 'gen'
+        logger.debug(
+            f"All heavy elements {heavy_elements_in_structure} have Z <= 36, "
+            f"using 'gen'"
+        )
+        return "gen"
+
     def _check_solvent(self, solvent_model):
         """
         Validate that the specified solvent model is supported.
@@ -862,6 +951,996 @@ class GaussianJobSettings(MolecularJobSettings):
                 f"The specified solvent model {solvent_model} is not in \n"
                 f"the available solvent models: {GAUSSIAN_SOLVATION_MODELS}"
             )
+
+
+class GaussianpKaJobSettings(GaussianJobSettings):
+    """
+    Specialized settings for Gaussian pKa calculations.
+
+    This class extends GaussianJobSettings to support pKa calculations using
+    a proper thermodynamic cycle. It creates optimization jobs in gas phase
+    and single point jobs in solution phase at the same level of theory to
+    ensure proper error cancellation for solvation free energy calculations.
+
+    Two thermodynamic cycles are supported:
+
+    1. **Direct dissociation** (scheme='direct'):
+       Uses the absolute free energy of a proton in water (ΔG°(H+)_aq).
+       pKa = [G(A-)_aq - G(HA)_aq + ΔG°(H+)_aq] / (2.303 * R * T)
+       Default ΔG°(H+)_aq = -265.9 kcal/mol (Tissandier et al., J Phys Chem A 1998)
+
+    2. **Proton exchange** (scheme='proton exchange'):
+       Uses a reference acid (HRef) to cancel systematic errors.
+       HA + Ref- → A- + HRef
+       pKa(HA) = pKa(HRef) + ΔG_exchange / (2.303 * R * T)
+
+       When using proton exchange, you can provide a reference acid geometry file
+       via the href_file parameter. This will run optimization and SP
+       calculations for both HRef and Ref- alongside HA and A-.
+
+    The pKa calculation workflow:
+    1. Optimize HA in gas phase (opt + freq)
+    2. Optimize A- in gas phase (opt + freq)
+    3. [If reference_file provided] Optimize HB in gas phase (opt + freq)
+    4. [If reference_file provided] Optimize B- in gas phase (opt + freq)
+    5. Run SP on optimized HA in solution (same functional/basis as gas)
+    6. Run SP on optimized A- in solution (same functional/basis as gas)
+    7. [If reference_file provided] Run SP on optimized HB in solution
+    8. [If reference_file provided] Run SP on optimized B- in solution
+    9. Calculate pKa using the selected thermodynamic cycle
+
+    Note: Using the same level of theory for both gas and solution phases
+    ensures proper cancellation of systematic errors in DFT calculations.
+
+    Attributes:
+        proton_index (int): 1-based index of the proton to remove for deprotonation.
+        scheme (str): Type of thermodynamic cycle ('direct' or 'proton exchange').
+        href_file (str): Path to geometry file for reference acid (HRef).
+            Used only when scheme='proton exchange'.
+        reference_proton_index (int): 1-based index of proton to remove from HRef.
+        reference_charge (int): Charge of the reference acid (HRef).
+        reference_multiplicity (int): Multiplicity of the reference acid (HRef).
+        reference_conjugate_base_charge (int): Charge of Ref- (defaults to reference_charge - 1).
+        reference_conjugate_base_multiplicity (int): Multiplicity of Ref-.
+        delta_G_proton (float): Absolute free energy of H+ in water (kcal/mol).
+            Only used when scheme='direct'. Default: -265.9 kcal/mol.
+        solvent_model (str): Solvation model for SP calculations (e.g., 'SMD', 'PCM').
+        solvent_id (str): Solvent ID for SP calculations (e.g., 'water').
+        charge (int): Charge of the protonated form (inherited from parent).
+        multiplicity (int): Multiplicity of the protonated form (inherited from parent).
+        conjugate_base_charge (int): Charge of the conjugate base (typically charge - 1).
+        conjugate_base_multiplicity (int): Multiplicity of the conjugate base.
+
+    References:
+        Tissandier MD, Cowen KA, Feng WY, Gundlach E, Cohen MH, Earhart AD,
+        Coe JV, Tuttle TR Jr (1998) The proton's absolute aqueous enthalpy
+        and Gibbs free energy of solvation from cluster-ion solvation data.
+        J Phys Chem A 102:7787-7794.
+
+    Example:
+        from chemsmart.io.molecules.structure import Molecule
+        mol = Molecule.from_filepath("acetic_acid.xyz")
+
+        # Direct dissociation cycle (no reference acid needed)
+        settings = GaussianpKaJobSettings(
+            proton_index=10,
+            scheme="direct",
+            charge=0,
+            multiplicity=1,
+            functional="B3LYP",
+            basis="6-311+G(d,p)",
+            solvent_model="SMD",
+            solvent_id="water"
+        )
+
+        # Proton exchange cycle with reference acid geometry file
+        settings = GaussianpKaJobSettings(
+            proton_index=10,
+            scheme="proton exchange",
+            reference_file="water.xyz",
+            reference_proton_index=1,
+            reference_charge=0,
+            reference_multiplicity=1,
+            charge=0,
+            multiplicity=1,
+            functional="B3LYP",
+            basis="6-311+G(d,p)",
+            solvent_model="SMD",
+            solvent_id="water"
+        )
+    """
+
+    # Default absolute free energy of H+ in water (kcal/mol)
+    # From Tissandier et al., J Phys Chem A 1998, 102:7787
+    DEFAULT_DELTA_G_PROTON = -265.9
+
+    def __init__(
+        self,
+        proton_index=None,
+        scheme="proton exchange",
+        reference_file=None,
+        reference_proton_index=None,
+        reference_charge=None,
+        reference_multiplicity=None,
+        reference_conjugate_base_charge=None,
+        reference_conjugate_base_multiplicity=None,
+        delta_G_proton=None,
+        solvent_model="SMD",
+        solvent_id="water",
+        conjugate_base_charge=None,
+        conjugate_base_multiplicity=None,
+        # Thermochemistry settings for pKa calculation
+        temperature=298.15,
+        concentration=1.0,
+        pressure=1.0,
+        cutoff_entropy_grimme=100.0,
+        cutoff_enthalpy=100.0,
+        energy_units="hartree",
+        **kwargs,
+    ):
+        """
+        Initialize Gaussian pKa job settings.
+
+        The protonated form charge and multiplicity are inherited from the
+        parent GaussianJobSettings class via the charge and multiplicity
+        parameters in kwargs.
+
+        Args:
+            proton_index (int, optional): 1-based index of the proton to remove
+                for creating the conjugate base. Must be specified before
+                calling create_conjugate_base_molecule().
+            scheme (str): Type of thermodynamic cycle to use.
+                Options: 'direct', 'proton exchange'. Default is 'proton exchange'.
+            reference_file (str, optional): Path to geometry file for reference acid (HB)
+                for proton exchange cycle. When provided, optimization and SP
+                calculations will also be run for HRef and Ref-.
+            reference_proton_index (int, optional): 1-based index of the proton to
+                remove from the reference acid (HRef) to create its conjugate base (Ref-).
+                Required when href_file is provided.
+            reference_charge (int, optional): Charge of the reference acid (HRef).
+                Required when href_file is provided.
+            reference_multiplicity (int, optional): Multiplicity of the reference acid (HRef).
+                Required when href_file is provided.
+            reference_conjugate_base_charge (int, optional): Charge of the reference
+                conjugate base (Ref-). Defaults to reference_charge - 1.
+            reference_conjugate_base_multiplicity (int, optional): Multiplicity of the
+                reference conjugate base (Ref-). Defaults to reference_multiplicity.
+            delta_G_proton (float, optional): Absolute free energy of H+ in water
+                (kcal/mol). Only used when scheme='direct'.
+                Default is -265.9 kcal/mol (Tissandier et al., 1998).
+            solvent_model (str): Solvation model for solution phase SP.
+                Default is 'SMD'.
+            solvent_id (str): Solvent ID for solution phase SP.
+                Default is 'water'.
+            conjugate_base_charge (int, optional): Charge of the conjugate base (A-).
+                If not specified, defaults to charge - 1.
+            conjugate_base_multiplicity (int, optional): Multiplicity of the conjugate base (A-).
+                If not specified, defaults to multiplicity.
+            temperature (float): Temperature in Kelvin for thermochemistry calculation.
+                Default is 298.15 K.
+            concentration (float): Concentration in mol/L for thermochemistry.
+                Default is 1.0 mol/L.
+            pressure (float): Pressure in atm for thermochemistry.
+                Default is 1.0 atm.
+            cutoff_entropy_grimme (float): Cutoff frequency for entropy in cm^-1
+                using Grimme's quasi-RRHO method. Default is 100.0 cm^-1.
+            cutoff_enthalpy (float): Cutoff frequency for enthalpy in cm^-1
+                using Head-Gordon's quasi-RRHO method. Default is 100.0 cm^-1.
+            energy_units (str): Energy units for output. Default is 'hartree'.
+            **kwargs: Additional keyword arguments passed to GaussianJobSettings,
+                including charge and multiplicity for the protonated form,
+                and functional/basis for both gas and solution phases.
+        """
+        # Backwards compatibility for thermodynamic_cycle
+        if "thermodynamic_cycle" in kwargs:
+            scheme = kwargs.pop("thermodynamic_cycle")
+            logger.warning(
+                "The 'thermodynamic_cycle' argument is deprecated, use 'scheme' instead."
+            )
+
+        super().__init__(**kwargs)
+        self.proton_index = proton_index
+        self.scheme = scheme
+        self.solvent_model = solvent_model
+        self.solvent_id = solvent_id
+        self.conjugate_base_charge = conjugate_base_charge
+        self.conjugate_base_multiplicity = conjugate_base_multiplicity
+
+        # Thermochemistry settings
+        self.temperature = temperature
+        self.concentration = concentration
+        self.pressure = pressure
+        self.cutoff_entropy_grimme = cutoff_entropy_grimme
+        self.cutoff_enthalpy = cutoff_enthalpy
+        self.energy_units = energy_units
+
+        if not self.title:
+            self.title = "Gaussian pKa calculation job"
+
+        # Reference acid settings for proton exchange cycle
+        if scheme == "proton exchange":
+            self.reference_file = reference_file
+            self.reference_proton_index = reference_proton_index
+            self.reference_charge = reference_charge
+            self.reference_multiplicity = reference_multiplicity
+            self.reference_conjugate_base_charge = (
+                reference_conjugate_base_charge
+            )
+            self.reference_conjugate_base_multiplicity = (
+                reference_conjugate_base_multiplicity
+            )
+        else:
+            # Not needed for direct cycle
+            self.reference_file = None
+            self.reference_proton_index = None
+            self.reference_charge = None
+            self.reference_multiplicity = None
+            self.reference_conjugate_base_charge = None
+            self.reference_conjugate_base_multiplicity = None
+
+        # Set delta_G_proton for direct cycle
+        if delta_G_proton is not None:
+            self.delta_G_proton = delta_G_proton
+        else:
+            self.delta_G_proton = self.DEFAULT_DELTA_G_PROTON
+
+    @classmethod
+    def build_gaussian_pka_settings(
+        cls, proton_index, shared, opt_settings, sp_settings=None
+    ):
+        """Build settings from CLI shared options and merged opt settings."""
+        cli_only = {"reference_color_code", "skip_completed"}
+        rename = {
+            "reference": "reference_file",
+            "delta_g_proton": "delta_G_proton",
+        }
+
+        pka_kwargs = {}
+        for key, value in shared.items():
+            if key in cli_only:
+                continue
+            pka_kwargs[rename.get(key, key)] = value
+
+        gs_params = {
+            name
+            for name, param in inspect.signature(
+                GaussianJobSettings.__init__
+            ).parameters.items()
+            if name != "self"
+            and param.kind
+            not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        }
+        opt_kwargs = {
+            key: value
+            for key, value in vars(opt_settings).items()
+            if key in gs_params and value is not None and key not in pka_kwargs
+        }
+
+        def _first_non_none(*values):
+            for val in values:
+                if val is not None:
+                    return val
+            return None
+
+        solvent_model = _first_non_none(
+            pka_kwargs.get("solvent_model"),
+            getattr(opt_settings, "solvent_model", None),
+            (
+                getattr(sp_settings, "solvent_model", None)
+                if sp_settings
+                else None
+            ),
+            "SMD",
+        )
+        solvent_id = _first_non_none(
+            pka_kwargs.get("solvent_id"),
+            getattr(opt_settings, "solvent_id", None),
+            getattr(sp_settings, "solvent_id", None) if sp_settings else None,
+            "water",
+        )
+
+        pka_kwargs["solvent_model"] = solvent_model
+        pka_kwargs["solvent_id"] = solvent_id
+
+        return cls(
+            proton_index=proton_index,
+            **pka_kwargs,
+            **opt_kwargs,
+        )
+
+    @property
+    def has_reference_file(self):
+        """Check if a reference acid geometry file is provided."""
+        return (
+            self.scheme == "proton exchange"
+            and self.reference_file is not None
+        )
+
+    def validate_reference_settings(self):
+        """
+        Validate that all required reference acid settings are provided.
+
+        Raises:
+            ValueError: If reference_file is provided but other required
+                settings are missing.
+        """
+        if not self.has_reference_file:
+            return
+
+        missing = []
+        if self.reference_proton_index is None:
+            missing.append("reference_proton_index")
+        if self.reference_charge is None:
+            missing.append("reference_charge")
+        if self.reference_multiplicity is None:
+            missing.append("reference_multiplicity")
+
+        if missing:
+            raise ValueError(
+                f"When reference_file is provided, the following must also be "
+                f"specified: {', '.join(missing)}"
+            )
+
+    def get_reference_molecule(self):
+        """
+        Load and return the reference acid molecule (HRef) from file.
+
+        Returns:
+            Molecule: The reference acid molecule with charge/multiplicity set.
+
+        Raises:
+            ValueError: If href_file is not provided or settings are invalid.
+        """
+        if not self.has_reference_file:
+            raise ValueError(
+                "Reference file not provided. Cannot load reference molecule."
+            )
+
+        self.validate_reference_settings()
+
+        from chemsmart.io.molecules.structure import Molecule
+
+        ref_mol = Molecule.from_filepath(self.reference_file)
+        ref_mol.charge = self.reference_charge
+        ref_mol.multiplicity = self.reference_multiplicity
+        return ref_mol
+
+    def get_reference_conjugate_base_molecule(self):
+        """
+        Create and return the reference conjugate base molecule (Ref-).
+
+        Returns:
+            Molecule: The reference conjugate base with proton removed.
+
+        Raises:
+            ValueError: If reference settings are invalid.
+        """
+        ref_mol = self.get_reference_molecule()
+        return self._create_reference_conjugate_base_molecule(ref_mol)
+
+    def _create_reference_conjugate_base_molecule(self, reference_molecule):
+        """
+        Create a reference conjugate base molecule by removing the specified proton.
+
+        Args:
+            reference_molecule (Molecule): The reference acid molecule (HRef).
+
+        Returns:
+            Molecule: A new molecule with the proton removed (Ref-).
+
+        Raises:
+            ValueError: If reference_proton_index is invalid.
+        """
+        if self.reference_proton_index is None:
+            raise ValueError(
+                "reference_proton_index must be specified to create reference "
+                "conjugate base molecule. Use 1-based indexing."
+            )
+
+        # Validate reference_proton_index range (1-based)
+        if (
+            self.reference_proton_index < 1
+            or self.reference_proton_index > len(reference_molecule)
+        ):
+            raise ValueError(
+                f"reference_proton_index {self.reference_proton_index} is out of range. "
+                f"Reference molecule has {len(reference_molecule)} atoms "
+                f"(1-indexed: 1 to {len(reference_molecule)})."
+            )
+
+        # Convert to 0-based index for internal use
+        proton_idx_0based = self.reference_proton_index - 1
+
+        # Validate that the atom is a hydrogen
+        atom_symbol = reference_molecule.symbols[proton_idx_0based]
+        if atom_symbol not in ("H", "h"):
+            raise ValueError(
+                f"Atom at reference_proton_index {self.reference_proton_index} is "
+                f"'{atom_symbol}', not hydrogen. Only hydrogen atoms can be removed."
+            )
+
+        # Create lists excluding the proton
+        new_symbols = [
+            s
+            for i, s in enumerate(reference_molecule.symbols)
+            if i != proton_idx_0based
+        ]
+        new_positions = [
+            p
+            for i, p in enumerate(reference_molecule.positions)
+            if i != proton_idx_0based
+        ]
+
+        # Handle frozen_atoms if present
+        new_frozen_atoms = None
+        if reference_molecule.frozen_atoms is not None:
+            new_frozen_atoms = [
+                f
+                for i, f in enumerate(reference_molecule.frozen_atoms)
+                if i != proton_idx_0based
+            ]
+
+        from chemsmart.io.molecules.structure import Molecule
+
+        # Create the reference conjugate base molecule
+        ref_conjugate_base_mol = Molecule(
+            symbols=new_symbols,
+            positions=new_positions,
+            frozen_atoms=new_frozen_atoms,
+        )
+
+        # Set charge and multiplicity for the reference conjugate base
+        if self.reference_conjugate_base_charge is not None:
+            ref_conjugate_base_mol.charge = (
+                self.reference_conjugate_base_charge
+            )
+        else:
+            ref_conjugate_base_mol.charge = self.reference_charge - 1
+
+        if self.reference_conjugate_base_multiplicity is not None:
+            ref_conjugate_base_mol.multiplicity = (
+                self.reference_conjugate_base_multiplicity
+            )
+        else:
+            ref_conjugate_base_mol.multiplicity = self.reference_multiplicity
+
+        return ref_conjugate_base_mol
+
+    def reference_pair_molecules(self):
+        """
+        Create and return both reference acid (HRef) and conjugate base (Ref-) molecules.
+
+        Returns:
+            tuple: A tuple of (reference_acid_mol, reference_conjugate_base_mol).
+        """
+        ref_acid_mol = self.get_reference_molecule()
+        ref_conjugate_base_mol = (
+            self._create_reference_conjugate_base_molecule(ref_acid_mol)
+        )
+        return ref_acid_mol, ref_conjugate_base_mol
+
+    def reference_pair_job_settings(self):
+        """
+        Create GaussianJobSettings for reference acid gas phase optimization.
+
+        Returns:
+            tuple: A tuple of (ref_acid_settings, ref_conjugate_base_settings).
+        """
+        return self._create_reference_gas_phase_job_settings()
+
+    def reference_pair_sp_job_settings(self):
+        """
+        Create GaussianJobSettings for reference acid solution phase SP.
+
+        Returns:
+            tuple: A tuple of (ref_acid_sp_settings, ref_conjugate_base_sp_settings).
+        """
+        return self._create_reference_solution_phase_sp_settings()
+
+    def _create_reference_gas_phase_job_settings(self):
+        """
+        Create GAS PHASE optimization job settings for reference acid pair.
+
+        Returns:
+            tuple: A tuple of (ref_acid_settings, ref_conjugate_base_settings).
+        """
+        self.validate_reference_settings()
+
+        # Reference acid (HB) settings - GAS PHASE (no solvent)
+        ref_acid_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=self.reference_charge,
+            multiplicity=self.reference_multiplicity,
+            jobtype="opt",
+            title="Gaussian pKa calculation job",
+            freq=True,
+            solvent_model=None,
+            solvent_id=None,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        # Reference conjugate base (B-) charge/multiplicity
+        if self.reference_conjugate_base_charge is not None:
+            ref_cb_charge = self.reference_conjugate_base_charge
+        else:
+            ref_cb_charge = self.reference_charge - 1
+
+        if self.reference_conjugate_base_multiplicity is not None:
+            ref_cb_mult = self.reference_conjugate_base_multiplicity
+        else:
+            ref_cb_mult = self.reference_multiplicity
+
+        # Reference conjugate base (B-) settings - GAS PHASE (no solvent)
+        ref_conjugate_base_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=ref_cb_charge,
+            multiplicity=ref_cb_mult,
+            jobtype="opt",
+            title="Gaussian pKa calculation job",
+            freq=True,
+            solvent_model=None,
+            solvent_id=None,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        return ref_acid_settings, ref_conjugate_base_settings
+
+    def _create_reference_solution_phase_sp_settings(self):
+        """
+        Create SOLUTION PHASE single point job settings for reference acid pair.
+
+        Returns:
+            tuple: A tuple of (ref_acid_sp_settings, ref_conjugate_base_sp_settings).
+        """
+        self.validate_reference_settings()
+
+        # Reference acid (HB) SP settings - SOLUTION PHASE
+        ref_acid_sp_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=self.reference_charge,
+            multiplicity=self.reference_multiplicity,
+            jobtype="sp",
+            title="Gaussian pKa calculation job",
+            freq=False,
+            solvent_model=self.solvent_model,
+            solvent_id=self.solvent_id,
+            additional_solvent_options=self.additional_solvent_options,
+            custom_solvent=self.custom_solvent,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        # Reference conjugate base (B-) charge/multiplicity
+        if self.reference_conjugate_base_charge is not None:
+            ref_cb_charge = self.reference_conjugate_base_charge
+        else:
+            ref_cb_charge = self.reference_charge - 1
+
+        if self.reference_conjugate_base_multiplicity is not None:
+            ref_cb_mult = self.reference_conjugate_base_multiplicity
+        else:
+            ref_cb_mult = self.reference_multiplicity
+
+        # Reference conjugate base (B-) SP settings - SOLUTION PHASE
+        ref_conjugate_base_sp_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=ref_cb_charge,
+            multiplicity=ref_cb_mult,
+            jobtype="sp",
+            title="Gaussian pKa calculation job",
+            freq=False,
+            solvent_model=self.solvent_model,
+            solvent_id=self.solvent_id,
+            additional_solvent_options=self.additional_solvent_options,
+            custom_solvent=self.custom_solvent,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        return ref_acid_sp_settings, ref_conjugate_base_sp_settings
+
+    @property
+    def protonated_charge(self):
+        """Charge of the protonated form (alias for inherited charge)."""
+        return self.charge
+
+    @protonated_charge.setter
+    def protonated_charge(self, value):
+        """Set the charge of the protonated form."""
+        self.charge = value
+
+    @property
+    def protonated_multiplicity(self):
+        """Multiplicity of the protonated form (alias for inherited multiplicity)."""
+        return self.multiplicity
+
+    @protonated_multiplicity.setter
+    def protonated_multiplicity(self, value):
+        """Set the multiplicity of the protonated form."""
+        self.multiplicity = value
+
+    def protonated_molecule(self, molecule):
+        """
+        Create and return the protonated molecule.
+
+        Args:
+            molecule (Molecule): The original molecule (HA).
+
+        Returns:
+            Molecule: A copy of the molecule with updated charge/multiplicity.
+        """
+        protonated_mol = molecule.copy()
+
+        if self.charge is not None:
+            protonated_mol.charge = self.charge
+        elif protonated_mol.charge is None:
+            protonated_mol.charge = 0
+
+        if self.multiplicity is not None:
+            protonated_mol.multiplicity = self.multiplicity
+        elif protonated_mol.multiplicity is None:
+            protonated_mol.multiplicity = 1
+
+        return protonated_mol
+
+    def conjugate_base_molecule(self, molecule):
+        """Create and return the conjugate base molecule."""
+        return self._create_conjugate_base_molecule(molecule)
+
+    def conjugate_pair_molecules(self, molecule):
+        """Create and return both protonated and conjugate base molecules."""
+        protonated_mol = molecule
+        conjugate_base_mol = self._create_conjugate_base_molecule(molecule)
+        return protonated_mol, conjugate_base_mol
+
+    def conjugate_pair_job_settings(self, molecule):
+        """Create and return GaussianJobSettings for gas phase optimization."""
+        return self._create_gas_phase_job_settings(molecule)
+
+    def conjugate_pair_sp_job_settings(self, molecule):
+        """Create and return GaussianJobSettings for solution phase SP."""
+        return self._create_solution_phase_sp_settings(molecule)
+
+    def _create_conjugate_base_molecule(self, molecule):
+        """
+        Create a conjugate base molecule by removing the specified proton.
+
+        Creates a deep copy of the input molecule and removes the atom at
+        the specified proton_index. The resulting molecule represents the
+        conjugate base (A-) of the original acid (HA).
+
+        Args:
+            molecule (Molecule): The protonated molecule (HA).
+
+        Returns:
+            Molecule: A new molecule with the proton removed (A-).
+
+        Raises:
+            ValueError: If proton_index is not specified or is out of range.
+            ValueError: If the atom at proton_index is not a hydrogen.
+
+        Example:
+            settings = GaussianpKaJobSettings(proton_index=10)
+            conjugate_base_mol = settings.conjugate_base_molecule(acetic_acid)
+        """
+        if self.proton_index is None:
+            raise ValueError(
+                "proton_index must be specified to create conjugate base molecule. "
+                "Use 1-based indexing."
+            )
+
+        # Validate proton_index range (1-based)
+        if self.proton_index < 1 or self.proton_index > len(molecule):
+            raise ValueError(
+                f"proton_index {self.proton_index} is out of range. "
+                f"Molecule has {len(molecule)} atoms (1-indexed: 1 to {len(molecule)})."
+            )
+
+        # Convert to 0-based index for validation
+        proton_idx_0based = self.proton_index - 1
+
+        # Validate that the atom is a hydrogen
+        atom_symbol = molecule.symbols[proton_idx_0based]
+        if atom_symbol not in ("H", "h"):
+            raise ValueError(
+                f"Atom at index {self.proton_index} is '{atom_symbol}', not hydrogen. "
+                "Only hydrogen atoms can be removed for pKa calculations."
+            )
+
+        # Use the instance method (1-based index)
+        conjugate_base_mol = molecule.delete_atoms_by_indices(
+            self.proton_index, one_based=True
+        )
+
+        # Set charge and multiplicity for the conjugate base
+        # By default, removing H+ decreases charge by 1
+        original_charge = molecule.charge if molecule.charge is not None else 0
+        original_mult = (
+            molecule.multiplicity if molecule.multiplicity is not None else 1
+        )
+
+        if self.conjugate_base_charge is not None:
+            conjugate_base_mol.charge = self.conjugate_base_charge
+        else:
+            conjugate_base_mol.charge = original_charge - 1
+
+        if self.conjugate_base_multiplicity is not None:
+            conjugate_base_mol.multiplicity = self.conjugate_base_multiplicity
+        else:
+            # Multiplicity usually stays the same for closed-shell systems
+            conjugate_base_mol.multiplicity = original_mult
+
+        return conjugate_base_mol
+
+    def _create_gas_phase_job_settings(self, molecule):
+        """
+        Create GAS PHASE optimization job settings for both forms.
+
+        Generates two GaussianJobSettings objects configured for gas phase
+        optimization calculations (no solvent): one for the protonated form (HA)
+        and one for the conjugate base (A-). Both include frequency calculations
+        for thermochemistry.
+
+        Note: Gas phase optimization is essential for proper pKa calculations
+        using the direct thermodynamic cycle approach.
+
+        Args:
+            molecule (Molecule): The protonated molecule (HA) to use as the
+                starting point for both calculations.
+
+        Returns:
+            tuple: A tuple of (protonated_settings, conjugate_base_settings),
+                where each is a GaussianJobSettings object configured for
+                gas phase optimization with frequency calculations.
+
+        Example:
+            settings = GaussianpKaJobSettings(
+                proton_index=10,
+                functional="B3LYP",
+                basis="6-311+G(d,p)"
+            )
+            prot_settings, conj_base_settings = settings._create_gas_phase_job_settings(mol)
+        """
+        # Determine charge and multiplicity for protonated form
+        # Use self.charge/multiplicity (inherited from parent), fall back to molecule
+        if self.charge is not None:
+            prot_charge = self.charge
+        elif molecule.charge is not None:
+            prot_charge = molecule.charge
+        else:
+            prot_charge = 0
+
+        if self.multiplicity is not None:
+            prot_mult = self.multiplicity
+        elif molecule.multiplicity is not None:
+            prot_mult = molecule.multiplicity
+        else:
+            prot_mult = 1
+
+        # Create settings for protonated form (HA) - GAS PHASE (no solvent)
+        protonated_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=prot_charge,
+            multiplicity=prot_mult,
+            jobtype="opt",
+            title="Gaussian pKa calculation job",
+            freq=True,  # Need frequencies for thermochemistry
+            solvent_model=None,  # GAS PHASE - no solvent
+            solvent_id=None,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        # Determine charge and multiplicity for conjugate base
+        if self.conjugate_base_charge is not None:
+            conj_base_charge = self.conjugate_base_charge
+        else:
+            conj_base_charge = prot_charge - 1
+
+        if self.conjugate_base_multiplicity is not None:
+            conj_base_mult = self.conjugate_base_multiplicity
+        else:
+            conj_base_mult = prot_mult
+
+        # Create settings for conjugate base (A-) - GAS PHASE (no solvent)
+        conjugate_base_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,
+            basis=self.basis,
+            semiempirical=self.semiempirical,
+            charge=conj_base_charge,
+            multiplicity=conj_base_mult,
+            jobtype="opt",
+            title="Gaussian pKa calculation job",
+            freq=True,  # Need frequencies for thermochemistry
+            solvent_model=None,  # GAS PHASE - no solvent
+            solvent_id=None,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        return protonated_settings, conjugate_base_settings
+
+    def _create_molecules(self, molecule):
+        """
+        Create both protonated and conjugate base molecule objects.
+
+        Creates a copy of the input molecule with appropriate charge/multiplicity
+        for the protonated form, and generates a new molecule with the proton
+        removed for the conjugate base.
+
+        Args:
+            molecule (Molecule): The original protonated molecule (HA).
+
+        Returns:
+            tuple: A tuple of (protonated_molecule, conjugate_base_molecule).
+
+        Example:
+            settings = GaussianpKaJobSettings(proton_index=10)
+            prot_mol, conj_base_mol = settings.create_molecules(acetic_acid)
+            print(f"HA: {len(prot_mol)} atoms, A-: {len(conj_base_mol)} atoms")
+        """
+        # Create protonated molecule (copy with updated charge/mult if needed)
+        protonated_mol = molecule.copy()
+
+        if self.charge is not None:
+            protonated_mol.charge = self.charge
+        elif protonated_mol.charge is None:
+            protonated_mol.charge = 0
+
+        if self.multiplicity is not None:
+            protonated_mol.multiplicity = self.multiplicity
+        elif protonated_mol.multiplicity is None:
+            protonated_mol.multiplicity = 1
+
+        # Create conjugate base molecule
+        conjugate_base_mol = self._create_conjugate_base_molecule(molecule)
+
+        return protonated_mol, conjugate_base_mol
+
+    def _create_solution_phase_sp_settings(self, molecule):
+        """
+        Create SOLUTION PHASE single point job settings for both forms.
+
+        Generates two GaussianJobSettings objects configured for solution phase
+        single point calculations: one for the protonated form (HA) and one for
+        the conjugate base (A-).
+
+        IMPORTANT: Uses the SAME functional and basis as the gas phase optimization
+        to ensure proper error cancellation in the solvation free energy calculation.
+        Using different levels of theory for gas and solution phases would lead to
+        mathematically inconsistent ΔG_solv values.
+
+        Args:
+            molecule (Molecule): The protonated molecule (HA) to use as the
+                starting point for both calculations.
+
+        Returns:
+            tuple: A tuple of (protonated_sp_settings, conjugate_base_sp_settings),
+                where each is a GaussianJobSettings object configured for
+                solution phase single point calculations.
+
+        Example:
+            settings = GaussianpKaJobSettings(
+                proton_index=10,
+                functional="B3LYP",
+                basis="6-311+G(d,p)",
+                solvent_model="SMD",
+                solvent_id="water"
+            )
+            prot_sp_settings, conj_base_sp_settings = settings._create_solution_phase_sp_settings(mol)
+        """
+        # Determine charge and multiplicity for protonated form
+        if self.charge is not None:
+            prot_charge = self.charge
+        elif molecule.charge is not None:
+            prot_charge = molecule.charge
+        else:
+            prot_charge = 0
+
+        if self.multiplicity is not None:
+            prot_mult = self.multiplicity
+        elif molecule.multiplicity is not None:
+            prot_mult = molecule.multiplicity
+        else:
+            prot_mult = 1
+
+        # Create settings for protonated form (HA) SP - SOLUTION PHASE
+        # Uses SAME functional/basis as gas phase for error cancellation
+        protonated_sp_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,  # Same as gas phase
+            basis=self.basis,  # Same as gas phase
+            semiempirical=self.semiempirical,
+            charge=prot_charge,
+            multiplicity=prot_mult,
+            jobtype="sp",
+            title="Gaussian pKa calculation job",
+            freq=False,
+            solvent_model=self.solvent_model,  # Solution phase
+            solvent_id=self.solvent_id,
+            additional_solvent_options=self.additional_solvent_options,
+            custom_solvent=self.custom_solvent,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        # Determine charge and multiplicity for conjugate base
+        if self.conjugate_base_charge is not None:
+            conj_base_charge = self.conjugate_base_charge
+        else:
+            conj_base_charge = prot_charge - 1
+
+        if self.conjugate_base_multiplicity is not None:
+            conj_base_mult = self.conjugate_base_multiplicity
+        else:
+            conj_base_mult = prot_mult
+
+        # Create settings for conjugate base (A-) SP - SOLUTION PHASE
+        # Uses SAME functional/basis as gas phase for error cancellation
+        conjugate_base_sp_settings = GaussianJobSettings(
+            ab_initio=self.ab_initio,
+            functional=self.functional,  # Same as gas phase
+            basis=self.basis,  # Same as gas phase
+            semiempirical=self.semiempirical,
+            charge=conj_base_charge,
+            multiplicity=conj_base_mult,
+            jobtype="sp",
+            title="Gaussian pKa calculation job",
+            freq=False,
+            solvent_model=self.solvent_model,  # Solution phase
+            solvent_id=self.solvent_id,
+            additional_solvent_options=self.additional_solvent_options,
+            custom_solvent=self.custom_solvent,
+            additional_route_parameters=self.additional_route_parameters,
+            gen_genecp_file=self.gen_genecp_file,
+            heavy_elements=self.heavy_elements,
+            heavy_elements_basis=self.heavy_elements_basis,
+            light_elements_basis=self.light_elements_basis,
+        )
+
+        return protonated_sp_settings, conjugate_base_sp_settings
 
 
 class GaussianIRCJobSettings(GaussianJobSettings):
@@ -904,7 +1983,8 @@ class GaussianIRCJobSettings(GaussianJobSettings):
             predictor (str, optional): Predictor method for IRC integration.
             recorrect (str, optional): Recorrection strategy.
             recalc_step (int): Steps between energy recalculations.
-            direction (str, optional): IRC direction ('forward'/'reverse'). If None, run both directions.
+            direction (str, optional): IRC direction
+            ('forward'/'reverse'). If None, run both directions.
             maxpoints (int): Maximum number of IRC points.
             maxcycles (int): Maximum optimization cycles per point.
             stepsize (int): IRC integration step size.
@@ -960,10 +2040,10 @@ class GaussianIRCJobSettings(GaussianJobSettings):
             )
 
         # Write job type specific route for IRC direction
-        if self.job_type == "ircf":
+        if self.jobtype == "ircf":
             self.direction = "forward"
             logger.debug("Set IRC direction to forward")
-        elif self.job_type == "ircr":
+        elif self.jobtype == "ircr":
             self.direction = "reverse"
             logger.debug("Set IRC direction to reverse")
 
@@ -996,7 +2076,8 @@ class GaussianIRCJobSettings(GaussianJobSettings):
             )
 
         if self.additional_route_parameters is not None:
-            # Check if the additional parameters are already in the route string
+            # Check if the additional parameters
+            # are already in the route string
             # to avoid duplication (e.g., scf=qc appearing twice)
             additional_params = self.additional_route_parameters.strip()
             if additional_params not in route_string:
@@ -1053,7 +2134,8 @@ class GaussianLinkJobSettings(GaussianJobSettings):
             stable (str): Stability analysis method.
             guess (str): Initial orbital guess method.
             predictor (str, optional): IRC predictor method for IRC link jobs.
-            recorrect (str, optional): IRC recorrection strategy for IRC link jobs.
+            recorrect (str, optional): IRC
+            recorrection strategy for IRC link jobs.
             recalc_step (int): Steps between energy recalculations for IRC.
             direction (str, optional): IRC direction ('forward'/'reverse').
             maxpoints (int): Maximum number of IRC points.
@@ -1145,7 +2227,18 @@ class GaussianLinkJobSettings(GaussianJobSettings):
             route_string_final += f" stable={self.stable}"
         if self.guess:
             logger.debug(f"Guess: {self.guess}")
-            route_string_final += f" guess={self.guess}"
+            # Normalize: strip any surrounding parentheses and whitespace so
+            # that user input like '(mix,always)' is treated the same as
+            # 'mix,always' and never produces double parentheses.
+            guess_normalized = self.guess.strip()
+            if guess_normalized.startswith("(") and guess_normalized.endswith(
+                ")"
+            ):
+                guess_normalized = guess_normalized[1:-1].strip()
+            if "," in guess_normalized:
+                route_string_final += f" guess=({guess_normalized})"
+            else:
+                route_string_final += f" guess={guess_normalized}"
 
         return route_string_final
 
@@ -1155,14 +2248,16 @@ class GaussianLinkJobSettings(GaussianJobSettings):
 
         Creates the second route string that continues from the
         stability analysis by adding checkpoint geometry and orbital
-        reading specifications. Handles IRC jobs by using GaussianIRCJobSettings.
+        reading specifications. Handles IRC
+        jobs by using GaussianIRCJobSettings.
 
         Returns:
             str: Route string for the optimization/IRC step.
         """
         # Special handling for IRC jobs - use GaussianIRCJobSettings
-        if self.job_type in ["ircf", "ircr"]:
-            # Create a temporary GaussianIRCJobSettings instance with current settings
+        if self.jobtype in ["ircf", "ircr"]:
+            # Create a temporary GaussianIRCJobSettings
+            # instance with current settings
             irc_settings = GaussianIRCJobSettings(**self.__dict__)
             # Get the IRC route string from the specialized class
             route_string = irc_settings._get_route_string_from_jobtype()
@@ -1243,3 +2338,804 @@ class GaussianTDDFTJobSettings(GaussianJobSettings):
         route_string += f" TD({self.states},nstates={self.nstates},root={self.root}{eqsolv})"
 
         return route_string
+
+
+class GaussianQMMMJobSettings(GaussianJobSettings):
+    """
+    Configuration settings for Gaussian QM/MM
+    calculations using ONIOM methodology.
+
+    This class manages all parameters needed
+    to set up multi-layer ONIOM calculations
+    in Gaussian, which partition molecular
+    systems into different regions treated with
+    varying levels of theory. The ONIOM
+    approach enables accurate quantum mechanical
+    treatment of chemically active regions
+    while efficiently handling large molecular
+    environments with molecular mechanics.
+
+    The class supports 2-layer and 3-layer ONIOM calculations:
+
+    **2-Layer ONIOM**: High(QM):Low(MM)
+        - High level: Quantum mechanics (DFT, ab initio, etc.)
+        - Low level: Molecular mechanics force fields
+
+    **3-Layer ONIOM**: High(QM):Medium(QM):Low(MM)
+        - High level: High-accuracy quantum mechanics
+        - Medium level: Lower-cost quantum mechanics
+        - Low level: Molecular mechanics force fields
+
+    Key Features:
+    - Flexible layer definition with atom selection
+    - Support for mixed QM/MM and QM/QM/MM schemes
+    - Automatic link atom handling for covalent boundaries
+    - Customizable scale factors for link atom placement
+    - Integration with popular force fields (AMBER, UFF, etc.)
+    - Multiple charge/multiplicity specifications per layer
+
+    Attributes:
+        jobtype (str, optional): Type of ONIOM
+        calculation ('sp', 'opt', 'freq', 'ts', 'irc',
+            'modred', 'scan'). When using CLI commands,
+            this is automatically inferred from
+            the parent command (e.g., 'chemsmart sub
+            gaussian opt qmmm' sets jobtype='opt').
+
+        Level-specific theory parameters:
+            high_level_functional (str): DFT functional
+            for high layer (e.g., 'B3LYP', 'M06-2X')
+            high_level_basis (str): Basis set for
+            high layer (e.g., '6-31G*', 'def2-TZVP')
+            high_level_force_field (str): Force field for high layer (if MM)
+            medium_level_functional (str): DFT functional for medium layer
+            medium_level_basis (str): Basis set for medium layer
+            medium_level_force_field (str): Force field for medium layer
+            low_level_functional (str): DFT functional for low layer (if QM)
+            low_level_basis (str): Basis set for low layer (if QM)
+            low_level_force_field (str): Force field for low layer (usually MM)
+
+        Charge and multiplicity specifications:
+            charge_total/mult_total (int): Full system
+            properties (legacy: charge_total/real_multiplicity)
+            charge_intermediate/mult_intermediate (int): Intermediate
+            system properties (legacy: int_charge/int_multiplicity)
+            charge_high/mult_high (int): Model/high-layer
+            properties (legacy: model_charge/model_multiplicity)
+
+        Atom partitioning:
+            high_level_atoms (list/str): Atoms in high layer (1-indexed)
+            medium_level_atoms (list/str): Atoms in medium layer (1-indexed)
+            low_level_atoms (list/str): Atoms in low layer (1-indexed)
+            bonded_atoms (list): Covalent bonds crossing layer boundaries.
+            If omitted, cut covalent bonds are assigned from connectivity.
+            scale_factors (dict): Custom scale factors for link atom placement
+
+    Examples:
+        2-layer enzyme active site calculation:
+        >>> settings = GaussianQMMMJobSettings(
+        ...     jobtype='opt',
+        ...     high_level_functional='B3LYP',
+        ...     high_level_basis='6-31G*',
+        ...     low_level_force_field='AMBER=HardFirst',
+        ...     charge_total=0,
+        ...     real_multiplicity=1,
+        ...     high_level_atoms=[1, 2, 3, 4, 5],  # Active site residues
+        ...     bonded_atoms=[(5, 6)],  # QM-MM boundary bond
+        ... )
+
+        3-layer organometallic catalyst:
+        >>> settings = GaussianQMMMJobSettings(
+        ...     jobtype='freq',
+        ...     high_level_functional='M06-2X',
+        ...     high_level_basis='def2-TZVP',
+        ...     medium_level_functional='B3LYP',
+        ...     medium_level_basis='6-31G*',
+        ...     low_level_force_field='UFF',
+        ...     charge_total=-1,
+        ...     real_multiplicity=2,
+        ...     high_level_atoms='1-10',     # Metal center and ligands
+        ...     medium_level_atoms='11-50',  # Extended coordination sphere
+        ...     bonded_atoms=[(10,11), (50,51)],
+        ...     scale_factors={(10,11): [0.709, 0.709, 0.709]}
+        ... )
+
+    Note:
+        The real/intermediate/model charge
+        and multiplicity specifications follow
+        ONIOM conventions where:
+        - Real system: Complete molecular system
+        - Intermediate system: High+Medium layers (3-layer only)
+        - Model system: High layer only
+
+        Scale factors control link atom placement and default to covalent radii
+        ratios if not specified. The format
+        is {(atom1,atom2): [low,medium,high]}.
+
+    See Also:
+        - GaussianQMMMJob: Job execution class for QM/MM calculations
+        - GaussianJobSettings: Base class for Gaussian job configuration
+        - Molecule: Molecular structure with QM/MM partitioning information
+    """
+
+    def __init__(
+        self,
+        jobtype=None,
+        parent_jobtype=None,
+        high_level_functional=None,
+        high_level_basis=None,
+        high_level_force_field=None,
+        medium_level_functional=None,
+        medium_level_basis=None,
+        medium_level_force_field=None,
+        low_level_functional=None,
+        low_level_basis=None,
+        low_level_force_field=None,
+        charge_total=None,
+        mult_total=None,
+        charge_intermediate=None,
+        mult_intermediate=None,
+        charge_high=None,
+        mult_high=None,
+        real_charge=None,
+        real_multiplicity=None,
+        int_charge=None,
+        int_multiplicity=None,
+        model_charge=None,
+        model_multiplicity=None,
+        high_level_atoms=None,
+        medium_level_atoms=None,
+        low_level_atoms=None,
+        bonded_atoms=None,
+        scale_factors=None,
+        mm_atom_info_file=None,
+        mm_parameters_file=None,
+        **kwargs,
+    ):
+        """
+        Initialize Gaussian QM/MM job settings for ONIOM calculations.
+
+        Args:
+            jobtype (str, optional): Type of ONIOM calculation to perform.
+                Options: 'sp' (single-point), 'opt'
+                (optimization), 'freq' (frequency),
+                'ts' (transition state), 'irc' (intrinsic reaction coordinate),
+                'modred' (redundant coordinates), 'scan' (coordinate scan)
+
+                Note: When using the CLI with
+                `chemsmart sub gaussian <jobtype> qmmm`,
+                the jobtype is automatically inferred
+                from the parent command and does
+                not need to be specified manually.
+
+            Theory level parameters:
+                high_level_functional (str): DFT functional for high QM layer
+                    (e.g., 'B3LYP', 'M06-2X', 'wB97X-D', 'PBE0')
+                high_level_basis (str): Basis set for high QM layer
+                    (e.g., '6-31G*', '6-311++G(d,p)', 'def2-TZVP', 'cc-pVTZ')
+                high_level_force_field (str): Force
+                field for high MM layer (rare)
+                medium_level_functional (str):
+                DFT functional for medium QM layer
+                medium_level_basis (str): Basis set for medium QM layer
+                medium_level_force_field (str): Force field for medium MM layer
+                low_level_functional (str): DFT
+                functional for low QM layer (uncommon)
+                low_level_basis (str): Basis set for low QM layer (uncommon)
+                low_level_force_field (str): Force field for low MM layer
+                    (e.g., 'AMBER=HardFirst', 'UFF', 'DREIDING', 'MM3')
+
+            Charge and multiplicity:
+                charge_total (int): Total charge of complete
+                molecular system (legacy: charge_total)
+                mult_total (int): Spin multiplicity of
+                complete system (legacy: real_multiplicity)
+                charge_intermediate (int): Charge of
+                high+medium layers (legacy: int_charge)
+                mult_intermediate (int): Multiplicity of
+                high+medium layers (legacy: int_multiplicity)
+                charge_high (int): Charge of high
+                layer only (legacy: model_charge)
+                mult_high (int): Multiplicity of high
+                layer only (legacy: model_multiplicity)
+
+            Atom partitioning:
+                high_level_atoms (list/str): Atoms in high layer. Can be:
+                    - List of integers: [1, 2, 3, 5, 8]
+                    - Range string: "1-10,15,20-25"
+                    - List of ranges: ["1-10", "15", "20-25"]
+                medium_level_atoms (list/str):
+                Atoms in medium layer (3-layer only)
+                low_level_atoms (list/str): Atoms
+                in low layer (usually auto-assigned)
+                bonded_atoms (list): Covalent bonds crossing layer boundaries.
+                    Format: [(atom1, atom2), (atom3,
+                    atom4)] where atoms are 1-indexed
+                scale_factors (dict): Custom link atom scale factors. Format:
+                    {(atom1, atom2): [scale_low, scale_medium, scale_high]}
+                    Values typically range from 0.5-1.0, common value is 0.709
+
+            MM typing (built-in force fields):
+                mm_atom_info_file (str, optional): Text file of AMBER/UFF atom
+                    types and partial charges (required for AMBER unless the
+                    input .com already has Element-Type-Charge labels).
+                mm_parameters_file (str, optional): Optional SoftFirst/HardFirst
+                    MM parameter lines to append after the molecule section.
+                    Not needed if those lines are already in the input .com.
+
+            **kwargs: Additional keyword arguments
+            passed to parent GaussianJobSettings
+
+        Note:
+            - All atom indices are 1-based following Gaussian conventions
+            - If only 2 layers specified, use
+            high_level_* and low_level_* parameters
+            - Force fields must be available in your Gaussian installation
+            - Link atoms are automatically placed
+            for bonded_atoms specifications
+            - The parent class 'functional' and 'basis'
+            attributes are set to high_level values
+        """
+        super().__init__(**kwargs)
+        self.jobtype = jobtype
+        self.parent_jobtype = parent_jobtype
+        self.high_level_functional = high_level_functional
+        self.high_level_basis = high_level_basis
+        self.high_level_force_field = high_level_force_field
+        self.medium_level_functional = medium_level_functional
+        self.medium_level_basis = medium_level_basis
+        self.medium_level_force_field = medium_level_force_field
+        self.low_level_functional = low_level_functional
+        self.low_level_basis = low_level_basis
+        self.low_level_force_field = low_level_force_field
+        # Canonical charge/multiplicity names
+        # (aligned with ORCA) with legacy fallbacks
+        self.charge_total = charge_total
+        if self.charge_total is None:
+            self.charge_total = real_charge
+        self.mult_total = mult_total
+        if self.mult_total is None:
+            self.mult_total = real_multiplicity
+
+        self.charge_intermediate = charge_intermediate
+        if self.charge_intermediate is None:
+            self.charge_intermediate = int_charge
+        self.mult_intermediate = mult_intermediate
+        if self.mult_intermediate is None:
+            self.mult_intermediate = int_multiplicity
+
+        self.charge_high = charge_high
+        if self.charge_high is None:
+            self.charge_high = model_charge
+        self.mult_high = mult_high
+        if self.mult_high is None:
+            self.mult_high = model_multiplicity
+
+        # Maintain legacy attribute names for backward compatibility
+        self.real_charge = self.charge_total
+        self.real_multiplicity = self.mult_total
+        self.int_charge = self.charge_intermediate
+        self.int_multiplicity = self.mult_intermediate
+        self.model_charge = self.charge_high
+        self.model_multiplicity = self.mult_high
+        self.high_level_atoms = high_level_atoms
+        self.medium_level_atoms = medium_level_atoms
+        self.low_level_atoms = low_level_atoms
+        self.bonded_atoms = bonded_atoms
+        self.scale_factors = scale_factors
+        self.mm_atom_info_file = mm_atom_info_file
+        self.mm_parameters_file = mm_parameters_file
+
+        self.title = "Gaussian QM/MM job"
+
+        # Keep parent basis/functional aligned with the high QM layer so the
+        # shared gen/genecp route and basis-section logic applies unchanged.
+        if self.high_level_basis is not None:
+            self.basis = self.high_level_basis
+        if self.high_level_functional is not None:
+            self.functional = self.high_level_functional
+
+        if self.charge_total is not None and self.mult_total is not None:
+            # the charge and multiplicity of the real system equal to
+            # that of the low_level_charge and low_level_multiplicity
+            self.charge = self.charge_total
+            self.multiplicity = self.mult_total
+
+    @staticmethod
+    def _is_builtin_mm(force_field):
+        if force_field is None:
+            return False
+        force_field = force_field.lower()
+        return any(
+            name in force_field for name in ("amber", "uff", "dreiding")
+        )
+
+    def uses_builtin_mm(self):
+        """Return True if medium/low uses a Gaussian built-in MM force field."""
+        return self._is_builtin_mm(
+            self.medium_level_force_field
+        ) or self._is_builtin_mm(self.low_level_force_field)
+
+    def requires_mm_atom_info(self):
+        """Return True if AMBER requires MM atom types/charges."""
+        for force_field in (
+            self.medium_level_force_field,
+            self.low_level_force_field,
+        ):
+            if force_field is not None and "amber" in force_field.lower():
+                return True
+        return False
+
+    @staticmethod
+    def load_mm_atom_info(path, num_atoms=None):
+        """Load MM atom types/charges from a simple text file.
+
+        Each non-comment line is either::
+
+            index type charge [link_type link_charge]
+
+        with 1-based ``index``, or::
+
+            type charge [link_type link_charge]
+
+        in molecule order when indices are omitted. Blank lines and ``#``
+        comments are ignored.
+
+        Returns:
+            list[tuple]: ``(atom_type, charge, link_type, link_charge)`` per
+            atom. ``link_type`` / ``link_charge`` may be ``None``.
+        """
+        path = os.path.expanduser(path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"MM atom info file not found: {path}")
+
+        by_index = {}
+        ordered = []
+
+        with open(path) as handle:
+            for line_number, raw in enumerate(handle, start=1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                try:
+                    if parts[0].lstrip("+-").isdigit() and len(parts) >= 3:
+                        index = int(parts[0])
+                        atom_type = parts[1]
+                        charge = float(parts[2])
+                        link_type = parts[3] if len(parts) >= 4 else None
+                        link_charge = (
+                            float(parts[4]) if len(parts) >= 5 else None
+                        )
+                        by_index[index] = (
+                            atom_type,
+                            charge,
+                            link_type,
+                            link_charge,
+                        )
+                    elif len(parts) >= 2:
+                        atom_type = parts[0]
+                        charge = float(parts[1])
+                        link_type = parts[2] if len(parts) >= 3 else None
+                        link_charge = (
+                            float(parts[3]) if len(parts) >= 4 else None
+                        )
+                        ordered.append(
+                            (atom_type, charge, link_type, link_charge)
+                        )
+                    else:
+                        raise ValueError(
+                            f"Invalid MM atom info line {line_number}: {raw!r}"
+                        )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid MM atom info line {line_number} in {path}: "
+                        f"{raw!r}"
+                    ) from exc
+
+        if by_index and ordered:
+            raise ValueError(
+                f"MM atom info file {path} mixes indexed and unindexed lines."
+            )
+
+        if by_index:
+            max_index = max(by_index)
+            expected = num_atoms if num_atoms is not None else max_index
+            extra = sorted(i for i in by_index if i < 1 or i > expected)
+            if extra:
+                raise ValueError(
+                    f"MM atom info file {path} has out-of-range atom indices: {extra}"
+                )
+            missing = [i for i in range(1, expected + 1) if i not in by_index]
+            if missing:
+                raise ValueError(
+                    f"MM atom info file {path} missing atom indices: {missing}"
+                )
+            records = [by_index[i] for i in range(1, expected + 1)]
+        else:
+            records = ordered
+
+        if num_atoms is not None and len(records) != num_atoms:
+            raise ValueError(
+                f"MM atom info file {path} has {len(records)} atoms, "
+                f"expected {num_atoms}."
+            )
+        return records
+
+    @staticmethod
+    def format_mm_atom_label(element, mm_info=None):
+        """Format ``Element`` or ``Element-Type-Charge`` for Gaussian MM input.
+
+        ``mm_info`` is ``(atom_type, charge, link_type, link_charge)`` or
+        ``None``.
+        """
+        if mm_info is None:
+            return element
+        atom_type, charge = mm_info[0], mm_info[1]
+        return f"{element}-{atom_type}-{charge}"
+
+    @staticmethod
+    def format_mm_link_atom(bonded_to, mm_info=None):
+        """Format a link-atom label, optionally with MM type/charge.
+
+        ``mm_info`` is ``(atom_type, charge, link_type, link_charge)`` or
+        ``None``.
+        """
+        if (
+            mm_info is not None
+            and mm_info[2] is not None
+            and mm_info[3] is not None
+        ):
+            return f"H-{mm_info[2]}-{mm_info[3]} {bonded_to}"
+        return f"H {bonded_to}"
+
+    @property
+    def charge_and_multiplicity_string(self):
+        """Obtain charge and multiplicity string."""
+        return self._get_charge_and_multiplicity()
+
+    def validate_and_assign_level(
+        self, functional, basis, force_field, level_name
+    ):
+        """Validates functional and basis set for a given level
+        and returns formatted theory string.
+        Return level of theory if both functional and basis are specified,
+        or force field if both are not specified.
+        """
+
+        if functional and basis and force_field:
+            raise ValueError(
+                f"For {level_name} level of theory, one should specify only functional/basis or force field!"
+            )
+
+        if force_field:
+            assert functional is None and basis is None, (
+                f"Force field is given for {level_name} level of theory, "
+                f"thus no functional and basis should be given!"
+            )
+            level_of_theory = force_field
+        else:
+            # if force field is not given, then
+            # functional and basis can be given,
+            # so that level of theory takes functional and basis set
+            if functional and basis:
+                level_of_theory = f"{functional}/{basis}"
+            else:
+                # but functional and basis set can
+                # also not be given, in which case,
+                # all 3 are None and overall level
+                # of theory for that layer is None.
+                level_of_theory = None
+
+        logger.debug(
+            f"Obtained level of theory {level_of_theory} for {level_name} level."
+        )
+
+        return level_of_theory
+
+    def _get_route_string_from_jobtype(self):
+        """Generate QM/MM route string with job
+        type, freq, and ONIOM specification."""
+        route_string = "#"
+        if self.dieze_tag:
+            route_string += self.dieze_tag
+
+        # Add job type
+        parent_jobtype = (
+            self.parent_jobtype.lower() if self.parent_jobtype else None
+        )
+        # Normalise: treat empty / whitespace-only values the same as None so
+        # we never emit invalid keywords like opt=() or opt=(modredundant,).
+        _raw = self.additional_opt_options_in_route
+        extra_opt = _raw.strip() if isinstance(_raw, str) else _raw
+        if not extra_opt:  # catches None, "", "   "
+            extra_opt = None
+        if parent_jobtype == "opt":
+            if extra_opt is not None:
+                route_string += f" opt=({extra_opt})"
+            else:
+                route_string += " opt"
+        elif parent_jobtype == "scan" or parent_jobtype == "modred":
+            if extra_opt is not None:
+                route_string += f" opt=(modredundant,{extra_opt})"
+            else:
+                route_string += " opt=modredundant"
+        elif parent_jobtype == "ts":
+            if extra_opt is not None:
+                if "calcall" in extra_opt:
+                    route_string += f" opt=(ts,noeigentest,{extra_opt})"
+                else:
+                    route_string += f" opt=(ts,calcfc,noeigentest,{extra_opt})"
+            else:
+                route_string += " opt=(ts,calcfc,noeigentest)"
+        elif parent_jobtype == "irc":
+            route_string += " irc"
+        # sp doesn't add any keyword
+
+        # Add freq if enabled (and not already a freq job)
+        if (self.freq or self.numfreq) and parent_jobtype != "freq":
+            route_string += " freq"
+
+        # Add ONIOM level of theory string
+        oniom_string = self._get_oniom_string()
+        route_string += oniom_string
+
+        # Built-in MM ONIOM: prefer explicit connectivity (Gaussian recommendation)
+        if (
+            self.uses_builtin_mm()
+            and "geom=connectivity" not in route_string.lower()
+        ):
+            route_string += " geom=connectivity"
+
+        # Add solvation if specified
+        if self.solvent_model is not None and self.solvent_id is not None:
+            route_string += (
+                f" scrf=({self.solvent_model},solvent={self.solvent_id})"
+            )
+
+        # Append additional route parameters (e.g., from -r CLI flag)
+        if self.additional_route_parameters is not None:
+            additional_params = self.additional_route_parameters.strip()
+            if additional_params not in route_string:
+                route_string += f" {additional_params}"
+                logger.debug(
+                    f"Added additional route parameters: {additional_params}"
+                )
+            else:
+                logger.debug(
+                    f"Additional route parameters '{additional_params}' "
+                    "already present in route string"
+                )
+
+        return route_string
+
+    def _get_oniom_string(self):
+        """Get ONIOM level of theory string."""
+        high_level_of_theory = self.validate_and_assign_level(
+            self.high_level_functional,
+            self.high_level_basis,
+            self.high_level_force_field,
+            level_name="high",
+        )
+
+        medium_level_of_theory = self.validate_and_assign_level(
+            self.medium_level_functional,
+            self.medium_level_basis,
+            self.medium_level_force_field,
+            level_name="medium",
+        )
+
+        low_level_of_theory = self.validate_and_assign_level(
+            self.low_level_functional,
+            self.low_level_basis,
+            self.low_level_force_field,
+            level_name="low",
+        )
+
+        levels = []
+        if high_level_of_theory is not None:
+            levels.append(high_level_of_theory)
+        if medium_level_of_theory is not None and self.medium_level_atoms:
+            levels.append(medium_level_of_theory)
+        if low_level_of_theory is not None:
+            levels.append(low_level_of_theory)
+
+        if levels:
+            oniom_string = f" oniom({':'.join(levels)})"
+        else:
+            oniom_string = " oniom"
+
+        return oniom_string
+
+    def _get_charge_and_multiplicity(self):
+        """Obtain charge and multiplicity string.
+        For two-layer ONIOM jobs, the format for this input line is:
+
+        chrg_real-low spin_real-low [chrg_model-high spin_model-high
+                                    [chrg_model-low spin_model-low
+                                    [chrg_real-high spin_real-high]]]
+
+        Fourth pair applies only to ONIOM=SValue calculations.
+        When only a single value pair is specified,
+        all levels will use those values.
+        If two pairs of values are included, then third
+        pair defaults to same values as second pair.
+        If final pair is omitted for an S-value job, it
+        defaults to values for the real system at low level.
+        For such two-layer ONIOM jobs, users are required
+        to specify the charge and multiplicity of high-level
+         layer and low-level layer, instead high and medium level.
+
+        For 3-layers ONIOM, the format is:
+        cRealL sRealL [cIntM sIntM [cIntL sIntL
+        [cModH sModH [cModM sModM [cModL sModL]]]]]
+        Real, Int=Intermediate system, and
+        Mod=Model system, and second character
+        is one of: H, M and L for the High, Medium and Low levels).
+        """
+        assert (
+            self.charge_total is not None and self.mult_total is not None
+        ), "Charge and multiplicity for the real system must be specified!"
+        real_low_charge = self.charge_total
+        real_low_multiplicity = self.mult_total
+        int_med_charge = self.charge_intermediate
+        int_med_multiplicity = self.mult_intermediate
+        int_low_charge = self.charge_intermediate
+        int_low_multiplicity = self.mult_intermediate
+        model_high_charge = self.charge_high
+        model_high_multiplicity = self.mult_high
+        model_med_charge = self.charge_high
+        model_med_multiplicity = self.mult_high
+        model_low_charge = self.charge_high
+        model_low_multiplicity = self.mult_high
+
+        # two-layer ONIOM model
+        if (
+            self.validate_and_assign_level(
+                self.medium_level_functional,
+                self.medium_level_basis,
+                self.medium_level_force_field,
+                level_name="medium",
+            )
+            is None
+            or not self.medium_level_atoms
+            or self.validate_and_assign_level(
+                self.low_level_functional,
+                self.low_level_basis,
+                self.low_level_force_field,
+                level_name="low",
+            )
+            is None
+        ):
+            charge_and_multiplicity_list = [
+                real_low_charge,
+                real_low_multiplicity,
+                model_high_charge,
+                model_high_multiplicity,
+                model_low_charge,
+                model_low_multiplicity,
+            ]
+            if all(var is None for var in charge_and_multiplicity_list[2:]):
+                for i in range(2, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = real_low_charge
+                    charge_and_multiplicity_list[i + 1] = real_low_multiplicity
+            elif all(var is None for var in charge_and_multiplicity_list[4:]):
+                for i in range(4, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = model_high_charge
+                    charge_and_multiplicity_list[i + 1] = (
+                        model_high_multiplicity
+                    )
+            elif all(var is not None for var in charge_and_multiplicity_list):
+                pass
+            else:
+                raise ValueError(
+                    "The charge and multiplicity of lower level-of-theory cannot override the higher ones!"
+                )
+            updated_list = []
+            for charge_and_multiplicity in charge_and_multiplicity_list:
+                updated_list.append(str(charge_and_multiplicity))
+            charge_and_multiplicity = " ".join(updated_list)
+        else:
+            # three-layer ONIOM model
+            charge_and_multiplicity_list = [
+                real_low_charge,
+                real_low_multiplicity,
+                int_med_charge,
+                int_med_multiplicity,
+                int_low_charge,
+                int_low_multiplicity,
+                model_high_charge,
+                model_high_multiplicity,
+                model_med_charge,
+                model_med_multiplicity,
+                model_low_charge,
+                model_low_multiplicity,
+            ]
+            # Defaults for missing charge / spin multiplicity
+            # pairs are taken from the next highest
+            # calculation level and / or system size.
+            if all(var is None for var in charge_and_multiplicity_list[2:]):
+                # only charge and multiplicity of real system is specified,
+                # so the charge and multiplicity of other
+                # systems will be the same as the real system
+                for i in range(2, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = real_low_charge
+                    charge_and_multiplicity_list[i + 1] = real_low_multiplicity
+            elif all(var is None for var in charge_and_multiplicity_list[4:]):
+                # only charge and multiplicity of real
+                # system and that of intermediate layer,
+                # medium level-of-theory are specified,
+                # the charge and multiplicity of other
+                # systems will be the same as the intermediate layer
+                for i in range(4, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = int_med_charge
+                    charge_and_multiplicity_list[i + 1] = int_med_multiplicity
+            elif all(var is None for var in charge_and_multiplicity_list[6:]):
+                # only charge and multiplicity of real system,
+                # intermediate layer, medium level-of-theory
+                # and intermediate layer, medium level-of-theory are
+                # specified, the charge and multiplicity of other
+                # systems will be the same as intermediate
+                # layer, medium level-of-theory,...
+                for i in range(6, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = int_med_charge
+                    charge_and_multiplicity_list[i + 1] = int_med_multiplicity
+            elif all(var is None for var in charge_and_multiplicity_list[8:]):
+                # the rest systems will follow the
+                # model system, high level-of-theory
+                for i in range(8, len(charge_and_multiplicity_list), 2):
+                    charge_and_multiplicity_list[i] = model_high_charge
+                    charge_and_multiplicity_list[i + 1] = (
+                        model_high_multiplicity
+                    )
+            elif all(var is None for var in charge_and_multiplicity_list[10:]):
+                charge_and_multiplicity_list[-2] = model_med_charge
+                charge_and_multiplicity_list[-1] = model_med_multiplicity
+            elif all(var is not None for var in charge_and_multiplicity_list):
+                pass
+            else:
+                raise ValueError(
+                    "The charge and multiplicity of lower level-of-theory cannot override the higher ones!"
+                )
+            updated_list = []
+            for charge_and_multiplicity in charge_and_multiplicity_list:
+                updated_list.append(str(charge_and_multiplicity))
+            charge_and_multiplicity = " ".join(updated_list)
+        return charge_and_multiplicity
+
+    def __eq__(self, other):
+        """
+        Compare two GaussianQMMMJobSettings objects for equality.
+
+        Compares all attributes between two
+        QMMM settings objects, including the
+        QMMM-specific attributes that are not present in the parent class.
+
+        Args:
+            other (GaussianQMMMJobSettings): Settings object to compare with.
+
+        Returns:
+            bool or NotImplemented: True if equal, False if different,
+                NotImplemented if types don't match.
+        """
+        if type(self) is not type(other):
+            return NotImplemented
+
+        # Get dictionaries of both objects
+        self_dict = self.__dict__.copy()
+        other_dict = other.__dict__.copy()
+
+        # Exclude append_additional_info from
+        # the comparison (inherited behavior)
+        self_dict.pop("append_additional_info", None)
+        other_dict.pop("append_additional_info", None)
+
+        is_equal = self_dict == other_dict
+        if not is_equal:
+            import dictdiffer
+
+            logger.info("Gaussian QMMM job settings are not equal.")
+            for diff in list(dictdiffer.diff(self_dict, other_dict)):
+                logger.info(f"Difference: {diff}")
+
+        return self_dict == other_dict

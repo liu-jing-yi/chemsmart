@@ -97,11 +97,23 @@ class GaussianIRCJob(GaussianJob):
         ircf_settings = deepcopy(self.settings)
         label = self.label
         if self.label is not None:
-            label = self.label + "f"
-            if self.settings.flat_irc:
-                label += "_flat"
+            if self.settings.direction is None:
+                # No direction specified: derive forward sub-job label.
+                # Auto-generated labels end with "_irc" (e.g. "file_irc"),
+                # so we append "f" directly → "file_ircf".
+                # Custom labels (e.g. "-l label") do not contain "_irc",
+                # so we append "_ircf" → "label_ircf".
+                if label.endswith("_irc"):
+                    label = label + "f"
+                else:
+                    label = label + "_ircf"
+                if self.settings.flat_irc:
+                    label += "_flat"
+            # When direction is already set, update_irc_label has already
+            # embedded the direction (and _flat if applicable) in the
+            # parent label, so the sub-job reuses it unchanged.
 
-        ircf_settings.job_type = "ircf"
+        ircf_settings.jobtype = "ircf"
         return GaussianGeneralJob(
             molecule=self.molecule,
             settings=ircf_settings,
@@ -124,10 +136,23 @@ class GaussianIRCJob(GaussianJob):
         ircr_settings = deepcopy(self.settings)
         label = self.label
         if self.label is not None:
-            label = self.label + "r"
-            if self.settings.flat_irc:
-                label += "_flat"
-        ircr_settings.job_type = "ircr"
+            if self.settings.direction is None:
+                # No direction specified: derive reverse sub-job label.
+                # Auto-generated labels end with "_irc" (e.g. "file_irc"),
+                # so we append "r" directly → "file_ircr".
+                # Custom labels (e.g. "-l label") do not contain "_irc",
+                # so we append "_ircr" → "label_ircr".
+                if label.endswith("_irc"):
+                    label = label + "r"
+                else:
+                    label = label + "_ircr"
+                if self.settings.flat_irc:
+                    label += "_flat"
+            # When direction is already set, update_irc_label has already
+            # embedded the direction (and _flat if applicable) in the
+            # parent label, so the sub-job reuses it unchanged.
+
+        ircr_settings.jobtype = "ircr"
         return GaussianGeneralJob(
             molecule=self.molecule,
             settings=ircr_settings,
@@ -144,7 +169,7 @@ class GaussianIRCJob(GaussianJob):
         from transition state toward products.
         """
         logger.debug(
-            f"Running forward IRC job: {self._ircf_job().settings.job_type}"
+            f"Running forward IRC job: {self._ircf_job().settings.jobtype}"
         )
         self._ircf_job().run()
 
@@ -156,7 +181,7 @@ class GaussianIRCJob(GaussianJob):
         from transition state toward reactants.
         """
         logger.debug(
-            f"Running reverse IRC job: {self._ircr_job().settings.job_type}"
+            f"Running reverse IRC job: {self._ircr_job().settings.jobtype}"
         )
         self._ircr_job().run()
 
@@ -194,7 +219,8 @@ class GaussianIRCJob(GaussianJob):
         - If direction is None: check both forward and reverse IRC completion
 
         Returns:
-            bool: True if the required IRC calculations are complete, False otherwise.
+            bool: True if the required IRC
+            calculations are complete, False otherwise.
         """
         if self.settings.direction == "forward":
             return self._run_forward_is_complete()
@@ -226,9 +252,11 @@ class GaussianIRCJob(GaussianJob):
 
     def backup_files(self, backup_chk=False):
         """
-        Create backup copies of IRC input and output files based on direction setting.
+        Create backup copies of IRC input and
+        output files based on direction setting.
 
-        Backs up files from the required IRC calculations based on the direction parameter:
+        Backs up files from the required IRC
+        calculations based on the direction parameter:
         - If direction is 'forward': backup only forward IRC files
         - If direction is 'reverse': backup only reverse IRC files
         - If direction is None: backup both forward and reverse IRC files

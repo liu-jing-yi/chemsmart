@@ -7,17 +7,15 @@ from chemsmart.cli.gaussian.gaussian import (
     click_gaussian_jobtype_options,
     gaussian,
 )
+from chemsmart.cli.gaussian.qmmm import create_qmmm_subcommand
 from chemsmart.cli.job import click_job_options
-from chemsmart.utils.cli import (
-    MyCommand,
-    get_setting_from_jobtype_for_gaussian,
-)
+from chemsmart.utils.cli import MyGroup, get_setting_from_jobtype_for_gaussian
 from chemsmart.utils.utils import check_charge_and_multiplicity
 
 logger = logging.getLogger(__name__)
 
 
-@gaussian.command("scan", cls=MyCommand)
+@gaussian.group("scan", cls=MyGroup, invoke_without_command=True)
 @click_job_options
 @click_gaussian_jobtype_options
 @click.option(
@@ -35,7 +33,8 @@ def scan(
     coordinates,
     step_size,
     num_steps,
-    constrained_coordinates=None,
+    constrained_coordinates,
+    skip_completed,
     **kwargs,
 ):
     """CLI subcommand for running Gaussian scan jobs."""
@@ -70,9 +69,8 @@ def scan(
         scan_settings.modred["constrained_coordinates"] = (
             constrained_coordinates_info
         )
-    # get molecule
+    # get molecules
     molecules = ctx.obj["molecules"]
-    molecule = molecules[-1]
 
     # get label for the job
     label = ctx.obj["label"]
@@ -80,12 +78,52 @@ def scan(
 
     logger.info(f"Scan job settings from project: {scan_settings.__dict__}")
 
-    from chemsmart.jobs.gaussian.scan import GaussianScanJob
+    # Store parent context for potential qmmm subcommand
+    ctx.obj["parent_skip_completed"] = skip_completed
+    ctx.obj["parent_freeze_atoms"] = None  # scan doesn't have freeze_atoms
+    ctx.obj["parent_kwargs"] = kwargs
+    ctx.obj["parent_settings"] = scan_settings
+    ctx.obj["parent_jobtype"] = jobtype
 
-    return GaussianScanJob(
-        molecule=molecule,
-        settings=scan_settings,
-        label=label,
-        jobrunner=jobrunner,
-        **kwargs,
-    )
+    # If no subcommand invoked, run regular scan
+    if ctx.invoked_subcommand is None:
+        check_charge_and_multiplicity(scan_settings)
+
+        from chemsmart.jobs.gaussian.scan import GaussianScanJob
+
+        # Get the original molecule indices from context
+        molecule_indices = ctx.obj["molecule_indices"]
+
+        # Handle multiple molecules: create one job per molecule
+        if len(molecules) > 1 and molecule_indices is not None:
+            logger.info(f"Creating {len(molecules)} scan jobs")
+            jobs = []
+            for molecule, idx in zip(molecules, molecule_indices):
+                molecule_label = f"{label}_idx{idx}"
+                logger.info(
+                    f"Running scan for molecule {idx}: {molecule} with label {molecule_label}"
+                )
+
+                job = GaussianScanJob(
+                    molecule=molecule,
+                    settings=scan_settings,
+                    label=molecule_label,
+                    jobrunner=jobrunner,
+                    **kwargs,
+                )
+                jobs.append(job)
+            return jobs
+        else:
+            # Single molecule case
+            molecule = molecules[-1]
+            return GaussianScanJob(
+                molecule=molecule,
+                settings=scan_settings,
+                label=label,
+                jobrunner=jobrunner,
+                **kwargs,
+            )
+
+
+# Register qmmm subcommand
+create_qmmm_subcommand(scan)

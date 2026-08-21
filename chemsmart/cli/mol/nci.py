@@ -35,12 +35,14 @@ def nci(
     skip_completed,
     **kwargs,
 ):
-    """CLI subcommand for generating automatic PyMOL NCI plot and save as PSE file.
+    """CLI subcommand for generating automatic
+    PyMOL NCI plot and save as PSE file.
     Example usage:
         chemsmart run --debug mol -f phenyldioxazolone_nci.log nci
     This visualizes phenyldioxazolone_nci.log file and saves as
     phenyldioxazolone_nci.pse.
-    Note that the phenyldioxazolone_nci-dens.cube and phenyldioxazolone_nci-grad.cube
+    Note that the phenyldioxazolone_nci-dens.cube
+    and phenyldioxazolone_nci-grad.cube
     files should be present for the plotting of nci to work; otherwise,
     an error will be raised.
     """
@@ -51,6 +53,7 @@ def nci(
 
     # get label for the job
     label = ctx.obj["label"]
+    source_basename = ctx.obj["source_basename"]
     if coordinates is not None:
         logger.debug(f"Coordinates for visualization: {coordinates}")
         try:
@@ -68,6 +71,7 @@ def nci(
     return PyMOLNCIJob(
         molecule=molecules,
         label=label,
+        source_basename=source_basename,
         isosurface_value=isosurface_value,
         color_range=color_range,
         binary=binary,

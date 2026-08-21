@@ -21,7 +21,8 @@ class ThermochemistryJobSettings:
 
     Attributes:
         temperature (float | None): Temperature in Kelvin.
-        concentration (float | None): Concentration for solution-phase corrections.
+        concentration (float | None): Concentration
+        for solution-phase corrections.
         pressure (float): Pressure in atm (default 1.0).
         use_weighted_mass (bool): Use mass-weighted scheme when True.
         alpha (int): Scaling factor for QRRHO corrections.
@@ -31,7 +32,9 @@ class ThermochemistryJobSettings:
         energy_units (str): Energy unit label (e.g., 'hartree', 'kcal/mol').
         outputfile (str | None): Path to write thermochemistry results.
         overwrite (bool): Overwrite existing output when True.
-        check_imaginary_frequencies (bool): Validate absence of imaginary modes.
+        check_imaginary_frequencies (bool):
+        Validate absence of imaginary modes.
+        write_header (bool): Write header to output file when True.
     """
 
     def __init__(
@@ -48,6 +51,7 @@ class ThermochemistryJobSettings:
         outputfile=None,
         overwrite=False,
         check_imaginary_frequencies=True,
+        write_header=True,
     ):
         """
         Initialize thermochemistry job settings.
@@ -65,6 +69,8 @@ class ThermochemistryJobSettings:
             outputfile (str, optional): Path to output file
             overwrite (bool): Whether to overwrite existing output files
             check_imaginary_frequencies (bool): Check for imaginary frequencies
+            write_header (bool): Whether to write
+            header to output file (default: True)
         """
         logger.debug("Initializing ThermochemistryJobSettings")
         self.temperature = temperature
@@ -79,6 +85,7 @@ class ThermochemistryJobSettings:
         self.outputfile = outputfile
         self.overwrite = overwrite
         self.check_imaginary_frequencies = check_imaginary_frequencies
+        self.write_header = write_header
 
     def copy(self):
         """
@@ -100,6 +107,7 @@ class ThermochemistryJobSettings:
             outputfile=self.outputfile,
             overwrite=self.overwrite,
             check_imaginary_frequencies=self.check_imaginary_frequencies,
+            write_header=self.write_header,
         )
 
     @classmethod

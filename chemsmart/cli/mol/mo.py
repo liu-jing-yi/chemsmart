@@ -41,7 +41,8 @@ def mo(
     skip_completed,
     **kwargs,
 ):
-    """CLI subcommand for generating molecular orbitals (MOs) visualization and save as PSE file.
+    """CLI subcommand for generating molecular
+    orbitals (MOs) visualization and save as PSE file.
     Example usage:
         chemsmart run --debug mol -f phenyldioxazolone.com mo --homo
     This visualizes the HOMO of phenyldioxazolone.com file and saves as
@@ -54,6 +55,7 @@ def mo(
 
     # get label for the job
     label = ctx.obj["label"]
+    source_basename = ctx.obj["source_basename"]
     if coordinates is not None:
         logger.debug(f"Coordinates for visualization: {coordinates}")
         try:
@@ -71,6 +73,7 @@ def mo(
     return PyMOLMOJob(
         molecule=molecules,
         label=label,
+        source_basename=source_basename,
         pymol_script=file,
         style=style,
         trace=trace,

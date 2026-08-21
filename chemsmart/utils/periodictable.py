@@ -3,14 +3,100 @@ Periodic table utilities for element properties and conversions.
 
 Provides a comprehensive interface for accessing element data including
 atomic numbers, masses, radii, and isotope information. Integrates with
-ASE data sources and ChemSmart isotope data for complete element handling.
+ASE data sources and CHEMSMART isotope data for complete element handling.
 """
+
+import re
 
 from ase.data import chemical_symbols as elements
 from ase.data import covalent_radii
 from ase.data.vdw import vdw_radii
 
 from chemsmart.utils.isotopes_data import isotopes
+from chemsmart.utils.repattern import (
+    element_non_alpha_pattern,
+    element_partition_split_pattern,
+)
+
+# Comprehensive classification of elements based on standard periodic table
+# Non-metals: H, noble gases, halogens, and main group non-metals
+# Note: Se and At are classified as non-metals here (halogens/chalcogens)
+# though their classification is sometimes debated. For organometallic
+# chemistry purposes, they don't typically form the problematic aromatic
+# metal-ligand bonds.
+NONMETALS = frozenset(
+    {
+        1,  # H - Hydrogen
+        2,  # He - Helium
+        6,  # C - Carbon
+        7,  # N - Nitrogen
+        8,  # O - Oxygen
+        9,  # F - Fluorine
+        10,  # Ne - Neon
+        15,  # P - Phosphorus
+        16,  # S - Sulfur
+        17,  # Cl - Chlorine
+        18,  # Ar - Argon
+        34,  # Se - Selenium (chalcogen, predominantly non-metallic)
+        35,  # Br - Bromine
+        36,  # Kr - Krypton
+        53,  # I - Iodine
+        54,  # Xe - Xenon
+        85,  # At - Astatine (halogen, though radioactive and rare)
+        86,  # Rn - Radon
+    }
+)
+
+# Metalloids (semi-metals): elements with properties between metals and non-metals
+# These typically don't form organometallic complexes with aromatic ligands
+METALLOIDS = frozenset(
+    {
+        5,  # B - Boron
+        14,  # Si - Silicon
+        32,  # Ge - Germanium
+        33,  # As - Arsenic
+        51,  # Sb - Antimony
+        52,  # Te - Tellurium
+        84,  # Po - Polonium
+    }
+)
+
+# Combined set of non-metals and metalloids for convenience
+NON_METALS_AND_METALLOIDS = NONMETALS | METALLOIDS
+
+
+def is_metal_atomic_number(atomic_number):
+    """Return True when ``atomic_number`` is classified as a metal."""
+    return int(atomic_number) not in NON_METALS_AND_METALLOIDS
+
+
+def is_metal(symbol):
+    """Return True when ``symbol`` is classified as a metal."""
+    text = str(symbol).strip()
+    if not text:
+        return False
+
+    pt = PeriodicTable()
+    try:
+        element = pt.to_element(text)
+        if element not in PeriodicTable.PERIODIC_TABLE:
+            return False
+        if element.lower() != text.lower():
+            return False
+        atomic_number = pt.to_atomic_number(element)
+    except ValueError:
+        return False
+    return is_metal_atomic_number(atomic_number)
+
+
+def metal_element_symbols():
+    """Return element symbols classified as metals."""
+    pt = PeriodicTable()
+    return [
+        pt.to_symbol(atomic_number)
+        for atomic_number in range(1, len(PeriodicTable.PERIODIC_TABLE))
+        if is_metal_atomic_number(atomic_number)
+    ]
 
 
 class PeriodicTable:
@@ -50,12 +136,36 @@ class PeriodicTable:
         Returns:
             str: Properly capitalized element symbol.
         """
-        # if element_str.upper() == "TV":
-        #     pass
+        cleaned = (element_str or "").strip()
+        if not cleaned:
+            raise ValueError("Element string cannot be empty")
+
+        # Remove partition/layer annotations (e.g., O-O_3, C-C_R, H-H_)
+        cleaned = re.split(element_partition_split_pattern, cleaned)[0]
+        cleaned = re.sub(element_non_alpha_pattern, "", cleaned)
+
+        if not cleaned:
+            raise ValueError(f"Unable to parse element from '{element_str}'")
+
+        # Prefer two-letter symbols first (e.g., 'Na') before one-letter ones.
+        for length in (2, 1):
+            if len(cleaned) >= length:
+                candidate = cleaned[:length]
+                if length == 1:
+                    candidate = candidate.upper()
+                else:
+                    candidate = (
+                        f"{candidate[0].upper()}{candidate[1:].lower()}"
+                    )
+                if candidate in self.PERIODIC_TABLE:
+                    return candidate
+
+        # Fall back to legacy behavior if nothing
+        # matched (will likely raise later)
         return (
-            element_str.upper()
-            if len(element_str) == 1
-            else f"{element_str[0].upper()}{element_str[1:]}"
+            cleaned.upper()
+            if len(cleaned) == 1
+            else f"{cleaned[0].upper()}{cleaned[1:]}"
         )
 
     def sorted_periodic_table_list(self, list_of_elements):
@@ -66,7 +176,8 @@ class PeriodicTable:
         in the periodic table (atomic number order).
 
         Args:
-            list_of_elements (list[str]): Element symbols to sort (case-sensitive;
+            list_of_elements (list[str]): Element
+            symbols to sort (case-sensitive;
                 ensure canonical capitalization as in `PERIODIC_TABLE`).
 
         Returns:
@@ -81,7 +192,8 @@ class PeriodicTable:
         Convert element symbol to atomic number.
 
         Args:
-            symbol (str): Element symbol (e.g., 'H', 'He', 'Li'). Case-sensitive;
+            symbol (str): Element symbol (e.g.,
+            'H', 'He', 'Li'). Case-sensitive;
                 use `to_element` beforehand to normalize if needed.
 
         Returns:
@@ -167,3 +279,25 @@ class PeriodicTable:
         """
         # obtain the covalent radius of the element
         return covalent_radii[self.to_atomic_number(symbol)]
+
+    def requires_ecp(self, symbol):
+        """
+        Check if an element requires an effective core potential (ECP).
+
+        Elements with atomic number > 36 (i.e., beyond Kr in period 4)
+        typically require ECPs in pseudopotential calculations. This
+        corresponds to elements from Rb (Z=37) onwards.
+
+        Args:
+            symbol (str): Element symbol.
+
+        Returns:
+            bool: True if element requires ECP, False otherwise.
+        """
+        # Elements with atomic number > 36 require genecp (ECP)
+        # Elements with atomic number <= 36 use gen (no ECP)
+        return self.to_atomic_number(symbol) > 36
+
+    def is_metal(self, symbol):
+        """Return True when ``symbol`` is classified as a metal."""
+        return is_metal(symbol)

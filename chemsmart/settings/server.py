@@ -7,10 +7,10 @@ from functools import lru_cache
 
 from chemsmart.io.yaml import YAMLFile
 from chemsmart.settings.submitters import Submitter
-from chemsmart.settings.user import ChemsmartUserSettings
+from chemsmart.settings.user import CHEMSMARTUserSettings
 from chemsmart.utils.mixins import RegistryMixin, cached_property
 
-user_settings = ChemsmartUserSettings()
+user_settings = CHEMSMARTUserSettings()
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,8 @@ class Server(RegistryMixin):
         Get the job scheduler for this server.
 
         Returns:
-            str or None: Scheduler type (e.g., 'slurm', 'pbs') or None if not set.
+            str or None: Scheduler type (e.g.,
+            'slurm', 'pbs') or None if not set.
         """
         return self.kwargs.get("SCHEDULER", None)
 
@@ -262,6 +263,16 @@ class Server(RegistryMixin):
         """
         return self.kwargs.get("EXTRA_COMMANDS", None)
 
+    @cached_property
+    def extra_scheduler_directives(self):
+        """
+        Get additional scheduler directives for submission scripts.
+
+        Returns:
+            str or list or None: Additional scheduler directives or None.
+        """
+        return self.kwargs.get("EXTRA_SCHEDULER_DIRECTIVES", None)
+
     def _get_submit_command(self):
         """
         Obtain job submission command based on scheduler type.
@@ -270,7 +281,8 @@ class Server(RegistryMixin):
         for various cluster management systems.
 
         Returns:
-            str or None: Submission command for the scheduler or None if unknown.
+            str or None: Submission command for
+            the scheduler or None if unknown.
         """
         scheduler_submit_commands = {
             "SLURM": "sbatch",
@@ -318,10 +330,12 @@ class Server(RegistryMixin):
         server if no scheduler is detected.
 
         Returns:
-            Server: Server instance for the detected scheduler (or local fallback), typically a YamlServerSettings.
+            Server: Server instance for the detected scheduler
+            (or local fallback), typically a YamlServerSettings.
 
         Raises:
-            ValueError: If no server class is defined for the detected scheduler type.
+            ValueError: If no server class is
+            defined for the detected scheduler type.
         """
         scheduler_type = cls.detect_server_scheduler()
 
@@ -349,7 +363,8 @@ class Server(RegistryMixin):
         the type of job scheduler running on the current system.
 
         Returns:
-            str: The detected scheduler type (e.g., SLURM, PBS, LSF, SGE, HTCondor)
+            str: The detected scheduler type
+            (e.g., SLURM, PBS, LSF, SGE, HTCondor)
                  or "Unknown Scheduler" if none detected.
         """
         schedulers = [
@@ -440,7 +455,8 @@ class Server(RegistryMixin):
         Provides detailed error messages if the server is not found.
 
         Args:
-            server_name (str): Name of the server (with or without .yaml extension).
+            server_name (str): Name of the server
+            (with or without .yaml extension).
 
         Returns:
             Server: Configured server instance.
@@ -483,7 +499,8 @@ class Server(RegistryMixin):
             manager: Server settings manager instance.
 
         Returns:
-            Server or None: Server if loaded; None only when the file is missing.
+            Server or None: Server if loaded;
+            None only when the file is missing.
 
         Raises:
             ValueError: if the YAML is malformed or invalid.
@@ -522,12 +539,14 @@ class Server(RegistryMixin):
 
         Args:
             job (Job): Job instance to be submitted.
-            test (bool): If True, only creates scripts without actual submission.
+            test (bool): If True, only creates
+            scripts without actual submission.
                 Defaults to False.
             cli_args: Command line arguments for the job.
             **kwargs: Additional submission parameters.
         """
-        # First check that the job to be submitted is not already queued/running
+        # First check that the job to be
+        # submitted is not already queued/running
         self._check_running_jobs(job)
         # Then write the submission script
         self._write_submission_script(job=job, cli_args=cli_args, **kwargs)
@@ -607,7 +626,71 @@ class Server(RegistryMixin):
             # Use shell=True if the command has shell operators
             p = subprocess.Popen(command, shell=True)
         else:
-            p = subprocess.Popen(shlex.split(command), cwd=job.folder)
+            p = subprocess.Popen(shlex.split(command))
+        return p.wait()
+
+    def submit_array_job(
+        self, jobs, num_nodes=None, test=False, cli_args=None, **kwargs
+    ):
+        """
+        Submit a list of jobs as an array job to the scheduler.
+
+        Creates and submits an array job where independent jobs are distributed
+        across multiple nodes for parallel execution.
+
+        Args:
+            jobs (list): List of Job instances to submit as an array.
+            num_nodes (int): Number of nodes to request for parallel execution.
+            test (bool): If True, only creates scripts without actual submission.
+                Defaults to False.
+            cli_args: Command line arguments for the jobs.
+            **kwargs: Additional submission parameters.
+        """
+        if not jobs:
+            logger.warning("No jobs to submit")
+            return
+
+        # Use first job as template for submission
+        first_job = jobs[0]
+
+        # Check for duplicate/running jobs for each job in the array
+        for job in jobs:
+            self._check_running_jobs(job)
+
+        # Write array job submission script
+        submitter = self.get_submitter(first_job, **kwargs)
+        submitter.write_array_job(
+            jobs=jobs, num_nodes=num_nodes, cli_args=cli_args
+        )
+
+        # Submit the array job
+        if not test:
+            self._submit_array_job(first_job, submitter)
+
+    def _submit_array_job(self, job, submitter):
+        """
+        Submit an array job to the scheduler.
+
+        Args:
+            job: Template job instance.
+            submitter: Submitter instance with array job script.
+
+        Returns:
+            int: Exit code from the submission command.
+        """
+        command = self.submit_command
+        if command is None:
+            raise ValueError(
+                f"Cannot submit job on {self} "
+                f"since no submit command is defined."
+            )
+        command += f" {submitter.array_submit_script}"
+        logger.info(f"Submitting array job with command: {command}")
+        if "<" in command or ">" in command or "|" in command:
+            # Use shell=True if the command has shell operators
+            p = subprocess.Popen(command, shell=True)
+        else:
+            p = subprocess.Popen(shlex.split(command))
         return p.wait()
 
 
@@ -622,7 +705,8 @@ class YamlServerSettings(Server):
     Attributes:
         NAME (str): Identifier for YAML-based server settings.
         name (str): YAML file path used as this settings' identifier.
-        kwargs (dict): Parsed configuration values from the YAML under "SERVER".
+        kwargs (dict): Parsed configuration
+        values from the YAML under "SERVER".
         _num_hours (int or None): Default job time allocation in hours.
         _queue_name (str or None): Default submission queue name.
     """

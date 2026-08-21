@@ -25,7 +25,8 @@ class ThermochemistryJobRunner(JobRunner):
     execution for both single and Boltzmann-averaged calculations.
 
     Attributes:
-        JOBTYPES (list): Supported job types (['thermochemistry', 'boltzmann']).
+        JOBTYPES (list): Supported job types
+        (['thermochemistry', 'boltzmann']).
         PROGRAM (str): Program identifier ('Thermochemistry').
         FAKE (bool): Whether this runner operates in fake/test mode.
         SCRATCH (bool): Whether to use scratch directories by default.
@@ -52,7 +53,9 @@ class ThermochemistryJobRunner(JobRunner):
 
         Args:
             server: Server configuration for job execution
-            scratch (bool, optional): Whether to use scratch directory
+            scratch (bool or None): ``True``/``False`` force on/off;
+                ``None`` uses class ``SCRATCH`` (``False``). CLI jobs should
+                use ``JobRunner.from_job``.
             fake (bool): Whether to run in fake mode for testing
             scratch_dir (str, optional): Path to scratch directory
             **kwargs: Additional keyword arguments for parent class

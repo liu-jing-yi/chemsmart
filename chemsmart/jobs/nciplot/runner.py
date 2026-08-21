@@ -58,12 +58,14 @@ class NCIPLOTJobRunner(JobRunner):
 
         Args:
             server: Server configuration for job execution
-            scratch: Whether to use scratch directory (defaults to class SCRATCH)
+            scratch (bool or None): ``True``/``False`` force on/off;
+                ``None`` uses class ``SCRATCH`` (``True``). CLI jobs should
+                use ``JobRunner.from_job`` (YAML ``NCIPLOT.SCRATCH`` may
+                apply there).
             fake: Whether to run in fake mode for testing
             scratch_dir: Custom scratch directory path
             **kwargs: Additional keyword arguments
         """
-        # Use default SCRATCH if scratch is not explicitly set
         if scratch is None:
             scratch = self.SCRATCH
         super().__init__(
@@ -380,7 +382,8 @@ class NCIPLOTJobRunner(JobRunner):
         """
 
         if self.scratch:
-            # If job was run in scratch, copy files to job folder except temp files
+            # If job was run in scratch, copy
+            # files to job folder except temp files
             for file in glob(f"{self.running_directory}/*"):
                 if not file.endswith(".tmp"):
                     logger.info(
@@ -402,7 +405,8 @@ class FakeNCIPLOTJobRunner(NCIPLOTJobRunner):
     Attributes:
         FAKE (bool): True for this runner to indicate fake mode.
         SCRATCH (bool): Whether to use scratch directories (inherited default).
-        server: Server configuration used for execution (retained/used normally).
+        server: Server configuration used for
+        execution (retained/used normally).
         scratch (bool): Whether scratch is enabled for this runner.
         scratch_dir (str): Path to scratch directory, if used.
         num_cores (int): Number of CPU cores allocated (from server).
@@ -420,7 +424,8 @@ class FakeNCIPLOTJobRunner(NCIPLOTJobRunner):
 
         Args:
             server: Server configuration (ignored in fake mode)
-            scratch: Whether to use scratch directory
+            scratch (bool or None): ``True``/``False`` force on/off; ``None``
+                uses class ``SCRATCH`` (``True``). See ``JobRunner.from_job``.
             fake: Always True for this class
             scratch_dir: Custom scratch directory path
             **kwargs: Additional keyword arguments
@@ -467,7 +472,8 @@ class FakeNCIPLOT:
         file_folder (str): Directory path containing the input file.
         filename (str): Basename of the input file.
         input_filepath (str): Full path to the input file.
-        output_filepath (str): Full path to the simulated output file (.nciout).
+        output_filepath (str): Full path to
+        the simulated output file (.nciout).
     """
 
     def __init__(self, file_to_run):
@@ -537,8 +543,7 @@ class FakeNCIPLOT:
         """
         with open(self.output_filepath, "w") as g:
             # Write standard NCIPLOT header
-            g.write(
-                """# ----------------- NCIPLOT ------------------------
+            g.write("""# ----------------- NCIPLOT ------------------------
  # --- PLOTTING NON COVALENT INTERACTION REGIONS ----
  # ---             E.R. Johnson                  ----
  # ---          J. Contreras-Garcia              ----
@@ -567,14 +572,11 @@ class FakeNCIPLOT:
  # ---      algorithms from Erna Wieduwilt    --------
  # ---             are acknowledged           --------
  # ---------------------------------------------------
- #"""
-            )
+ #""")
             g.write(f" # Start -- {datetime.now()}\n")
-            g.write(
-                """-----------------------------------------------------
+            g.write("""-----------------------------------------------------
       INPUT INFORMATION:
------------------------------------------------------"""
-            )
+-----------------------------------------------------""")
             # Include input file content in output
             for line in open(self.input_filepath, "r"):
                 g.write(line)

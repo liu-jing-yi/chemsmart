@@ -29,7 +29,8 @@ class BoltzmannAverageThermochemistryJob(ThermochemistryJob):
         PROGRAM (str): Program identifier ('Thermochemistry').
         TYPE (str): Job type identifier ('boltzmann').
         files (list[str] | None): List of output files to analyze (.log/.out).
-        energy_type (str): Energy used for weighting ('gibbs', 'enthalpy', 'electronic').
+        energy_type (str): Energy used for weighting
+        ('gibbs', 'enthalpy', 'electronic').
         settings (ThermochemistryJobSettings): Thermochemistry configuration.
         label (str): Job identifier used for file naming.
         jobrunner (JobRunner): Execution backend that runs the job.
@@ -227,6 +228,7 @@ class BoltzmannAverageThermochemistryJob(ThermochemistryJob):
                 qrrho_gibbs_free_energy,
                 outputfile=self.settings.outputfile,
                 overwrite=self.settings.overwrite,
+                write_header=self.settings.write_header,
             )
 
         except Exception as e:

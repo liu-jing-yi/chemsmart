@@ -36,7 +36,8 @@ def spin(
     skip_completed,
     **kwargs,
 ):
-    """CLI subcommand for generating spin density visualization and save as PSE file.
+    """CLI subcommand for generating spin
+    density visualization and save as PSE file.
     Example usage:
         chemsmart run --debug mol -f phenyldioxazolone.log spin
     This visualizes phenyldioxazolone.log file and saves as
@@ -51,6 +52,8 @@ def spin(
 
     # get label for the job
     label = ctx.obj["label"]
+    source_basename = ctx.obj["source_basename"]
+    spin_basename = label if ctx.obj["label_provided"] else None
     if coordinates is not None:
         logger.debug(f"Coordinates for visualization: {coordinates}")
         try:
@@ -68,6 +71,8 @@ def spin(
     return PyMOLSpinJob(
         molecule=molecules,
         label=label,
+        source_basename=source_basename,
+        spin_basename=spin_basename,
         pymol_script=file,
         style=style,
         trace=trace,

@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 
 from chemsmart.io.molecules.structure import Molecule
+from chemsmart.jobs.mol.templates.zhang_group_scientific_styles import (
+    PYMOL_SCIENTIFIC_STYLE_COMMANDS,
+)
 from chemsmart.jobs.runner import JobRunner
 from chemsmart.settings.executable import GaussianExecutable
 from chemsmart.utils.io import convert_string_indices_to_pymol_id_indices
@@ -38,6 +41,39 @@ from chemsmart.utils.utils import (
 pt = PeriodicTable()
 
 logger = logging.getLogger(__name__)
+
+
+_SCIENTIFIC_STYLE_TEMPLATE = "zhang_group_scientific_styles.py"
+
+# Hyphenated CLI names derived from the registry (insertion order preserved).
+PYMOL_VISUALIZE_STYLE_CLI_CHOICES = [
+    style.replace("_", "-") for style in PYMOL_SCIENTIFIC_STYLE_COMMANDS
+]
+
+PYMOL_STYLE_TEMPLATES = {
+    "pymol": "zhang_group_pymol_style.py",
+    "cylview": "zhang_group_pymol_style.py",
+    "cylview_flat": "zhang_group_pymol_style.py",
+    **dict.fromkeys(
+        PYMOL_SCIENTIFIC_STYLE_COMMANDS,
+        _SCIENTIFIC_STYLE_TEMPLATE,
+    ),
+}
+
+
+def normalize_pymol_style(style):
+    """Return a supported PyMOL style keyword."""
+    normalized = (style or "pymol").lower().replace("-", "_")
+    if normalized not in PYMOL_STYLE_TEMPLATES:
+        raise ValueError(f"The style {style} is not available!")
+    return normalized
+
+
+def is_pymol_derived_style(style):
+    """Return True when ``style`` maps to ``zhang_group_scientific_styles.py``."""
+    if style is None:
+        return False
+    return normalize_pymol_style(style) in PYMOL_SCIENTIFIC_STYLE_COMMANDS
 
 
 class PyMOLJobRunner(JobRunner):
@@ -83,11 +119,12 @@ class PyMOLJobRunner(JobRunner):
 
         Args:
             server: Server configuration for job execution.
-            scratch: Whether to use scratch directories (default: None).
+            scratch (bool or None): ``True``/``False`` force on/off;
+                ``None`` uses class ``SCRATCH`` (``False``). CLI jobs should
+                use ``JobRunner.from_job``.
             fake: Whether this is a fake runner for testing (default: False).
             **kwargs: Additional arguments passed to parent JobRunner.
         """
-        # Use default SCRATCH if scratch is not explicitly set
         if scratch is None:
             scratch = self.SCRATCH
         super().__init__(server=server, scratch=scratch, fake=fake, **kwargs)
@@ -291,23 +328,30 @@ class PyMOLJobRunner(JobRunner):
         Raises:
             FileNotFoundError: If the required .chk file is not found.
         """
-        chk_file_path = os.path.join(job.folder, f"{job.label}.chk")
-        if not os.path.exists(chk_file_path):
+        chk_file_path = os.path.join(job.folder, f"{job.source_basename}.chk")
+        fchk_file_path = os.path.join(
+            job.folder, f"{job.source_basename}.fchk"
+        )
+        if not os.path.exists(chk_file_path) and not os.path.exists(
+            fchk_file_path
+        ):
             raise FileNotFoundError(
-                f".chk file is required but not found at {chk_file_path}!"
+                f".chk or .fchk file is required but not found at {chk_file_path} or {fchk_file_path}!"
             )
 
         gaussian_exe = self._get_gaussian_executable(job)
-        if os.path.exists(os.path.join(job.folder, f"{job.label}.fchk")):
+        if os.path.exists(fchk_file_path):
             logger.info(
-                f".fchk file {job.label}.fchk already exists.\n"
+                f".fchk file {job.source_basename}.fchk already exists.\n"
                 f"Skipping generation of .fchk file."
             )
             pass
         else:
             # generate .fchk file from .chk file
-            logger.info(f"Generating .fchk file from {job.label}.chk")
-            fchk_command = f"{gaussian_exe}/formchk {job.label}.chk"
+            logger.info(
+                f"Generating .fchk file from {job.source_basename}.chk"
+            )
+            fchk_command = f"{gaussian_exe}/formchk {job.source_basename}.chk"
             run_command(fchk_command)
 
     def _write_input(self, job):
@@ -431,10 +475,13 @@ class PyMOLJobRunner(JobRunner):
                 # no render style and no style file present
                 command += ' -d "'
         else:
-            if job.style.lower() == "pymol":
+            style = job.style.lower().replace("-", "_")
+            if style == "pymol":
                 command += f' -d "pymol_style {job.label}'
-            elif job.style.lower() == "cylview":
+            elif style == "cylview":
                 command += f' -d "cylview_style {job.label}'
+            elif style == "cylview_flat":
+                command += f' -d "cylview_flat_style {job.label}'
             else:
                 raise ValueError(f"The style {job.style} is not available!")
 
@@ -632,7 +679,7 @@ class PyMOLJobRunner(JobRunner):
         command += '; quit"'
         return command
 
-    def _create_process(self, job, command, env):
+    def _create_process(self, job, command, env, append_mode=False):
         """
         Create and execute the PyMOL subprocess.
 
@@ -644,6 +691,10 @@ class PyMOLJobRunner(JobRunner):
             job: PyMOL job object with file paths.
             command: Complete PyMOL command string to execute.
             env: Environment variables for the process.
+            append_mode: If True, append to existing
+            log/err files instead of overwriting.
+                         Used for batch processing to
+                         preserve logs from previous batches.
 
         Returns:
             subprocess.Popen: The completed process object.
@@ -654,9 +705,10 @@ class PyMOLJobRunner(JobRunner):
         # Open files for stdout/stderr
         job_errfile = os.path.abspath(job.errfile)
         job_logfile = os.path.abspath(job.logfile)
+        file_mode = "a" if append_mode else "w"
         with (
-            open(job_errfile, "w") as err,
-            open(job_logfile, "w") as out,
+            open(job_errfile, file_mode) as err,
+            open(job_logfile, file_mode) as out,
         ):
             logger.info(
                 f"Command executed: {command}\n"
@@ -785,7 +837,8 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
     Extends the base PyMOL runner to provide hybrid molecular
     visualization capabilities with customizable styling, labeling.
 
-    This job runner supports an arbitrary number of groups, determined dynamically.
+    This job runner supports an arbitrary
+    number of groups, determined dynamically.
     """
 
     JOBTYPES = ["pymol_hybrid_visualization"]
@@ -826,7 +879,8 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
 
     def _write_hybrid_pml(self, job):
         """Write the default hybrid style pml if no custom pml is provided.
-        Creates a PyMOL script file that sets up hybrid visualization style with appropriate
+        Creates a PyMOL script file that sets up
+        hybrid visualization style with appropriate
         coloring and transparency settings
 
         Args:
@@ -867,13 +921,15 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
         return " or ".join(selection_str)
 
     def _write_default_pymol_style(self, job, f):
-        """Write the pymol style without settings for stick color to the pml file."""
+        """Write the pymol style without settings
+        for stick color to the pml file."""
         f.write("unset stick_color, all\n")
         f.write("hide everything, all\n")
         f.write("show sticks, all\n")
 
     def _write_faded_colors(self, job, f):
-        """Write the faded colors for non-highlighted C, N, O, P in background to the pml file."""
+        """Write the faded colors for non-highlighted
+        C, N, O, P in background to the pml file."""
         new_color_carbon = (
             job.new_color_carbon
             if job.new_color_carbon is not None
@@ -912,15 +968,18 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
 
     def _write_highlighted_colors(self, job, f):
         """
-        Write PyMOL commands to highlight and color the defined groups in a job.
+        Write PyMOL commands to highlight and
+        color the defined groups in a job.
 
         Args:
-            job: PyMOLHybridVisualizationJob instance containing group and color info.
+            job: PyMOLHybridVisualizationJob
+            instance containing group and color info.
             f: File object to write the PyMOL commands.
 
         Behavior:
             - Groups are selected using their atom indices (via _get_groups).
-            - Colors are applied according to the user's specification; if no color
+            - Colors are applied according to
+            the user's specification; if no color
               is specified, a default color scheme is used.
         Notes:
             - The order of colors follows the order of defined groups.
@@ -972,13 +1031,15 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
         # Set transparency for all sticks to 0 (fully opaque)
         f.write("set stick_transparency, 0, all\n")
 
-        # Retrieve the stick radius from the job or use the default value (0.25)
+        # Retrieve the stick radius from the
+        # job or use the default value (0.25)
         if job.stick_radius is None:
             stick_radius = 0.25
         else:
             stick_radius = job.stick_radius
 
-        # Write the PyMOL command to set the stick radius for the selected indices
+        # Write the PyMOL command to set the
+        # stick radius for the selected indices
 
         f.write(
             f"set stick_radius, {stick_radius}, ({self._get_group_selection_str(job)})\n"
@@ -999,6 +1060,73 @@ class PyMOLHybridVisualizationJobRunner(PyMOLVisualizationJobRunner):
             f"set surface_color, {surface_color}, all\n"
             f"set transparency, {surface_transparency}, all\n"
         )
+
+
+class PyMOLScientificStyleVisualizationJobRunner(PyMOLVisualizationJobRunner):
+    """PyMOL job runner for derived zhang_group_scientific_styles.py jobs."""
+
+    JOBTYPES = ["pymol_scientific_style_visualization"]
+
+    @staticmethod
+    def _format_style_command(job, selection):
+        """Build the PyMOL -d command for a derived scientific style.
+
+        ``-c`` coordinate highlights are handled by the shared
+        ``_add_coordinates_labels`` path (distance / angle / dihedral
+        measurements), matching plain ``visualize -c`` on the main branch.
+        Style commands themselves only select the look; they do not re-encode
+        bond pairs. Numeric distance labels are hidden inside
+        ``zhang_group_scientific_styles.py`` after distances are created.
+        """
+        style = normalize_pymol_style(job.style)
+        render_command = PYMOL_SCIENTIFIC_STYLE_COMMANDS.get(style)
+        if render_command is None:
+            raise ValueError(f"The style {job.style} is not available!")
+
+        return f"{render_command} {selection}"
+
+    def _generate_visualization_style_script(self, job):
+        """Copy zhang_group_scientific_styles.py for derived ``-s`` jobs."""
+        template_filename = PYMOL_STYLE_TEMPLATES[
+            normalize_pymol_style(job.style)
+        ]
+        source_style_file = self.pymol_templates_path / template_filename
+        dest_style_file = os.path.join(job.folder, template_filename)
+
+        if os.path.exists(dest_style_file):
+            logger.warning(
+                f"Style file {dest_style_file} already exists! Overwriting..."
+            )
+        logger.debug(
+            f"Copying file from {source_style_file} to {dest_style_file}."
+        )
+        shutil.copy(source_style_file, dest_style_file)
+        return dest_style_file
+
+    def _setup_style(self, job, command):
+        """Open the PyMOL ``-d`` script block; render runs after ``-c`` distances."""
+        command += ' -d "'
+        return command
+
+    def _append_style_render(self, job, command):
+        """Append the scientific style render command after ``-c`` measurements."""
+        command += f"; {self._format_style_command(job, job.label)}"
+        return command
+
+    def _get_command(self, job):
+        """Build PyMOL command with distances before style render."""
+        command = self._get_visualization_command(job)
+        command = self._setup_style(job, command)
+        command = self._setup_viewport(command)
+        command = self._add_coordinates_labels(job, command)
+        command = self._append_style_render(job, command)
+        command = self._offset_labels(job, command)
+        command = self._add_vdw(job, command)
+        command = self._add_zoom_command(job, command)
+        command = self._job_specific_commands(job, command)
+        command = self._save_pse_command(job, command)
+        command = self._quit_command(job, command)
+        return command
 
 
 class PyMOLMovieJobRunner(PyMOLVisualizationJobRunner):
@@ -1135,7 +1263,8 @@ class PyMOLMovieJobRunner(PyMOLVisualizationJobRunner):
         Args:
             job: PyMOL movie job holding folder, label, and overwrite flag.
             framerate (int): Output video framerate in frames per second.
-            constant_rate_factor (int): FFmpeg CRF value (0–51, lower = better).
+            constant_rate_factor (int): FFmpeg
+            CRF value (0–51, lower = better).
 
         Raises:
             FileNotFoundError: If no PNG frames are found or FFmpeg is missing.
@@ -1287,8 +1416,12 @@ class PyMOLNCIJobRunner(PyMOLVisualizationJobRunner):
         Raises:
             AssertionError: If required cube files are not found.
         """
-        dens_file = os.path.join(job.folder, f"{job.label}-dens.cube")
-        grad_file = os.path.join(job.folder, f"{job.label}-grad.cube")
+        dens_file = os.path.join(
+            job.folder, f"{job.source_basename}-dens.cube"
+        )
+        grad_file = os.path.join(
+            job.folder, f"{job.source_basename}-grad.cube"
+        )
         assert os.path.exists(
             dens_file
         ), f"Density cube file {dens_file} not found!"
@@ -1317,11 +1450,11 @@ class PyMOLNCIJobRunner(PyMOLVisualizationJobRunner):
             str: Command string with NCI visualization command.
         """
         if job.binary:
-            command += f"; nci_binary {job.label}"
+            command += f"; nci_binary {job.source_basename}"
         elif job.intermediate:
-            command += f"; nci_intermediate {job.label}"
+            command += f"; nci_intermediate {job.source_basename}"
         else:
-            command += f"; nci {job.label}"
+            command += f"; nci {job.source_basename}"
         return command
 
 
@@ -1371,7 +1504,7 @@ class PyMOLMOJobRunner(PyMOLVisualizationJobRunner):
             run cubegen_command and returns None
             cubegen_command generatess the appropriate .cube file
             based on the job type (job.job_basename; nci/spin etc)
-            from job.label.fchk file.
+            from job.source_basename.fchk file.
         """
         gaussian_exe = self._get_gaussian_executable(job)
 
@@ -1408,7 +1541,7 @@ class PyMOLMOJobRunner(PyMOLVisualizationJobRunner):
             )
 
         cubegen_command = (
-            f"{gaussian_exe}/cubegen 0 MO={mo_type} {job.label}.fchk "
+            f"{gaussian_exe}/cubegen 0 MO={mo_type} {job.source_basename}.fchk "
             f"{job.job_basename}.cube 0 h"
         )
 
@@ -1562,7 +1695,7 @@ class PyMOLSpinJobRunner(PyMOLVisualizationJobRunner):
         """
         gaussian_exe = self._get_gaussian_executable(job)
 
-        cubegen_command = f"{gaussian_exe}/cubegen 0 spin {job.label}.fchk {job.job_basename}.cube {job.npts}"
+        cubegen_command = f"{gaussian_exe}/cubegen 0 spin {job.source_basename}.fchk {job.job_basename}.cube {job.npts}"
         run_command(cubegen_command)
 
     def _write_spin_density_pml(self, job):
@@ -1656,12 +1789,30 @@ class PyMOLSpinJobRunner(PyMOLVisualizationJobRunner):
 
 class PyMOLAlignJobRunner(PyMOLJobRunner):
     JOBTYPES = ["pymol_align"]
+    MAX_MOLECULES_PER_BATCH = 100  # Maximum molecules per batch
 
     def _write_input(self, job):
+        """Prepare input files and check if batch processing is needed"""
         job.xyz_absolute_paths = []
         job.mol_names = []
         mol = job.molecule
         mol_list = mol if isinstance(mol, list) else [mol]
+
+        # Check if batch processing is needed
+        total_molecules = len(mol_list)
+        if total_molecules > self.MAX_MOLECULES_PER_BATCH:
+            logger.info(
+                f"Enabling batch processing: {total_molecules} molecules will be processed in {(total_molecules + self.MAX_MOLECULES_PER_BATCH - 1) // self.MAX_MOLECULES_PER_BATCH} batches"
+            )
+            job.use_batch_processing = True
+            job.total_batches = (
+                total_molecules + self.MAX_MOLECULES_PER_BATCH - 1
+            ) // self.MAX_MOLECULES_PER_BATCH
+        else:
+            job.use_batch_processing = False
+            job.total_batches = 1
+
+        # Write all XYZ files
         for m in mol_list:
             if not isinstance(m, Molecule):
                 raise ValueError(f"Object {m} is not of Molecule type!")
@@ -1678,19 +1829,185 @@ class PyMOLAlignJobRunner(PyMOLJobRunner):
             job.xyz_absolute_paths.append(abs_xyz_path)
             job.mol_names.append(name)
 
-    def _get_visualization_command(self, job):
-        exe = quote_path(self.executable)
-        xyz_paths = job.xyz_absolute_paths
-        if not xyz_paths:
-            raise ValueError(
-                "No XYZ files found. Ensure _write_input is called first."
-            )
-        first_mol = quote_path(xyz_paths[0])
-        load_cmds = [f"{quote_path(path)}" for path in xyz_paths[1:]]
-        command = f"{exe} {first_mol}"
-        if load_cmds:
-            command += f" {' '.join(load_cmds)}"
+    def run(self, job, **kwargs):
+        """Execute alignment task with batch processing support"""
+        # Execute preprocessing and input preparation
+        # first to set batch processing flag
+        self._prerun(job)
+        self._write_input(job)
 
+        # Now check if batch processing is needed
+        if hasattr(job, "use_batch_processing") and job.use_batch_processing:
+            # Use batch processing
+            logger.info(
+                f"Starting batch processing: {len(job.xyz_absolute_paths)} molecules in {job.total_batches} batches"
+            )
+            return self._run_batch_processing(job, **kwargs)
+        else:
+            # Use original single batch processing - execute all
+            # steps to ensure consistency with original behavior
+            logger.info(
+                f"Using single batch processing: {len(job.xyz_absolute_paths)} molecules"
+            )
+            command = self._get_command(job)
+            env = self._update_os_environ(job)
+            process = self._create_process(job, command, env)
+            self._run(process, **kwargs)  # Wait for process to complete
+            self._postrun(job)
+            self._postrun_cleanup(job)  # Clean up error files etc
+            return job
+
+    def _run_batch_processing(self, job, **kwargs):
+        """Main batch processing logic"""
+        # _prerun and _write_input have already been called in run method
+        xyz_paths = job.xyz_absolute_paths
+        mol_names = job.mol_names
+
+        # Process each batch in sequence
+        for batch_idx in range(job.total_batches):
+            start_idx = batch_idx * self.MAX_MOLECULES_PER_BATCH
+            end_idx = min(
+                (batch_idx + 1) * self.MAX_MOLECULES_PER_BATCH, len(xyz_paths)
+            )
+
+            batch_paths = xyz_paths[start_idx:end_idx]
+            batch_names = mol_names[start_idx:end_idx]
+
+            logger.info(
+                f"Processing batch {batch_idx + 1}/{job.total_batches}: {len(batch_paths)} molecules"
+            )
+
+            # Create and execute independent command for this batch
+            self._execute_batch(job, batch_idx, batch_paths, batch_names)
+
+        self._postrun(job)
+        self._postrun_cleanup(job)  # Ensure error files etc are cleaned up
+        return job
+
+    def _execute_batch(self, job, batch_idx, batch_paths, batch_names):
+        """Execute single batch - cumulative save to same PSE file"""
+        # All batches save to the same PSE file
+        final_pse = os.path.join(job.folder, f"{job.label}.pse")
+
+        # Build PyMOL command
+        exe = quote_path(self.executable)
+
+        if batch_idx == 0:
+            # First batch: load molecules directly
+            first_mol = quote_path(batch_paths[0])
+            command = f"{exe} {first_mol}"
+
+            # Load additional molecules
+            if len(batch_paths) > 1:
+                for path in batch_paths[1:]:
+                    command += f" {quote_path(path)}"
+        else:
+            # Subsequent batches: open existing PSE file first
+            command = f"{exe} {quote_path(final_pse)}"
+
+        # All batches need to add style script to
+        # ensure pymol_style function is available
+        command = self._add_style_script(job, command)
+
+        # Add PyMOL options
+        if job.quiet_mode:
+            command += " -q"
+        if job.command_line_only:
+            command += " -c"
+
+        # Build PyMOL command strings
+        pymol_commands = []
+
+        if batch_idx == 0:
+            # First batch: apply style and alignment to all molecules
+            # Apply style to each molecule
+            for name in batch_names:
+                if job.style is None or job.style.lower() == "pymol":
+                    pymol_commands.append(f"pymol_style {name}")
+                elif job.style.lower() == "cylview":
+                    pymol_commands.append(f"cylview_style {name}")
+                elif job.style.lower().replace("-", "_") == "cylview_flat":
+                    pymol_commands.append(f"cylview_flat_style {name}")
+                else:
+                    raise ValueError(
+                        f"The style {job.style} is not available!"
+                    )
+
+            # Alignment commands - align all to GLOBAL
+            # first molecule (not batch first molecule)
+            global_ref = job.mol_names[
+                0
+            ]  # Always use global first molecule as reference
+            align_cmds = []
+            for name in batch_names:
+                if (
+                    name != global_ref
+                ):  # Don't align the reference molecule to itself
+                    align_cmds.append(f"align {name}, {global_ref}")
+            if align_cmds:
+                pymol_commands.extend(align_cmds)
+        else:
+            # Subsequent batches: load new molecules, apply
+            # style, and align to global first molecule
+            for i, path in enumerate(batch_paths):
+                pymol_commands.append(f"load {quote_path(path)}")
+                # Apply style to each newly loaded molecule
+                name = batch_names[i]
+                if job.style is None or job.style.lower() == "pymol":
+                    pymol_commands.append(f"pymol_style {name}")
+                elif job.style.lower() == "cylview":
+                    pymol_commands.append(f"cylview_style {name}")
+                elif job.style.lower().replace("-", "_") == "cylview_flat":
+                    pymol_commands.append(f"cylview_flat_style {name}")
+                else:
+                    raise ValueError(
+                        f"The style {job.style} is not available!"
+                    )
+
+            # Align to global first molecule (job.mol_names[0])
+            global_ref = job.mol_names[0]
+            for name in batch_names:
+                pymol_commands.append(f"align {name}, {global_ref}")
+
+        # Save to same PSE file and quit
+        pymol_commands.append("viewport 800, 600")
+        pymol_commands.append("zoom")
+        pymol_commands.append(f"save {quote_path(final_pse)}")
+        pymol_commands.append("quit")
+
+        # Combine all commands
+        pymol_cmd_string = "; ".join(pymol_commands)
+        command += f' -d "{pymol_cmd_string}"'
+
+        logger.info(
+            f"Executing batch {batch_idx + 1}/{job.total_batches}: {len(batch_names)} molecules"
+        )
+
+        # Execute command
+        try:
+            env = os.environ.copy()
+            # Use append mode for batches after the first one to preserve logs
+            append_logs = batch_idx > 0
+            process = self._create_process(
+                job, command, env, append_mode=append_logs
+            )
+            # Wait for process to complete
+            self._run(process)
+            if process.returncode != 0:
+                logger.error(
+                    f"Batch {batch_idx + 1} execution failed, return code: {process.returncode}"
+                )
+                raise RuntimeError(f"Batch {batch_idx + 1} execution failed")
+            else:
+                logger.info(
+                    f"Batch {batch_idx + 1} executed successfully, cumulative save to: {final_pse}"
+                )
+        except Exception as e:
+            logger.error(f"Error executing batch {batch_idx + 1}: {e}")
+            raise
+
+    def _add_style_script(self, job, command):
+        """Add style script to command"""
         if job.pymol_script is None:
             style_file_path = os.path.join(
                 job.folder, "zhang_group_pymol_style.py"
@@ -1698,21 +2015,37 @@ class PyMOLAlignJobRunner(PyMOLJobRunner):
             if os.path.exists(style_file_path):
                 job_pymol_script = style_file_path
             else:
-                logger.info(
-                    "Using default zhang_group_pymol_style for rendering."
-                )
+                logger.info("Using default style file")
                 job_pymol_script = self._generate_visualization_style_script(
                     job
                 )
             if os.path.exists(job_pymol_script):
                 command += f" -r {quote_path(job_pymol_script)}"
         else:
-            # using user-defined style file
             if not os.path.exists(job.pymol_script):
                 raise FileNotFoundError(
-                    f"Supplied PyMOL Style file {job.pymol_script} does not exist!"
+                    f"Specified PyMOL style file does not exist: {job.pymol_script}"
                 )
             command += f" -r {quote_path(job.pymol_script)}"
+        return command
+
+    def _get_visualization_command(self, job):
+        """Generate visualization command for non-batch processing"""
+        exe = quote_path(self.executable)
+        xyz_paths = job.xyz_absolute_paths
+        if not xyz_paths:
+            raise ValueError(
+                "No XYZ files found. Ensure _write_input is called first."
+            )
+
+        first_mol = quote_path(xyz_paths[0])
+        load_cmds = [quote_path(path) for path in xyz_paths[1:]]
+        command = f"{exe} {first_mol}"
+        if load_cmds:
+            command += f" {' '.join(load_cmds)}"
+
+        # Add style script
+        command = self._add_style_script(job, command)
 
         if job.quiet_mode:
             command += " -q"
@@ -1721,16 +2054,21 @@ class PyMOLAlignJobRunner(PyMOLJobRunner):
         return command
 
     def _setup_style(self, job, command):
+        """Set up style commands"""
+        molnames = job.mol_names
         if job.style is None or job.style.lower() == "pymol":
-            molnames = job.mol_names
             style_cmds = "; ".join(
                 [f"pymol_style {name}" for name in molnames]
             )
             command += f' -d "{style_cmds}'
         elif job.style.lower() == "cylview":
-            molnames = job.mol_names
             style_cmds = "; ".join(
                 [f"cylview_style {name}" for name in molnames]
+            )
+            command += f' -d "{style_cmds}'
+        elif job.style.lower().replace("-", "_") == "cylview_flat":
+            style_cmds = "; ".join(
+                [f"cylview_flat_style {name}" for name in molnames]
             )
             command += f' -d "{style_cmds}'
         else:
@@ -1738,14 +2076,17 @@ class PyMOLAlignJobRunner(PyMOLJobRunner):
         return command
 
     def _job_specific_commands(self, job, command):
+        """Add alignment-specific commands"""
         command = self._align_command(job, command)
         return command
 
     def _align_command(self, job, command):
+        """Add alignment commands"""
         molnames = job.mol_names
         align_cmds = []
         for i in range(1, len(molnames)):
             align_cmds.append(f"align {molnames[i]}, {molnames[0]}")
-        pymol_cmds = "; ".join(align_cmds)
-        command += f"; {pymol_cmds}"
+        if align_cmds:
+            pymol_cmds = "; ".join(align_cmds)
+            command += f"; {pymol_cmds}"
         return command

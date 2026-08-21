@@ -1,7 +1,7 @@
 """
-CLI utilities for ChemSmart.
+CLI utilities for CHEMSMART.
 
-Provides helpers and Click integrations used by the ChemSmart command line
+Provides helpers and Click integrations used by the CHEMSMART command line
 tools, including:
 
 - Custom Click `Group`/`Command` that persist subcommand metadata on the
@@ -43,6 +43,16 @@ def _add_subcommand_info_to_ctx(ctx):
     Args:
         ctx (Context): Click context object containing command information.
     """
+    # Ensure ctx.obj is a mutable mapping (dict) so callers like MyGroup
+    # and MyCommand can safely append subcommand metadata even when the
+    # group's callback has not yet executed (ctx.obj may be None).
+    try:
+        ctx.ensure_object(dict)
+    except Exception:
+        # fallback for contexts that may not implement ensure_object
+        if ctx.obj is None:
+            ctx.obj = {}
+
     if "subcommand" not in ctx.obj:
         ctx.obj["subcommand"] = []
 
@@ -189,8 +199,10 @@ class CtxObjArguments:
 
         if value is False:
             if is_flag and len(secondary_opts) == 0:
-                # Click "is_flag" option. Click param class has no way to check if
-                # flag is True or not only can determine by checking arg_secondary_opts
+                # Click "is_flag" option. Click
+                # param class has no way to check if
+                # flag is True or not only can determine
+                # by checking arg_secondary_opts
                 return ""
 
             # If variable is bool, then there will be non-empty secondary_opts
@@ -376,7 +388,8 @@ def get_setting_from_jobtype_for_gaussian(
 
     Raises:
         ValueError: If jobtype is None.
-        AssertionError: If required parameters are missing for specific job types.
+        AssertionError: If required parameters
+        are missing for specific job types.
     """
     if jobtype is None:
         raise ValueError("Jobtype must be provided for Crest and Link job.")
@@ -405,6 +418,10 @@ def get_setting_from_jobtype_for_gaussian(
         settings = project_settings.wbi_settings()
     elif jobtype.lower() == "nci":
         settings = project_settings.nci_settings()
+    elif jobtype.lower() == "qmmm":
+        settings = project_settings.qmmm_settings()
+    elif jobtype.lower() == "neb":
+        settings = project_settings.neb_settings()
 
     if coordinates is not None:
         modred_info = ast.literal_eval(coordinates)
@@ -421,6 +438,15 @@ def get_setting_from_jobtype_for_gaussian(
             # explicit type conversion
             step_size_info = [float(size) for size in step_size_info]
             num_steps_info = [int(num) for num in num_steps_info]
+
+            # broadcast single step_size/num_steps to all coordinates
+            coords_num = (
+                len(modred_info) if isinstance(modred_info[0], list) else 1
+            )
+            if len(step_size_info) == 1 and coords_num > 1:
+                step_size_info = step_size_info * coords_num
+            if len(num_steps_info) == 1 and coords_num > 1:
+                num_steps_info = num_steps_info * coords_num
 
             check_scan_parameters_consistency_gaussian(
                 modred_info, step_size_info, num_steps_info
@@ -529,7 +555,8 @@ def get_setting_from_jobtype_for_orca(
 
     Raises:
         ValueError: If jobtype is None.
-        AssertionError: If required parameters are missing for specific job types.
+        AssertionError: If required parameters
+        are missing for specific job types.
     """
     if jobtype is None:
         raise ValueError("Jobtype must be provided for Crest and Link job.")
@@ -560,6 +587,10 @@ def get_setting_from_jobtype_for_orca(
         settings = project_settings.wbi_settings()
     elif jobtype.lower() == "nci":
         settings = project_settings.nci_settings()
+    elif jobtype.lower() == "qmmm":
+        settings = project_settings.qmmm_settings()
+    elif jobtype.lower() == "neb":
+        settings = project_settings.neb_settings()
 
     if coordinates is not None:
         modred_info = ast.literal_eval(coordinates)
@@ -580,6 +611,17 @@ def get_setting_from_jobtype_for_orca(
             dist_start_info = [float(dist) for dist in dist_start_info]
             dist_end_info = [float(dist) for dist in dist_end_info]
             num_steps_info = [int(num) for num in num_steps_info]
+
+            # broadcast single dist_start/dist_end/num_steps to all coordinates
+            coords_num = (
+                len(modred_info) if isinstance(modred_info[0], list) else 1
+            )
+            if len(dist_start_info) == 1 and coords_num > 1:
+                dist_start_info = dist_start_info * coords_num
+            if len(dist_end_info) == 1 and coords_num > 1:
+                dist_end_info = dist_end_info * coords_num
+            if len(num_steps_info) == 1 and coords_num > 1:
+                num_steps_info = num_steps_info * coords_num
 
             check_scan_parameters_consistency_orca(
                 modred_info, dist_start_info, dist_end_info, num_steps_info
@@ -620,7 +662,7 @@ def check_scan_coordinates_orca(coordinates, dist_start, dist_end, num_steps):
         "Use flags `-c -a -b -n` for coordinates, starting distance, ending distance and num-steps respectively.\n"
         "Example usage: `-c [[2,3],[6,7]] -x 3.0 -y 1.2 -n 15` to scan the distance between atom 2 and atom 3 "
         "and distance between atom 6 and 7 from distance 3.0 Angstrom to 1.2 Angstrom in 15 points.\n "
-        "Note: all indices should be 1-indexed. Chemsmart has already taken care of converting 0-indexed "
+        "Note: all indices should be 1-indexed. CHEMSMART has already taken care of converting 0-indexed "
         "(used in ORCA) to 1-indexed (used in visualization software such as PyMOL, Gaussview, etc)."
     )
 
@@ -629,7 +671,8 @@ def check_scan_parameters_consistency_orca(
     coords: list, dist_start: list, dist_end: list, num_steps: list
 ):
     """
-    Validate consistency between scan coordinates and their parameters for ORCA.
+    Validate consistency between scan
+    coordinates and their parameters for ORCA.
 
     Ensures that the number of coordinates matches the number of dist_start,
     dist_end and num_steps values provided. Handles both single coordinate and
@@ -638,7 +681,8 @@ def check_scan_parameters_consistency_orca(
     Args:
         coords: Coordinate specification - list[int] for single coordinate
                 or list[list[int]] for multiple coordinates.
-        dist_start: List of starting distances - must match number of coordinates.
+        dist_start: List of starting distances
+        - must match number of coordinates.
         dist_end: List of ending distances - must match number of coordinates.
         num_steps: List of step counts - must match number of coordinates.
 
@@ -652,10 +696,12 @@ def check_scan_parameters_consistency_orca(
         check_scan_parameters_consistency_orca([1,2], [3.0], [1.2], [10])
 
         # Valid multiple coordinates
-        check_scan_parameters_consistency_orca([[1,2],[3,4]], [3.0,2.5], [1.2,1.0], [10,15])
+        check_scan_parameters_consistency_orca([[1,2],[3,4]],
+        [3.0,2.5], [1.2,1.0], [10,15])
 
         # Invalid - mismatched counts
-        check_scan_parameters_consistency_orca([[1,2],[3,4]], [3.0], [1.2,1.0], [10,15])
+        check_scan_parameters_consistency_orca([[1,2],[3,4]],
+        [3.0], [1.2,1.0], [10,15])
         # Raises ValueError
     """
     if isinstance(coords[0], list):
@@ -681,7 +727,12 @@ def update_irc_label(label, direction, flat_irc):
     Update the job label based on IRC direction and flat IRC flag.
 
     Appends 'f' for forward direction, 'r' for reverse direction,
-    and '_flat' if flat_irc is True.
+    and '_flat' if flat_irc is True and a direction is specified.
+
+    When direction is None (both forward and reverse IRC sub-jobs will be
+    created), the '_flat' suffix is not added here because the sub-jobs
+    created by ``_ircf_job()`` / ``_ircr_job()`` append the direction and
+    '_flat' suffix themselves, avoiding double-application.
 
     Args:
         label (str): Original job label.
@@ -700,6 +751,30 @@ def update_irc_label(label, direction, flat_irc):
             raise ValueError(
                 "Invalid direction for IRC job. Must be 'forward' or 'reverse'."
             )
-    if flat_irc:
+    if flat_irc and not label.endswith("_flat"):
         label += "_flat"
+    return label
+
+
+def create_sp_label(label, sp_settings):
+    """Helper to create label with solvent info."""
+    # either supplied or not from cli, would still want label to have model
+    # and id, if both given;
+    # will not be activated when both are not given, e.g., in the gaussian
+    # calculator calling the sp job
+    if (
+        sp_settings.solvent_model is not None
+        and sp_settings.solvent_id is not None
+    ):
+        # replace , by _ if it occurs in the solvent name, as , in file will
+        # cause gaussian run error
+        solvent_label = sp_settings.solvent_id.replace(",", "_")
+        solvent_label = solvent_label.replace("-", "_")
+        label = f"{label}_{sp_settings.solvent_model}_{solvent_label}"
+    elif sp_settings.solvent_model is None and sp_settings.solvent_id is None:
+        label = (
+            f"{label}_gas_phase"
+            if sp_settings.custom_solvent is None
+            else f"{label}_custom_solvent"
+        )
     return label
