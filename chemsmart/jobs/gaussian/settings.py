@@ -1202,18 +1202,7 @@ class GaussianpKaJobSettings(GaussianJobSettings):
                 continue
             pka_kwargs[rename.get(key, key)] = value
 
-        gs_params = {
-            name
-            for name, param in inspect.signature(
-                GaussianJobSettings.__init__
-            ).parameters.items()
-            if name != "self"
-            and param.kind
-            not in (
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD,
-            )
-        }
+        gs_params = cls._gaussian_job_settings_init_field_names()
         opt_kwargs = {
             key: value
             for key, value in vars(opt_settings).items()
@@ -1251,6 +1240,31 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             **pka_kwargs,
             **opt_kwargs,
         )
+
+    @staticmethod
+    def _gaussian_job_settings_init_field_names():
+        return {
+            name
+            for name, param in inspect.signature(
+                GaussianJobSettings.__init__
+            ).parameters.items()
+            if name != "self"
+            and param.kind
+            not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        }
+
+    def _copy_gaussian_job_settings(self, **overrides):
+        """Copy transferable GaussianJobSettings fields, then apply overrides."""
+        kwargs = {
+            key: value
+            for key, value in vars(self).items()
+            if key in self._gaussian_job_settings_init_field_names()
+        }
+        kwargs.update(overrides)
+        return GaussianJobSettings(**kwargs)
 
     @property
     def has_reference_file(self):
@@ -1451,23 +1465,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         self.validate_reference_settings()
 
         # Reference acid (HB) settings - GAS PHASE (no solvent)
-        ref_acid_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        ref_acid_settings = self._copy_gaussian_job_settings(
+            jobtype="opt",
+            freq=True,
             charge=self.reference_charge,
             multiplicity=self.reference_multiplicity,
-            jobtype="opt",
-            title="Gaussian pKa calculation job",
-            freq=True,
             solvent_model=None,
             solvent_id=None,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         # Reference conjugate base (B-) charge/multiplicity
@@ -1482,23 +1486,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             ref_cb_mult = self.reference_multiplicity
 
         # Reference conjugate base (B-) settings - GAS PHASE (no solvent)
-        ref_conjugate_base_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        ref_conjugate_base_settings = self._copy_gaussian_job_settings(
+            jobtype="opt",
+            freq=True,
             charge=ref_cb_charge,
             multiplicity=ref_cb_mult,
-            jobtype="opt",
-            title="Gaussian pKa calculation job",
-            freq=True,
             solvent_model=None,
             solvent_id=None,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         return ref_acid_settings, ref_conjugate_base_settings
@@ -1513,25 +1507,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         self.validate_reference_settings()
 
         # Reference acid (HB) SP settings - SOLUTION PHASE
-        ref_acid_sp_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        ref_acid_sp_settings = self._copy_gaussian_job_settings(
+            jobtype="sp",
+            freq=False,
             charge=self.reference_charge,
             multiplicity=self.reference_multiplicity,
-            jobtype="sp",
-            title="Gaussian pKa calculation job",
-            freq=False,
             solvent_model=self.solvent_model,
             solvent_id=self.solvent_id,
-            additional_solvent_options=self.additional_solvent_options,
-            custom_solvent=self.custom_solvent,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         # Reference conjugate base (B-) charge/multiplicity
@@ -1546,25 +1528,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             ref_cb_mult = self.reference_multiplicity
 
         # Reference conjugate base (B-) SP settings - SOLUTION PHASE
-        ref_conjugate_base_sp_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        ref_conjugate_base_sp_settings = self._copy_gaussian_job_settings(
+            jobtype="sp",
+            freq=False,
             charge=ref_cb_charge,
             multiplicity=ref_cb_mult,
-            jobtype="sp",
-            title="Gaussian pKa calculation job",
-            freq=False,
             solvent_model=self.solvent_model,
             solvent_id=self.solvent_id,
-            additional_solvent_options=self.additional_solvent_options,
-            custom_solvent=self.custom_solvent,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         return ref_acid_sp_settings, ref_conjugate_base_sp_settings
@@ -1748,23 +1718,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             prot_mult = 1
 
         # Create settings for protonated form (HA) - GAS PHASE (no solvent)
-        protonated_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        protonated_settings = self._copy_gaussian_job_settings(
+            jobtype="opt",
+            freq=True,
             charge=prot_charge,
             multiplicity=prot_mult,
-            jobtype="opt",
-            title="Gaussian pKa calculation job",
-            freq=True,  # Need frequencies for thermochemistry
-            solvent_model=None,  # GAS PHASE - no solvent
+            solvent_model=None,
             solvent_id=None,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         # Determine charge and multiplicity for conjugate base
@@ -1779,23 +1739,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             conj_base_mult = prot_mult
 
         # Create settings for conjugate base (A-) - GAS PHASE (no solvent)
-        conjugate_base_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,
-            basis=self.basis,
-            semiempirical=self.semiempirical,
+        conjugate_base_settings = self._copy_gaussian_job_settings(
+            jobtype="opt",
+            freq=True,
             charge=conj_base_charge,
             multiplicity=conj_base_mult,
-            jobtype="opt",
-            title="Gaussian pKa calculation job",
-            freq=True,  # Need frequencies for thermochemistry
-            solvent_model=None,  # GAS PHASE - no solvent
+            solvent_model=None,
             solvent_id=None,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         return protonated_settings, conjugate_base_settings
@@ -1886,25 +1836,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
 
         # Create settings for protonated form (HA) SP - SOLUTION PHASE
         # Uses SAME functional/basis as gas phase for error cancellation
-        protonated_sp_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,  # Same as gas phase
-            basis=self.basis,  # Same as gas phase
-            semiempirical=self.semiempirical,
+        protonated_sp_settings = self._copy_gaussian_job_settings(
+            jobtype="sp",
+            freq=False,
             charge=prot_charge,
             multiplicity=prot_mult,
-            jobtype="sp",
-            title="Gaussian pKa calculation job",
-            freq=False,
-            solvent_model=self.solvent_model,  # Solution phase
+            solvent_model=self.solvent_model,
             solvent_id=self.solvent_id,
-            additional_solvent_options=self.additional_solvent_options,
-            custom_solvent=self.custom_solvent,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         # Determine charge and multiplicity for conjugate base
@@ -1920,25 +1858,13 @@ class GaussianpKaJobSettings(GaussianJobSettings):
 
         # Create settings for conjugate base (A-) SP - SOLUTION PHASE
         # Uses SAME functional/basis as gas phase for error cancellation
-        conjugate_base_sp_settings = GaussianJobSettings(
-            ab_initio=self.ab_initio,
-            functional=self.functional,  # Same as gas phase
-            basis=self.basis,  # Same as gas phase
-            semiempirical=self.semiempirical,
+        conjugate_base_sp_settings = self._copy_gaussian_job_settings(
+            jobtype="sp",
+            freq=False,
             charge=conj_base_charge,
             multiplicity=conj_base_mult,
-            jobtype="sp",
-            title="Gaussian pKa calculation job",
-            freq=False,
-            solvent_model=self.solvent_model,  # Solution phase
+            solvent_model=self.solvent_model,
             solvent_id=self.solvent_id,
-            additional_solvent_options=self.additional_solvent_options,
-            custom_solvent=self.custom_solvent,
-            additional_route_parameters=self.additional_route_parameters,
-            gen_genecp_file=self.gen_genecp_file,
-            heavy_elements=self.heavy_elements,
-            heavy_elements_basis=self.heavy_elements_basis,
-            light_elements_basis=self.light_elements_basis,
         )
 
         return protonated_sp_settings, conjugate_base_sp_settings

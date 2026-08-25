@@ -3232,8 +3232,47 @@ class TestGaussian16pKaOutput:
         gaussian_pKa_HA_single_point_outputfile,
         gaussian_pKa_A_single_point_outputfile,
     ):
-        """Test direct dissociation via unified compute_pka(scheme='direct')."""
-        delta_G_proton = -265.9
+        """Omitted -dG uses the T-dependent aqueous G_soln(H+) default."""
+        from chemsmart.cli.pka import (
+            aqueous_proton_solution_free_energy_kcal_mol,
+        )
+
+        temperature = 298.15
+        result = Gaussian16pKaOutput.compute_pka(
+            ha_gas_file=gaussian_pKa_HA_optimization_outputfile,
+            a_gas_file=gaussian_pKa_A_optimization_outputfile,
+            ha_solv_file=gaussian_pKa_HA_single_point_outputfile,
+            a_solv_file=gaussian_pKa_A_single_point_outputfile,
+            scheme="direct",
+            temperature=temperature,
+        )
+
+        delta_G_proton = aqueous_proton_solution_free_energy_kcal_mol(
+            temperature
+        )
+        HARTREE_TO_KCAL = 627.5094740631
+        G_soln_HA_kcal = result["G_soln_HA_au"] * HARTREE_TO_KCAL
+        G_soln_A_kcal = result["G_soln_A_au"] * HARTREE_TO_KCAL
+        expected_delta_G_diss = G_soln_A_kcal + delta_G_proton - G_soln_HA_kcal
+
+        assert result["scheme"] == "direct"
+        assert result["delta_G_proton_user_supplied"] is False
+        assert result["delta_G_proton_kcal_mol"] == pytest.approx(
+            -270.3, abs=0.05
+        )
+        assert np.isclose(
+            result["delta_G_diss_kcal_mol"], expected_delta_G_diss, rtol=1e-6
+        )
+
+    def test_compute_pka_direct_scheme_honors_explicit_delta_g(
+        self,
+        gaussian_pKa_HA_optimization_outputfile,
+        gaussian_pKa_A_optimization_outputfile,
+        gaussian_pKa_HA_single_point_outputfile,
+        gaussian_pKa_A_single_point_outputfile,
+    ):
+        """Explicit -dG is G_soln(H+) and is used as given."""
+        delta_G_proton = -270.0
         temperature = 373.15
         result = Gaussian16pKaOutput.compute_pka(
             ha_gas_file=gaussian_pKa_HA_optimization_outputfile,
@@ -3251,6 +3290,8 @@ class TestGaussian16pKaOutput:
         expected_delta_G_diss = G_soln_A_kcal + delta_G_proton - G_soln_HA_kcal
 
         assert result["scheme"] == "direct"
+        assert result["delta_G_proton_kcal_mol"] == -270.0
+        assert result["delta_G_proton_user_supplied"] is True
         assert np.isclose(
             result["delta_G_diss_kcal_mol"], expected_delta_G_diss, rtol=1e-6
         )

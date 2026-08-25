@@ -1245,6 +1245,29 @@ class TestGaussianpKaJobSettings:
         assert prot_settings.functional == "B3LYP"
         assert prot_settings.basis == "6-31G*"
 
+    def test_gas_phase_settings_preserve_route_options(
+        self, single_molecule_xyz_file
+    ):
+        """Project dieze_tag and additional_opt_options_in_route survive gas-phase sub-jobs."""
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        mol.charge = 0
+        mol.multiplicity = 1
+        h_indices = [i + 1 for i, s in enumerate(mol.symbols) if s == "H"]
+        settings = GaussianpKaJobSettings(
+            proton_index=h_indices[0],
+            dieze_tag="#p",
+            additional_opt_options_in_route="maxstep=5",
+            charge=0,
+            multiplicity=1,
+        )
+        prot_settings, conj_base_settings = (
+            settings._create_gas_phase_job_settings(mol)
+        )
+        for sub in (prot_settings, conj_base_settings):
+            assert not isinstance(sub, GaussianpKaJobSettings)
+            assert sub.dieze_tag == "#p"
+            assert sub.additional_opt_options_in_route == "maxstep=5"
+
     def test_solution_phase_sp_settings(self, single_molecule_xyz_file):
         """Test that solution phase SP uses same level of theory with solvent."""
         mol = Molecule.from_filepath(single_molecule_xyz_file)

@@ -93,14 +93,17 @@ where:
 
 **2. Direct Cycle**
 
-Uses the absolute free energy of a proton in water:
+Uses :math:`G_{\text{soln}}(\text{H}^{+})` in the aqueous dissociation cycle:
 
 .. math::
 
-   \text{p}K_{\text{a}} = \frac{G(\text{A}^{-})_{\text{aq}} - G(\text{HA})_{\text{aq}} + \Delta G^{\circ}(\text{H}^{+})_{\text{aq}}}{2.303 \cdot R \cdot T}
+   \text{p}K_{\text{a}} = \frac{G(\text{A}^{-})_{\text{aq}} + G_{\text{soln}}(\text{H}^{+}) - G(\text{HA})_{\text{aq}}}{2.303 \cdot R \cdot T}
 
-Default solvation value: :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) = -265.9` kcal/mol (Kelly, Cramer, and Truhlar,
-2006).
+Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) = -265.9` kcal/mol is the solvation free
+energy of the proton, not :math:`G_{\text{soln}}(\text{H}^{+})`. If ``-dG`` is omitted,
+:math:`G_{\text{soln}}(\text{H}^{+})` is computed as :math:`G^{\circ}_{\text{gas}}(\text{H}^{+}) + RT \ln(RT /
+P^{\circ}) + \Delta G^{*}_{\text{solv}}(\text{H}^{+})` (approximately :math:`-270.3` kcal/mol at 298.15 K; aqueous water
+only). Pass ``-dG`` to override.
 
 *********************
  Dual-Level Approach
@@ -805,7 +808,8 @@ When computing pKa from output files, CHEMSMART prints a detailed summary. The f
    ------------------------------------------------------------------------------
 
    pKa Calculation:
-     G_soln(H+) = -265.9000 kcal/mol
+     G_soln(H+) = -270.2811 kcal/mol
+                  (computed aqueous default for water at 298.15 K)
      DG_diss = 0.1250349015 au
              = 78.4606 kcal/mol
 
