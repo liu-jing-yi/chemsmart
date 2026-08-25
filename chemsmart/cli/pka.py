@@ -1118,6 +1118,11 @@ def click_pka_analyze_options(f):
 def validate_reference_options(shared):
     reference = shared["reference"]
     if reference is None:
+        if shared["scheme"] == "proton exchange":
+            raise click.UsageError(
+                "Proton exchange cycle requires a reference acid. "
+                "Use -r/--reference."
+            )
         return
 
     if shared["scheme"] != "proton exchange":

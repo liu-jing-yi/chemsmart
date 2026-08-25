@@ -1040,6 +1040,68 @@ class TestPKa:
         assert "analyze" in result.output
         assert "batch-analyze" in result.output
 
+    def test_validate_reference_options_requires_reference_for_proton_exchange(
+        self, tmp_path
+    ):
+        from chemsmart.cli.pka import validate_reference_options
+
+        with pytest.raises(click.UsageError, match="-r/--reference"):
+            validate_reference_options(
+                {"scheme": "proton exchange", "reference": None}
+            )
+        validate_reference_options({"scheme": "direct", "reference": None})
+
+        ref = tmp_path / "ref.xyz"
+        ref.write_text("2\nref\nO 0.0 0.0 0.0\nH 0.0 0.0 1.0\n")
+        shared = {
+            "scheme": "proton exchange",
+            "reference": str(ref),
+            "reference_proton_index": None,
+            "reference_color_code": None,
+            "reference_charge": None,
+            "reference_multiplicity": None,
+        }
+        with pytest.raises(
+            click.UsageError, match="When --reference is provided"
+        ):
+            validate_reference_options(shared)
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_submit_proton_exchange_without_reference_fails(
+        self, tmp_path, monkeypatch, backend
+    ):
+        """Default proton-exchange submit requires -r/--reference."""
+        _require_backend_pka_subcommand(run, backend)
+        acid = tmp_path / "acid.xyz"
+        acid.write_text("2\nacid\nC 0.0 0.0 0.0\nH 0.0 0.0 1.0\n")
+        config_root = _write_test_backend_project(tmp_path, backend)
+        monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_root))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "--no-scratch",
+                "--fake",
+                backend,
+                "-p",
+                "test",
+                "-f",
+                str(acid),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "-pi",
+                "2",
+                "submit",
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "-r/--reference" in result.output
+
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_sub_pka_csv_table_auto_routes_to_batch(
         self, tmp_path, monkeypatch, backend
