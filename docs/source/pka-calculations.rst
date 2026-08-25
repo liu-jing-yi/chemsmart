@@ -810,10 +810,10 @@ When computing pKa from output files, CHEMSMART prints a detailed summary. The f
    pKa Calculation:
      G_soln(H+) = -270.2811 kcal/mol
                   (computed aqueous default for water at 298.15 K)
-     DG_diss = 0.1250349015 au
-             = 78.4606 kcal/mol
+     DG_diss = 0.1412066215 au
+             = 88.6085 kcal/mol
 
-     *** Computed pKa(HA) = 52.70 ***
+     *** Computed pKa(HA) = 64.95 ***
    ==============================================================================
 
 **Batch analyze output**

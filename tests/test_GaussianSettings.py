@@ -1255,8 +1255,11 @@ class TestGaussianpKaJobSettings:
         h_indices = [i + 1 for i, s in enumerate(mol.symbols) if s == "H"]
         settings = GaussianpKaJobSettings(
             proton_index=h_indices[0],
+            functional="B3LYP",
+            basis="6-31G*",
             dieze_tag="#p",
             additional_opt_options_in_route="maxstep=5",
+            custom_solvent="Eps=35.0\n",
             charge=0,
             multiplicity=1,
         )
@@ -1265,8 +1268,16 @@ class TestGaussianpKaJobSettings:
         )
         for sub in (prot_settings, conj_base_settings):
             assert not isinstance(sub, GaussianpKaJobSettings)
-            assert sub.dieze_tag == "#p"
+            assert sub.dieze_tag == "p"
             assert sub.additional_opt_options_in_route == "maxstep=5"
+            assert sub.custom_solvent is None
+            assert sub.route_string.startswith("#p ")
+            assert "scrf" not in sub.route_string
+
+        sp_prot, sp_cb = settings._create_solution_phase_sp_settings(mol)
+        for sub in (sp_prot, sp_cb):
+            assert sub.custom_solvent == "Eps=35.0\n"
+            assert "scrf" in sub.route_string
 
     def test_solution_phase_sp_settings(self, single_molecule_xyz_file):
         """Test that solution phase SP uses same level of theory with solvent."""

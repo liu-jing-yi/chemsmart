@@ -1264,6 +1264,14 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             if key in self._gaussian_job_settings_init_field_names()
         }
         kwargs.update(overrides)
+        if (
+            kwargs.get("solvent_model") is None
+            and kwargs.get("solvent_id") is None
+        ):
+            kwargs["custom_solvent"] = None
+        dieze_tag = kwargs.get("dieze_tag")
+        if isinstance(dieze_tag, str):
+            kwargs["dieze_tag"] = dieze_tag.lstrip("#") or None
         return GaussianJobSettings(**kwargs)
 
     @property
