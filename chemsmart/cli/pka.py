@@ -12,6 +12,7 @@ batch-analyze  Batch pKa from a table of output file paths.
 
 import functools
 import logging
+import math
 import os
 
 import click
@@ -24,7 +25,12 @@ from chemsmart.cli.thermochemistry.thermochemistry import (
 )
 from chemsmart.io.file import PKaCDXFile
 from chemsmart.utils.cli import MyCommand, MyGroup
-from chemsmart.utils.constants import HARTREE_TO_KCAL_MOL, energy_conversion
+from chemsmart.utils.constants import (
+    HARTREE_TO_KCAL_MOL,
+    R,
+    atm_to_pa,
+    energy_conversion,
+)
 from chemsmart.utils.io import get_program_type_from_file
 
 logger = logging.getLogger(__name__)
@@ -119,6 +125,58 @@ def pka_solvent_scf_energy(filepath):
     return energy_conversion("j/mol", "hartree", electronic_energy_j_mol)
 
 
+# Kelly, Cramer, Truhlar ΔG*_solv(H+) at 298 K in water; not T-corrected.
+# J. Phys. Chem. B 2006, 110, 16066-16081.
+KELLY_PROTON_SOLVATION_FREE_ENERGY_KCAL_MOL = -265.9
+# Sackur–Tetrode / JANAF S°(H+, 1 atm).
+PROTON_GAS_STANDARD_ENTROPY_CAL_MOL_K = 26.016
+_AQUEOUS_SOLVENT_IDS = frozenset({"water", "h2o"})
+
+
+def aqueous_proton_solution_free_energy_kcal_mol(
+    temperature,
+    delta_g_solv=KELLY_PROTON_SOLVATION_FREE_ENERGY_KCAL_MOL,
+):
+    """Return aqueous G*_soln(H+) in kcal/mol at *temperature* (K).
+
+    G*_aq(H+) = G°_gas(H+, 1 atm) + RT ln(RT / P°) + ΔG*_solv(H+)
+
+    G°_gas(H+) = 5/2 RT − T S°(H+, 1 atm), with S°(H+) = 26.016 cal mol⁻¹ K⁻¹.
+    ΔG*_solv(H+) defaults to the Kelly, Cramer, and Truhlar aqueous value
+    (−265.9 kcal/mol; J. Phys. Chem. B 2006, 110, 16066) and is not
+    temperature-corrected. At 298.15 K the result is ≈ −270.3 kcal/mol.
+    """
+    r_kcal_mol_k = energy_conversion("j/mol", "kcal/mol", R)
+    s_kcal_mol_k = PROTON_GAS_STANDARD_ENTROPY_CAL_MOL_K / 1000.0
+    g_gas_kcal_mol = (
+        2.5 * r_kcal_mol_k * temperature - temperature * s_kcal_mol_k
+    )
+    r_liter_atm_mol_k = R / atm_to_pa * 1000.0
+    standard_molar_volume_l = r_liter_atm_mol_k * temperature
+    g_standard_state_kcal_mol = (
+        r_kcal_mol_k * temperature * math.log(standard_molar_volume_l)
+    )
+    return g_gas_kcal_mol + g_standard_state_kcal_mol + delta_g_solv
+
+
+def warn_if_non_aqueous_direct_proton_default(
+    scheme, delta_g_proton, solvent_id
+):
+    """Warn if aqueous G_soln(H+) default is used with a non-water solvent."""
+    if scheme != "direct" or delta_g_proton is not None:
+        return
+    if solvent_id is None:
+        return
+    if str(solvent_id).strip().lower() in _AQUEOUS_SOLVENT_IDS:
+        return
+    logger.warning(
+        "Computed default G_soln(H+) is for aqueous water; "
+        "solvent_id=%r is not water. Pass -dG/--delta-g-proton for a "
+        "literature non-aqueous G_soln(H+) value.",
+        solvent_id,
+    )
+
+
 def compute_pka(
     ha_gas_file,
     a_gas_file,
@@ -138,11 +196,21 @@ def compute_pka(
     scheme="proton exchange",
     delta_G_proton=None,
 ):
-    """Compute pKa from output files using program-independent thermochemistry."""
+    """Compute pKa from output files using program-independent thermochemistry.
+
+    For ``scheme='direct'``, ``delta_G_proton`` is G_soln(H+) in kcal/mol.
+    If omitted, a T-dependent aqueous default is computed from Kelly,
+    Cramer, and Truhlar ΔG*_solv(H+) = -265.9 kcal/mol.
+    """
+    proton_user_supplied = delta_G_proton is not None
     if scheme == "direct":
-        if delta_G_proton is None:
+        if ha_solv_file is None or a_solv_file is None:
             raise ValueError(
-                "delta_G_proton is required when scheme='direct'."
+                "ha_solv_file and a_solv_file are required for scheme='direct'."
+            )
+        if not proton_user_supplied:
+            delta_G_proton = aqueous_proton_solution_free_energy_kcal_mol(
+                temperature
             )
     elif pka_reference is None:
         raise ValueError(
@@ -166,11 +234,6 @@ def compute_pka(
                 "Missing required files for proton exchange scheme: "
                 + ", ".join(missing)
             )
-
-    if scheme == "direct" and (ha_solv_file is None or a_solv_file is None):
-        raise ValueError(
-            "ha_solv_file and a_solv_file are required for scheme='direct'."
-        )
 
     thermo_kwargs = dict(
         temperature=temperature,
@@ -203,6 +266,7 @@ def compute_pka(
             "pKa": pka,
             "scheme": "direct",
             "delta_G_proton_kcal_mol": delta_G_proton,
+            "delta_G_proton_user_supplied": proton_user_supplied,
             "delta_G_diss_kcal_mol": delta_G_diss_kcal_mol,
             "delta_G_diss_au": delta_G_diss_au,
             "delta_G_soln_kcal_mol": delta_G_diss_kcal_mol,
@@ -432,7 +496,15 @@ def print_pka_summary(
         print("-" * 78)
         print()
         print("pKa Calculation:")
-        print(f"  G_soln(H⁺) = {delta_G_proton:.4f} kcal/mol")
+        g_soln_h = result["delta_G_proton_kcal_mol"]
+        print(f"  G_soln(H⁺) = {g_soln_h:.4f} kcal/mol")
+        if result["delta_G_proton_user_supplied"]:
+            print("             (user-supplied)")
+        else:
+            print(
+                "             (computed aqueous default for water at "
+                f"{temperature} K)"
+            )
         print(f"  ΔG_diss = {result['delta_G_diss_au']:.10f} au")
         print(f"         = {result['delta_G_diss_kcal_mol']:.4f} kcal/mol")
         print()
@@ -515,7 +587,7 @@ def click_pka_shared_options(f):
         type=click.Choice(["direct", "proton exchange"]),
         default="proton exchange",
         help=(
-            "Thermodynamic cycle type. 'proton exchange' uses a reference acid (default). 'direct' uses absolute free energy of H+ in water."
+            "Thermodynamic cycle type. 'proton exchange' uses a reference acid (default). 'direct' uses G_soln(H+) in water."
         ),
     )
     @click.option(
@@ -579,9 +651,11 @@ def click_pka_shared_options(f):
         "-dG",
         "--delta-g-proton",
         type=float,
-        default=-265.9,
+        default=None,
         help=(
-            "Absolute free energy of H+ in water (kcal/mol) for direct cycle. Default: -265.9 kcal/mol (Tissandier et al., 1998)."
+            "G_soln(H+) in kcal/mol for the direct cycle. If omitted, a "
+            "T-dependent aqueous default is computed from Kelly, Cramer, "
+            "and Truhlar ΔG_solv(H+) = -265.9 kcal/mol."
         ),
     )
     @click.option(
@@ -879,7 +953,7 @@ def click_pka_analysis_scheme_options(f):
         type=click.Choice(["direct", "proton exchange"]),
         default=None,
         help=(
-            "Thermodynamic cycle for analysis. 'direct' requires -dG. "
+            "Thermodynamic cycle for analysis. "
             "Default: proton exchange when omitted."
         ),
     )
@@ -890,8 +964,9 @@ def click_pka_analysis_scheme_options(f):
         type=float,
         default=None,
         help=(
-            "G_soln(H+) in kcal/mol for the direct cycle (e.g. -265.9 for water). "
-            "Used only when both this flag and --scheme direct are specified."
+            "G_soln(H+) in kcal/mol for the direct cycle. If omitted, a "
+            "T-dependent aqueous default is computed. Used only with "
+            "--scheme direct."
         ),
     )
     @functools.wraps(f)
@@ -906,10 +981,6 @@ def _resolve_pka_analysis_scheme(scheme, delta_g_proton):
     if scheme is None:
         scheme = "proton exchange"
 
-    if scheme == "direct" and delta_g_proton is None:
-        raise click.UsageError(
-            "-dG/--delta-g-proton is required when --scheme direct is specified."
-        )
     if delta_g_proton is not None and scheme != "direct":
         logger.info(
             "Ignoring -dG/--delta-g-proton because --scheme direct was not "

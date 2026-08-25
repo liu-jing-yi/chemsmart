@@ -944,11 +944,6 @@ class PKaOutputTable:
         delta_G_proton: float = None,
     ) -> list:
         """Compute pKa for every row using the supplied output class."""
-        if scheme == "direct" and delta_G_proton is None:
-            raise ValueError(
-                "delta_G_proton is required when scheme='direct'."
-            )
-
         results = []
         for entry in entries:
             pka_kwargs = dict(

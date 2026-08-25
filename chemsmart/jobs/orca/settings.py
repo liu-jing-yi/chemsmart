@@ -772,10 +772,10 @@ class ORCApKaJobSettings(ORCAJobSettings):
         solvent_id (str): Solvent for SP (default 'water').
         temperature (float): Temperature in K for thermochemistry.
         reference_file (str): Path to reference acid geometry file.
-        delta_G_proton (float): Absolute free energy of H+ in water (kcal/mol).
+        delta_G_proton (float): G_soln(H+) in kcal/mol for the direct cycle.
+            None unless supplied; omitted values are computed as aqueous
+            G_soln(H+) at the job temperature.
     """
-
-    DEFAULT_DELTA_G_PROTON = -265.9
 
     def __init__(
         self,
@@ -845,10 +845,12 @@ class ORCApKaJobSettings(ORCAJobSettings):
             self.reference_conjugate_base_charge = None
             self.reference_conjugate_base_multiplicity = None
 
-        if delta_G_proton is not None:
-            self.delta_G_proton = delta_G_proton
-        else:
-            self.delta_G_proton = self.DEFAULT_DELTA_G_PROTON
+        self.delta_G_proton = delta_G_proton
+        from chemsmart.cli.pka import warn_if_non_aqueous_direct_proton_default
+
+        warn_if_non_aqueous_direct_proton_default(
+            self.scheme, self.delta_G_proton, self.solvent_id
+        )
 
     @classmethod
     def build_orca_pka_settings(cls, proton_index, shared, opt_settings):

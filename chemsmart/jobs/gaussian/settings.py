@@ -965,9 +965,12 @@ class GaussianpKaJobSettings(GaussianJobSettings):
     Two thermodynamic cycles are supported:
 
     1. **Direct dissociation** (scheme='direct'):
-       Uses the absolute free energy of a proton in water (ΔG°(H+)_aq).
-       pKa = [G(A-)_aq - G(HA)_aq + ΔG°(H+)_aq] / (2.303 * R * T)
-       Default ΔG°(H+)_aq = -265.9 kcal/mol (Tissandier et al., J Phys Chem A 1998)
+       Uses G_soln(H+) in the aqueous dissociation cycle.
+       pKa = [G(A-)_aq + G_soln(H+) - G(HA)_aq] / (2.303 * R * T)
+       If delta_G_proton is omitted, G_soln(H+) is computed from the
+       gas-phase proton free energy, the 1 atm → 1 M conversion, and
+       Kelly, Cramer, and Truhlar ΔG*_solv(H+) = -265.9 kcal/mol
+       (aqueous; not T-corrected).
 
     2. **Proton exchange** (scheme='proton exchange'):
        Uses a reference acid (HRef) to cancel systematic errors.
@@ -1002,8 +1005,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         reference_multiplicity (int): Multiplicity of the reference acid (HRef).
         reference_conjugate_base_charge (int): Charge of Ref- (defaults to reference_charge - 1).
         reference_conjugate_base_multiplicity (int): Multiplicity of Ref-.
-        delta_G_proton (float): Absolute free energy of H+ in water (kcal/mol).
-            Only used when scheme='direct'. Default: -265.9 kcal/mol.
+        delta_G_proton (float): G_soln(H+) in kcal/mol for the direct cycle.
+            None unless supplied; omitted values are computed as aqueous
+            G_soln(H+) at the job temperature.
         solvent_model (str): Solvation model for SP calculations (e.g., 'SMD', 'PCM').
         solvent_id (str): Solvent ID for SP calculations (e.g., 'water').
         charge (int): Charge of the protonated form (inherited from parent).
@@ -1012,10 +1016,10 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         conjugate_base_multiplicity (int): Multiplicity of the conjugate base.
 
     References:
-        Tissandier MD, Cowen KA, Feng WY, Gundlach E, Cohen MH, Earhart AD,
-        Coe JV, Tuttle TR Jr (1998) The proton's absolute aqueous enthalpy
-        and Gibbs free energy of solvation from cluster-ion solvation data.
-        J Phys Chem A 102:7787-7794.
+        Kelly CP, Cramer CJ, Truhlar DG (2006) Aqueous solvation free
+        energies of ions and ion-water clusters based on an accurate
+        value for the absolute aqueous solvation free energy of the
+        proton. J Phys Chem B 110:16066-16081.
 
     Example:
         from chemsmart.io.molecules.structure import Molecule
@@ -1049,10 +1053,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id="water"
         )
     """
-
-    # Default absolute free energy of H+ in water (kcal/mol)
-    # From Tissandier et al., J Phys Chem A 1998, 102:7787
-    DEFAULT_DELTA_G_PROTON = -265.9
 
     def __init__(
         self,
@@ -1105,9 +1105,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
                 conjugate base (Ref-). Defaults to reference_charge - 1.
             reference_conjugate_base_multiplicity (int, optional): Multiplicity of the
                 reference conjugate base (Ref-). Defaults to reference_multiplicity.
-            delta_G_proton (float, optional): Absolute free energy of H+ in water
-                (kcal/mol). Only used when scheme='direct'.
-                Default is -265.9 kcal/mol (Tissandier et al., 1998).
+            delta_G_proton (float, optional): G_soln(H+) in kcal/mol for the
+                direct cycle. If omitted, a T-dependent aqueous default is
+                computed at analysis time.
             solvent_model (str): Solvation model for solution phase SP.
                 Default is 'SMD'.
             solvent_id (str): Solvent ID for solution phase SP.
@@ -1178,11 +1178,12 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             self.reference_conjugate_base_charge = None
             self.reference_conjugate_base_multiplicity = None
 
-        # Set delta_G_proton for direct cycle
-        if delta_G_proton is not None:
-            self.delta_G_proton = delta_G_proton
-        else:
-            self.delta_G_proton = self.DEFAULT_DELTA_G_PROTON
+        self.delta_G_proton = delta_G_proton
+        from chemsmart.cli.pka import warn_if_non_aqueous_direct_proton_default
+
+        warn_if_non_aqueous_direct_proton_default(
+            self.scheme, self.delta_G_proton, self.solvent_id
+        )
 
     @classmethod
     def build_gaussian_pka_settings(

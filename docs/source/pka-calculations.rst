@@ -99,7 +99,8 @@ Uses the absolute free energy of a proton in water:
 
    \text{p}K_{\text{a}} = \frac{G(\text{A}^{-})_{\text{aq}} - G(\text{HA})_{\text{aq}} + \Delta G^{\circ}(\text{H}^{+})_{\text{aq}}}{2.303 \cdot R \cdot T}
 
-Default value: :math:`\Delta G^{\circ}(\text{H}^{+})_{\text{aq}} = -265.9` kcal/mol (Tissandier et al., 1998).
+Default solvation value: :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) = -265.9` kcal/mol (Kelly, Cramer, and Truhlar,
+2006).
 
 *********************
  Dual-Level Approach
@@ -417,12 +418,13 @@ Provide all eight files explicitly when auto-discovery is not appropriate:
 
 **Direct dissociation**
 
-Four output files are required (HA, A⁻, and their solvent single-points). Both ``-s direct`` and ``-dG`` must be
-specified on the ``pka`` group **before** the ``analyze`` subcommand:
+Four output files are required (HA, A⁻, and their solvent single-points). Specify ``-s direct`` on the ``pka`` group
+**before** the ``analyze`` subcommand. Omit ``-dG`` to use the computed aqueous :math:`G_{\text{soln}}(\text{H}^{+})`
+default, or pass ``-dG`` to override:
 
 .. code:: bash
 
-   chemsmart run pka -s direct -dG -265.9 analyze \
+   chemsmart run pka -s direct analyze \
        -ha acid1_pka_HA_opt.log \
        -T 298.15
 
@@ -468,11 +470,11 @@ Parse a table of pre-computed output file paths to calculate pKa values in batch
 
 **Direct dissociation**
 
-Both ``-s direct`` and ``-dG`` are required:
+Specify ``-s direct``. Omit ``-dG`` to use the computed aqueous default:
 
 .. code:: bash
 
-   chemsmart run pka -s direct -dG -265.9 batch-analyze \
+   chemsmart run pka -s direct batch-analyze \
        -o pka_output_table_direct.csv \
        -O results_direct.dat
 
@@ -600,14 +602,18 @@ options on ``chemsmart run/sub gaussian ... pka`` and ``chemsmart run/sub orca .
       -  Thermodynamic cycle: ``direct`` or ``proton exchange``. Default: ``proton exchange``.
 
    -  -  ``-dG``
+
       -  ``--delta-g-proton``
-      -  :math:`G_{\text{soln}}(\text{H}^{+})` in kcal/mol for the direct cycle. **Required** when ``-s direct`` is used
-         for analysis. Has no default during analysis.
+
+      -  :math:`G_{\text{soln}}(\text{H}^{+})` override in kcal/mol for the direct cycle. If omitted, a T-dependent
+         aqueous default is computed from Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) =
+         -265.9` kcal/mol.
 
 .. note::
 
-   For job submission, ``-dG`` defaults to ``-265.9`` kcal/mol. For output analysis you must pass ``-dG`` explicitly
-   whenever ``-s direct`` is used.
+   If ``-dG`` is omitted for the direct cycle, :math:`G_{\text{soln}}(\text{H}^{+})` is computed from Kelly, Cramer, and
+   Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) = -265.9` kcal/mol (aqueous water at the requested
+   temperature). Pass ``-dG`` to override.
 
 *********************
  Output File Options
@@ -851,7 +857,8 @@ For direct dissociation, the header reads ``Batch pKa Results (Direct Dissociati
 References
 ==========
 
-#. Tissandier, M. D. et al. (1998). *J. Phys. Chem. A*, 102, 7787. (Absolute proton solvation energy)
+#. Kelly, C. P.; Cramer, C. J.; Truhlar, D. G. (2006). *J. Phys. Chem. B*, 110, 16066. (Absolute proton solvation
+   energy)
 #. Grimme, S. (2012). *Chem. Eur. J.*, 18, 9955. (Quasi-RRHO method)
 #. Marenich, A. V.; Cramer, C. J.; Truhlar, D. G. (2009). *J. Phys. Chem. B*, 113, 6378. (SMD solvation model)
 

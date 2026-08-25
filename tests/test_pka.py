@@ -37,15 +37,12 @@ def _build_outputs(tmp_path: Path, program: str):
     return files
 
 
-def _invoke_pka_direct(runner, files, delta_g_proton=-265.9):
-    return runner.invoke(
-        run,
+def _invoke_pka_direct(runner, files, delta_g_proton=None):
+    args = ["pka", "-s", "direct"]
+    if delta_g_proton is not None:
+        args.extend(["-dG", str(delta_g_proton)])
+    args.extend(
         [
-            "pka",
-            "-s",
-            "direct",
-            "-dG",
-            str(delta_g_proton),
             "analyze",
             "-ha",
             files["ha.log"],
@@ -55,8 +52,9 @@ def _invoke_pka_direct(runner, files, delta_g_proton=-265.9):
             files["has.log"],
             "-as",
             files["as.log"],
-        ],
+        ]
     )
+    return runner.invoke(run, args)
 
 
 def _invoke_pka(runner, files):
@@ -183,6 +181,96 @@ def _build_pka_batch_table(tmp_path):
     return table
 
 
+class TestAqueousProtonSolutionFreeEnergy:
+    def test_value_at_298_15_k(self):
+        from chemsmart.cli.pka import (
+            aqueous_proton_solution_free_energy_kcal_mol,
+        )
+
+        g_soln = aqueous_proton_solution_free_energy_kcal_mol(298.15)
+        assert g_soln == pytest.approx(-270.3, abs=0.05)
+
+    def test_temperature_dependence_of_gas_and_standard_state_terms(self):
+        import math
+
+        from chemsmart.cli.pka import (
+            aqueous_proton_solution_free_energy_kcal_mol,
+        )
+        from chemsmart.utils.constants import R, atm_to_pa, energy_conversion
+
+        delta_g_solv = -265.9
+        entropy_kcal_mol_k = 26.016 / 1000.0
+        r_kcal_mol_k = energy_conversion("j/mol", "kcal/mol", R)
+        r_liter_atm_mol_k = R / atm_to_pa * 1000.0
+
+        def gas_plus_standard_state(temperature):
+            g_gas = (
+                2.5 * r_kcal_mol_k * temperature
+                - temperature * entropy_kcal_mol_k
+            )
+            g_std = (
+                r_kcal_mol_k
+                * temperature
+                * math.log(r_liter_atm_mol_k * temperature)
+            )
+            return g_gas + g_std
+
+        g_298 = aqueous_proton_solution_free_energy_kcal_mol(
+            298.15, delta_g_solv=delta_g_solv
+        )
+        g_373 = aqueous_proton_solution_free_energy_kcal_mol(
+            373.15, delta_g_solv=delta_g_solv
+        )
+        assert g_298 - delta_g_solv == pytest.approx(
+            gas_plus_standard_state(298.15)
+        )
+        assert g_373 - delta_g_solv == pytest.approx(
+            gas_plus_standard_state(373.15)
+        )
+        assert g_373 != pytest.approx(g_298)
+
+    def test_compute_pka_direct_uses_computed_default(
+        self, tmp_path, monkeypatch
+    ):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        from chemsmart.cli.pka import (
+            aqueous_proton_solution_free_energy_kcal_mol,
+            compute_pka,
+        )
+
+        result = compute_pka(
+            ha_gas_file=files["ha.log"],
+            a_gas_file=files["a.log"],
+            ha_solv_file=files["has.log"],
+            a_solv_file=files["as.log"],
+            scheme="direct",
+            temperature=298.15,
+        )
+        expected = aqueous_proton_solution_free_energy_kcal_mol(298.15)
+        assert result["delta_G_proton_kcal_mol"] == pytest.approx(expected)
+        assert result["delta_G_proton_user_supplied"] is False
+
+    def test_compute_pka_direct_honors_user_override(
+        self, tmp_path, monkeypatch
+    ):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        from chemsmart.cli.pka import compute_pka
+
+        result = compute_pka(
+            ha_gas_file=files["ha.log"],
+            a_gas_file=files["a.log"],
+            ha_solv_file=files["has.log"],
+            a_solv_file=files["as.log"],
+            scheme="direct",
+            temperature=298.15,
+            delta_G_proton=-270.0,
+        )
+        assert result["delta_G_proton_kcal_mol"] == -270.0
+        assert result["delta_G_proton_user_supplied"] is True
+
+
 class TestPKa:
     """pKa CLI, batch submission, and job workflow tests."""
 
@@ -227,28 +315,25 @@ class TestPKa:
         assert called["kwargs"]["delta_G_proton"] == -270.0
         assert called["kwargs"]["scheme"] == "direct"
 
-    def test_run_pka_direct_requires_delta_g_proton(self, tmp_path):
+    def test_run_pka_direct_omitted_delta_g_computes_default(
+        self, tmp_path, monkeypatch
+    ):
         files = _build_outputs(tmp_path, "gaussian")
+        called = {}
+
+        def _fake_print(*args, **kwargs):
+            called["kwargs"] = kwargs
+
+        import chemsmart.cli.pka as pka_cli
+
+        monkeypatch.setattr(pka_cli, "print_pka_summary", _fake_print)
+
         runner = CliRunner()
-        result = runner.invoke(
-            run,
-            [
-                "pka",
-                "-s",
-                "direct",
-                "analyze",
-                "-ha",
-                files["ha.log"],
-                "-a",
-                files["a.log"],
-                "-has",
-                files["has.log"],
-                "-as",
-                files["as.log"],
-            ],
-        )
-        assert result.exit_code != 0
-        assert "-dG/--delta-g-proton is required" in result.output
+        result = _invoke_pka_direct(runner, files)
+
+        assert result.exit_code == 0, result.output
+        assert called["kwargs"]["delta_G_proton"] is None
+        assert called["kwargs"]["scheme"] == "direct"
 
     def test_run_pka_detects_orca_and_dispatches(self, tmp_path, monkeypatch):
         files = _build_outputs(tmp_path, "orca")
@@ -1483,6 +1568,7 @@ class TestPKa:
         assert len(captured["submissions"]) == 1
         job = captured["submissions"][0][0]
         assert job.settings.proton_index == 8
+        assert job.settings.delta_G_proton is None
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_sub_pka_csv_table_cdxml_explicit_proton_index_overrides(
@@ -1538,6 +1624,7 @@ class TestPKa:
         assert len(captured["submissions"]) == 1
         job = captured["submissions"][0][0]
         assert job.settings.proton_index == 8
+        assert job.settings.delta_G_proton is None
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_sub_pka_csv_table_rejects_multi_molecule_cdxml_row(
@@ -1614,6 +1701,7 @@ class TestPKa:
             functional="B3LYP",
             basis="def2-SVP",
         )
+        assert settings.delta_G_proton is None
 
         job = ORCApKaJob(
             molecule=mol,

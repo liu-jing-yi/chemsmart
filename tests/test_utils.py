@@ -2467,7 +2467,7 @@ class TestPKaTableParsing:
             def compute_pka(cls, **kwargs):
                 assert kwargs["ha_gas_file"] == f"{tmp_path}/ha.log"
                 assert kwargs["scheme"] == "direct"
-                assert kwargs["delta_G_proton"] == -265.9
+                assert kwargs["delta_G_proton"] is None
                 return {
                     "pKa": 4.5,
                     "delta_G_diss_kcal_mol": 6.1,
@@ -2479,7 +2479,6 @@ class TestPKaTableParsing:
         results = pka_table.run_pka(
             output_cls=FakeOutput,
             scheme="direct",
-            delta_G_proton=-265.9,
         )
 
         assert results == [

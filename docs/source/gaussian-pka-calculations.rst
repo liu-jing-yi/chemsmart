@@ -338,9 +338,12 @@ Thermochemistry Options
       -  Head-Gordon enthalpy cutoff (cm⁻¹). Default: ``100.0``.
 
    -  -  ``-dG``
+
       -  ``--delta-g-proton``
-      -  :math:`\Delta G^{\circ}(\text{H}^{+})_{\text{aq}}` in kcal/mol for direct-cycle **submission**. Default:
-         ``-265.9``. For output analysis, pass explicitly with ``-s direct`` (see :ref:`pka-calculations`).
+
+      -  :math:`G_{\text{soln}}(\text{H}^{+})` override in kcal/mol for the direct cycle. If omitted, a T-dependent
+         aqueous default is computed from Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) =
+         -265.9` kcal/mol.
 
 **********
  Examples
@@ -399,7 +402,7 @@ Example 5: Direct-Cycle Analysis
 
 .. code:: bash
 
-   chemsmart run pka -s direct -dG -265.9 analyze \
+   chemsmart run pka -s direct analyze \
        -ha phenol_HA_opt.log \
        -T 298.15 -csg 100 -ch 100
 

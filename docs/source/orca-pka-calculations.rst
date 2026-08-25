@@ -241,8 +241,12 @@ of **SMD**).
       -  Entropy and enthalpy cutoffs (cm⁻¹). See :ref:`pka-calculations`.
 
    -  -  ``-dG``
+
       -  ``--delta-g-proton``
-      -  Default ``-265.9`` kcal/mol for submission; explicit for direct-cycle analysis.
+
+      -  :math:`G_{\text{soln}}(\text{H}^{+})` override in kcal/mol for the direct cycle. If omitted, a T-dependent
+         aqueous default is computed from Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) =
+         -265.9` kcal/mol.
 
 **********
  Examples

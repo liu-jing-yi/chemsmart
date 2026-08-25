@@ -1092,7 +1092,7 @@ class TestGaussianpKaJobSettings:
         )
         assert settings.scheme == "direct"
         assert settings.reference_file is None  # Not needed for direct cycle
-        assert settings.delta_G_proton == -265.9  # Default value
+        assert settings.delta_G_proton is None
 
     def test_direct_cycle_custom_delta_g(self):
         """Test direct cycle with custom delta_G_proton."""
@@ -1104,6 +1104,38 @@ class TestGaussianpKaJobSettings:
             multiplicity=1,
         )
         assert settings.delta_G_proton == -270.0
+
+    def test_direct_cycle_warns_on_non_water_solvent(self, caplog):
+        """Omitted -dG with a non-water solvent logs a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            GaussianpKaJobSettings(
+                proton_index=10,
+                scheme="direct",
+                charge=0,
+                multiplicity=1,
+                solvent_id="acetonitrile",
+            )
+        assert any(
+            "not water" in rec.message and "acetonitrile" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_direct_cycle_no_warning_when_delta_g_supplied(self, caplog):
+        """Explicit G_soln(H+) override suppresses the non-water warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            GaussianpKaJobSettings(
+                proton_index=10,
+                scheme="direct",
+                charge=0,
+                multiplicity=1,
+                solvent_id="acetonitrile",
+                delta_G_proton=-270.0,
+            )
+        assert not any("not water" in rec.message for rec in caplog.records)
 
     def test_proton_exchange_with_reference_file(
         self, single_molecule_xyz_file

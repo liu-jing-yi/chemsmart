@@ -96,7 +96,7 @@ def pka(
     \b
     Thermodynamic cycles:
       proton exchange (default): HA + Ref- -> A- + HRef
-      direct: uses absolute free energy of H+ in water
+      direct: uses G_soln(H+) in water
     """
     from chemsmart.cli.pka import resolve_pka_entropy_cutoff
 
