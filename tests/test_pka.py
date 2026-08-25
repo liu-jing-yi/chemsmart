@@ -9,6 +9,19 @@ from chemsmart.cli.run import run
 from chemsmart.cli.sub import sub
 
 
+def _molecule_from_smiles(smiles):
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    from chemsmart.io.molecules.structure import Molecule
+
+    rdkit_mol = Chem.MolFromSmiles(smiles)
+    rdkit_mol = Chem.AddHs(rdkit_mol)
+    AllChem.EmbedMolecule(rdkit_mol, randomSeed=0xC0FFEE)
+    AllChem.UFFOptimizeMolecule(rdkit_mol)
+    return Molecule.from_rdkit_mol(rdkit_mol)
+
+
 def _write_signature_file(path: Path, program: str):
     signatures = {
         "gaussian": "Gaussian, Inc.\n",
@@ -1533,6 +1546,23 @@ class TestPKa:
         assert proton_index == 8
         assert molecules is None
 
+    def test_resolve_proton_index_uses_smarts_for_xyz_without_pi(
+        self, tmp_path
+    ):
+        from chemsmart.cli.pka import (
+            resolve_ionizable_site,
+            resolve_proton_index,
+        )
+
+        mol = _molecule_from_smiles("c1ccccc1O")
+        path = tmp_path / "phenol.xyz"
+        mol.write(str(path), format="xyz")
+
+        proton_index, molecules = resolve_proton_index(str(path), None, None)
+        assert molecules is None
+        assert mol.chemical_symbols[proton_index - 1] == "H"
+        assert proton_index == resolve_ionizable_site(mol, mode="acid")
+
     def test_resolve_pka_batch_row_auto_detects_coloured_proton(
         self, colored_proton_cdxml_file
     ):
@@ -2060,3 +2090,64 @@ class TestPKa:
             ValueError, match="Batch job submission is not supported"
         ):
             process_pipeline.__wrapped__(ctx, ["not-a-job", "also-not-a-job"])
+
+
+class TestIonizableSiteSMARTS:
+    def test_acid_and_base_smarts_are_the_resolver_patterns(self):
+        from chemsmart.cli.pka import (
+            _IONIZABLE_SITE_SMARTS,
+            PKA_ACID_SMARTS,
+            PKB_BASE_SMARTS,
+        )
+
+        assert _IONIZABLE_SITE_SMARTS["acid"] is PKA_ACID_SMARTS
+        assert _IONIZABLE_SITE_SMARTS["base"] is PKB_BASE_SMARTS
+        assert "[CX3](=O)[OX2H1][#1]" in PKA_ACID_SMARTS
+        assert "[c][OX2H1][#1]" in PKA_ACID_SMARTS
+        assert "[SX2H1][#1]" in PKA_ACID_SMARTS
+        assert "[NX4;+1][#1]" in PKA_ACID_SMARTS
+        assert "[nH;+1][#1]" in PKA_ACID_SMARTS
+        assert "[nX2;H0]" in PKB_BASE_SMARTS
+
+    @pytest.mark.parametrize("smiles", ["c1ccccc1O", "CC(=O)O"])
+    def test_acid_smarts_unique_hydrogen(self, smiles):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles(smiles)
+        proton_index = resolve_ionizable_site(mol, mode="acid")
+        assert mol.chemical_symbols[proton_index - 1] == "H"
+
+    def test_acid_smarts_errors_when_carboxylic_and_phenol_both_present(self):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles("O=C(O)c1ccc(O)cc1")
+        with pytest.raises(ValueError, match="2 SMARTS matches"):
+            resolve_ionizable_site(mol, mode="acid")
+
+    def test_acid_smarts_does_not_select_generic_alcohol(self):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles("CCO")
+        with pytest.raises(ValueError, match="0 SMARTS matches"):
+            resolve_ionizable_site(mol, mode="acid")
+
+    def test_base_smarts_unique_pyridine_nitrogen(self):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles("c1ccncc1")
+        site = resolve_ionizable_site(mol, mode="base")
+        assert mol.chemical_symbols[site - 1] == "N"
+
+    def test_base_smarts_errors_when_two_amines_present(self):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles("NCCN")
+        with pytest.raises(ValueError, match="2 SMARTS matches"):
+            resolve_ionizable_site(mol, mode="base")
+
+    def test_base_smarts_does_not_select_amide_nitrogen(self):
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        mol = _molecule_from_smiles("CC(=O)N")
+        with pytest.raises(ValueError, match="0 SMARTS matches"):
+            resolve_ionizable_site(mol, mode="base")

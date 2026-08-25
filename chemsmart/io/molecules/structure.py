@@ -3400,8 +3400,9 @@ class PKaMolecule(Molecule):
     ``proton_index`` (1-based) that identifies the acidic proton to
     be removed during deprotonation.
 
-    The proton index can be supplied explicitly by the user or
-    determined automatically from ChemDraw (CDXML) colour coding.
+    The proton index can be supplied explicitly, determined from ChemDraw
+    (CDXML) colour coding, or obtained by protonating a heavy atom with
+    :meth:`add_proton_at_atom`.
 
     Parameters
     ----------
@@ -3468,6 +3469,98 @@ class PKaMolecule(Molecule):
                 self.__dict__[key] = copy.copy(value)
 
         self.proton_index = proton_index
+
+    @staticmethod
+    def _lone_pair_unit_vector(site_pos, positions, neighbor_indices):
+        """Unit vector from *site_pos* opposite the centroid of neighbors."""
+        if neighbor_indices:
+            direction = site_pos - np.asarray(positions)[
+                neighbor_indices
+            ].mean(axis=0)
+        else:
+            direction = np.array([1.0, 0.0, 0.0])
+
+        norm = np.linalg.norm(direction)
+        if norm < 1e-8:
+            if neighbor_indices:
+                bond = site_pos - np.asarray(positions)[neighbor_indices[0]]
+                helper = np.array([1.0, 0.0, 0.0])
+                bond_norm = np.linalg.norm(bond)
+                if (
+                    bond_norm >= 1e-8
+                    and abs(np.dot(bond / bond_norm, helper)) > 0.9
+                ):
+                    helper = np.array([0.0, 1.0, 0.0])
+                direction = np.cross(bond, helper)
+                norm = np.linalg.norm(direction)
+            if norm < 1e-8:
+                direction = np.array([1.0, 0.0, 0.0])
+                norm = 1.0
+        return direction / norm
+
+    @classmethod
+    def add_proton_at_atom(cls, molecule, index, one_based=True):
+        """Protonate the heavy atom at *index* and return a ``PKaMolecule``.
+
+        Neighbors are taken from :meth:`Molecule.to_rdkit` bond perception.
+        The new hydrogen is placed 1.01 Å from the site, opposite the
+        centroid of bonded neighbors (lone-pair direction), and appended as
+        the last atom. Molecular charge is increased by 1; multiplicity is
+        unchanged. The returned object's ``proton_index`` is the 1-based
+        index of the added hydrogen.
+
+        Args:
+            molecule (Molecule): Free-base structure to protonate.
+            index (int): Index of the heavy atom to protonate.
+            one_based (bool): If ``True`` (default), *index* is 1-based.
+
+        Returns:
+            PKaMolecule: Protonated molecule with ``proton_index`` set to
+            the added hydrogen.
+
+        Raises:
+            ValueError: If *index* is out of range or the atom is hydrogen.
+        """
+        n_atoms = len(molecule.symbols)
+        site_idx = int(index) - 1 if one_based else int(index)
+        display_idx = site_idx + 1 if one_based else site_idx
+        if site_idx < 0 or site_idx >= n_atoms:
+            raise ValueError(
+                f"Atom index {display_idx} out of range for molecule "
+                f"with {n_atoms} atoms"
+            )
+
+        site_symbol = molecule.chemical_symbols[site_idx]
+        if site_symbol == "H":
+            raise ValueError(
+                f"Atom at index {display_idx} is hydrogen. "
+                "add_proton_at_atom requires a heavy atom."
+            )
+
+        positions = np.asarray(molecule.positions, dtype=float)
+        site_pos = positions[site_idx]
+        rdkit_mol = molecule.to_rdkit()
+        neighbor_indices = [
+            neighbor.GetIdx()
+            for neighbor in rdkit_mol.GetAtomWithIdx(site_idx).GetNeighbors()
+        ]
+        h_pos = site_pos + 1.01 * cls._lone_pair_unit_vector(
+            site_pos, positions, neighbor_indices
+        )
+
+        new_symbols = list(molecule.chemical_symbols) + ["H"]
+        new_positions = np.vstack([positions, h_pos])
+        original_charge = (
+            0 if molecule.charge is None else int(molecule.charge)
+        )
+
+        protonated = Molecule(
+            symbols=new_symbols,
+            positions=new_positions,
+            charge=original_charge + 1,
+            multiplicity=molecule.multiplicity,
+        )
+        return cls(molecule=protonated, proton_index=protonated.num_atoms)
 
     @classmethod
     def from_molecule_and_proton_index(

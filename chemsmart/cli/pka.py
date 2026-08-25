@@ -700,6 +700,124 @@ def is_pka_cdxml_input(filename):
     )
 
 
+# Conservative unique-site SMARTS. Acid patterns map to the ionizable
+# hydrogen; base patterns map to the heavy atom to protonate.
+PKA_ACID_SMARTS = (
+    "[CX3](=O)[OX2H1][#1]",
+    "[c][OX2H1][#1]",
+    "[SX2H1][#1]",
+    "[NX4;+1][#1]",
+    "[nH;+1][#1]",
+)
+PKB_BASE_SMARTS = (
+    "[NX3;H2,H1;!$(NC=[O,S])]",
+    "[NX3;H0;!$(NC=[O,S]);!$(N=*)]",
+    "[nX2;H0]",
+)
+_IONIZABLE_SITE_SMARTS = {
+    "acid": PKA_ACID_SMARTS,
+    "base": PKB_BASE_SMARTS,
+}
+_IONIZABLE_SITE_ATOMIC_NUM = {
+    "acid": 1,
+    "base": 7,
+}
+
+
+@functools.lru_cache(maxsize=None)
+def _ionizable_smarts_mol(smarts):
+    from rdkit import Chem
+
+    pattern = Chem.MolFromSmarts(smarts)
+    if pattern is None:
+        raise ValueError(f"Invalid SMARTS pattern: {smarts}")
+    return pattern
+
+
+def _prepare_rdkit_mol_for_ionizable_site(molecule):
+    """Return an RDKit mol with aromaticity and N charges suitable for SMARTS."""
+    from rdkit import Chem
+
+    rdkit_mol = molecule.to_rdkit()
+    for atom in rdkit_mol.GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            atom.SetIsAromatic(False)
+            for bond in atom.GetBonds():
+                bond.SetIsAromatic(False)
+                if bond.GetBondType() == Chem.BondType.AROMATIC:
+                    bond.SetBondType(Chem.BondType.SINGLE)
+        elif atom.GetAtomicNum() == 7 and atom.GetDegree() == 4:
+            atom.SetFormalCharge(1)
+    rdkit_mol.UpdatePropertyCache(strict=False)
+    sanitize_ops = (
+        Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_ADJUSTHS
+    )
+    try:
+        Chem.SanitizeMol(rdkit_mol, sanitizeOps=sanitize_ops)
+    except Chem.MolSanitizeException:
+        Chem.SetAromaticity(rdkit_mol)
+
+    overall_charge = 0 if molecule.charge is None else int(molecule.charge)
+    remaining = overall_charge - Chem.GetFormalCharge(rdkit_mol)
+    if remaining > 0:
+        candidates = [
+            atom
+            for atom in rdkit_mol.GetAtoms()
+            if atom.GetAtomicNum() == 7
+            and atom.GetFormalCharge() == 0
+            and atom.GetIsAromatic()
+            and atom.GetDegree() == 3
+            and any(n.GetAtomicNum() == 1 for n in atom.GetNeighbors())
+        ]
+        if len(candidates) == remaining:
+            for atom in candidates:
+                atom.SetFormalCharge(1)
+    return rdkit_mol
+
+
+def resolve_ionizable_site(molecule, mode="acid"):
+    """Return the unique 1-based ionizable site from acid or base SMARTS.
+
+    Acid mode returns the acidic hydrogen index. Base mode returns the
+    heavy-atom index to protonate. Matching uses :meth:`Molecule.to_rdkit`.
+
+    Args:
+        molecule: Structure to search.
+        mode: ``"acid"`` or ``"base"``.
+
+    Returns:
+        int: 1-based atom index of the unique matching site.
+
+    Raises:
+        ValueError: If *mode* is invalid, or SMARTS finds 0 or more than one
+            site. Specify ``-pi/--proton-index`` or ``-cc/--color-code``.
+    """
+    if mode not in _IONIZABLE_SITE_SMARTS:
+        raise ValueError(f"mode must be 'acid' or 'base', got {mode!r}")
+
+    rdkit_mol = _prepare_rdkit_mol_for_ionizable_site(molecule)
+    atomic_num = _IONIZABLE_SITE_ATOMIC_NUM[mode]
+    sites = set()
+    for smarts in _IONIZABLE_SITE_SMARTS[mode]:
+        for match in rdkit_mol.GetSubstructMatches(
+            _ionizable_smarts_mol(smarts)
+        ):
+            sites.update(
+                idx
+                for idx in match
+                if rdkit_mol.GetAtomWithIdx(idx).GetAtomicNum() == atomic_num
+            )
+
+    if len(sites) != 1:
+        kind = "acidic hydrogen" if mode == "acid" else "basic atom"
+        raise ValueError(
+            f"Could not uniquely identify the {kind} "
+            f"({len(sites)} SMARTS matches). "
+            "Specify -pi/--proton-index or -cc/--color-code."
+        )
+    return next(iter(sites)) + 1
+
+
 def resolve_proton_index(filename, proton_index, color_code=None):
     """Resolve the proton index for deprotonation, optionally via CDXML.
 
@@ -707,7 +825,8 @@ def resolve_proton_index(filename, proton_index, color_code=None):
     inputs, the proton can be auto-detected from a color code; a
     multi-fragment file yields a list of per-fragment molecules, which is
     returned as the second tuple element while the proton index is set to
-    ``None`` so callers can branch to per-molecule job creation.
+    ``None`` so callers can branch to per-molecule job creation. For other
+    structure files, a unique acidic hydrogen is resolved from SMARTS.
 
     Args:
         filename: Input structure file path, used to detect CDX/CDXML inputs.
@@ -747,10 +866,15 @@ def resolve_proton_index(filename, proton_index, color_code=None):
             "'pka -s direct batch' (proton_index is read from the table)."
         )
 
-    raise ValueError(
-        "-pi/--proton-index is required when launching new pKa "
-        "calculations (or use a .cdxml file with a coloured proton)."
-    )
+    from chemsmart.io.molecules.structure import Molecule
+
+    molecule = Molecule.from_filepath(filename)
+    if molecule is None:
+        raise ValueError(
+            f"Could not read a molecule from {filename}. "
+            "Specify -pi/--proton-index or -cc/--color-code."
+        )
+    return resolve_ionizable_site(molecule, mode="acid"), None
 
 
 def apply_pka_molecule_charge_multiplicity(opt_settings, molecule):

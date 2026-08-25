@@ -2447,10 +2447,47 @@ class TestCDXFile:
         assert mol.num_atoms == 23
 
 
-class TestpKaCDXFile:
-    # ------------------------------------------------------------------
-    # CDXML atom-colour parsing and proton detection tests
-    # ------------------------------------------------------------------
+class TestPKaMolecule:
+    """Tests for PKaMolecule, CDXML proton colour detection, and protonation."""
+
+    @staticmethod
+    def _ammonia_molecule():
+        return Molecule(
+            symbols=["N", "H", "H", "H"],
+            positions=np.array(
+                [
+                    [0.0000, 0.0000, 0.0000],
+                    [0.0000, 0.0000, 1.0120],
+                    [0.9539, 0.0000, -0.3373],
+                    [-0.4769, 0.8261, -0.3373],
+                ]
+            ),
+            charge=0,
+            multiplicity=1,
+        )
+
+    @staticmethod
+    def _pyridine_molecule():
+        return Molecule(
+            symbols=["N", "C", "C", "C", "C", "C", "H", "H", "H", "H", "H"],
+            positions=np.array(
+                [
+                    [0.0000, 1.3700, 0.0000],
+                    [1.1850, 0.6850, 0.0000],
+                    [1.1850, -0.6850, 0.0000],
+                    [0.0000, -1.3700, 0.0000],
+                    [-1.1850, -0.6850, 0.0000],
+                    [-1.1850, 0.6850, 0.0000],
+                    [2.1250, 1.2250, 0.0000],
+                    [2.1250, -1.2250, 0.0000],
+                    [0.0000, -2.4500, 0.0000],
+                    [-2.1250, -1.2250, 0.0000],
+                    [-2.1250, 1.2250, 0.0000],
+                ]
+            ),
+            charge=0,
+            multiplicity=1,
+        )
 
     def test_parse_cdxml_atom_colors(self, colored_implicit_proton_cdxml_file):
         """Test that atom colours are parsed correctly from phenol.cdxml.
@@ -2785,6 +2822,85 @@ class TestpKaCDXFile:
             assert a["cdxml_id"] == b["cdxml_id"]
             assert a["color"] == b["color"]
             assert a["symbol"] == b["symbol"]
+
+    def test_pka_molecule(self, single_molecule_xyz_file):
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        h_indices = [i + 1 for i, s in enumerate(mol.symbols) if s == "H"]
+        if not h_indices:
+            pytest.skip("no H")
+        pka = PKaMolecule(molecule=mol, proton_index=h_indices[0])
+        assert pka.proton_index == h_indices[0]
+        with pytest.raises(ValueError):
+            PKaMolecule(molecule=None, proton_index=1)
+        with pytest.raises(ValueError):
+            PKaMolecule(molecule=mol, proton_index=0)
+        clone = PKaMolecule.from_molecule_and_proton_index(
+            mol, proton_index=h_indices[0]
+        )
+        assert isinstance(clone, PKaMolecule)
+
+    def test_pka_non_hydrogen_proton_index(self, single_molecule_xyz_file):
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        c_index = next(i + 1 for i, s in enumerate(mol.symbols) if s == "C")
+        with pytest.raises(ValueError, match="not 'H'"):
+            PKaMolecule(molecule=mol, proton_index=c_index)
+
+    @pytest.mark.parametrize(
+        "kind,formula",
+        [("ammonia", "H3N"), ("pyridine", "C5H5N")],
+    )
+    def test_add_proton_at_nitrogen_increments_charge_and_appends_h(
+        self, kind, formula
+    ):
+        mol = (
+            self._ammonia_molecule()
+            if kind == "ammonia"
+            else self._pyridine_molecule()
+        )
+        assert mol.chemical_formula == formula
+        n_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "N"
+        )
+        original_charge = 0 if mol.charge is None else mol.charge
+        protonated = PKaMolecule.add_proton_at_atom(mol, n_index)
+
+        assert isinstance(protonated, PKaMolecule)
+        assert protonated.proton_index == mol.num_atoms + 1
+        assert protonated.num_atoms == mol.num_atoms + 1
+        assert protonated.chemical_symbols[protonated.proton_index - 1] == "H"
+        assert protonated.charge == original_charge + 1
+        assert protonated.multiplicity == mol.multiplicity
+        np.testing.assert_allclose(protonated.positions[:-1], mol.positions)
+        n_to_h = np.linalg.norm(
+            protonated.positions[protonated.proton_index - 1]
+            - protonated.positions[n_index - 1]
+        )
+        assert np.isclose(n_to_h, 1.01, atol=1e-6)
+
+        recovered = protonated.delete_atoms_by_indices(
+            protonated.proton_index, one_based=True
+        )
+        assert recovered.chemical_formula == mol.chemical_formula
+        assert recovered.num_atoms == mol.num_atoms
+
+    def test_add_proton_at_atom_rejects_hydrogen(self):
+        mol = self._ammonia_molecule()
+        with pytest.raises(ValueError, match="hydrogen"):
+            PKaMolecule.add_proton_at_atom(mol, 2)
+
+    def test_add_proton_at_atom_zero_based_index(self):
+        mol = self._ammonia_molecule()
+        protonated = PKaMolecule.add_proton_at_atom(mol, 0, one_based=False)
+        assert isinstance(protonated, PKaMolecule)
+        assert protonated.chemical_symbols[protonated.proton_index - 1] == "H"
+        assert protonated.charge == 1
+
+    def test_add_proton_at_atom_out_of_range(self):
+        mol = self._ammonia_molecule()
+        with pytest.raises(ValueError, match="out of range"):
+            PKaMolecule.add_proton_at_atom(mol, mol.num_atoms + 1)
 
 
 class TestQMMMMolecule:
@@ -4239,24 +4355,6 @@ H 1.0 0.0 0.0 L
         with pytest.raises(AttributeError):
             _ = bare.chemical_formula
 
-    def test_pka_molecule(self, single_molecule_xyz_file):
-        from chemsmart.io.molecules.structure import PKaMolecule
-
-        mol = Molecule.from_filepath(single_molecule_xyz_file)
-        h_indices = [i + 1 for i, s in enumerate(mol.symbols) if s == "H"]
-        if not h_indices:
-            pytest.skip("no H")
-        pka = PKaMolecule(molecule=mol, proton_index=h_indices[0])
-        assert pka.proton_index == h_indices[0]
-        with pytest.raises(ValueError):
-            PKaMolecule(molecule=None, proton_index=1)
-        with pytest.raises(ValueError):
-            PKaMolecule(molecule=mol, proton_index=0)
-        clone = PKaMolecule.from_molecule_and_proton_index(
-            mol, proton_index=h_indices[0]
-        )
-        assert isinstance(clone, PKaMolecule)
-
     def test_bond_lengths_helper(self):
         co2 = Molecule(
             symbols=["C", "O", "O"],
@@ -4312,12 +4410,6 @@ H 1.0 0.0 0.0 L
             pytest.skip("no vibrational modes")
         displaced = mol.vibrationally_displaced(mode_idx=-1, amp=0.01)
         assert displaced.num_atoms == mol.num_atoms
-
-    def test_pka_non_hydrogen_proton_index(self, single_molecule_xyz_file):
-        mol = Molecule.from_filepath(single_molecule_xyz_file)
-        c_index = next(i + 1 for i, s in enumerate(mol.symbols) if s == "C")
-        with pytest.raises(ValueError, match="not 'H'"):
-            PKaMolecule(molecule=mol, proton_index=c_index)
 
     def test_coordinate_block_symbol_token_fallback(self):
         block = "C1 0.0 0.0 0.0\nH2 1.0 0.0 0.0\n"
