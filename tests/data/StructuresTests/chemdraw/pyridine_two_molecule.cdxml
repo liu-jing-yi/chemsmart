@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE CDXML SYSTEM "http://www.cambridgesoft.com/xml/cdxml.dtd">
+<CDXML BondLength="30" LabelFont="3" CaptionFont="4">
+  <page id="1">
+    <fragment id="2">
+      <n id="3" p="174 215" Element="7" color="4"/>
+      <n id="4" p="200 200" Element="6"/>
+      <n id="5" p="226 215" Element="6"/>
+      <n id="6" p="226 245" Element="6"/>
+      <n id="7" p="200 260" Element="6"/>
+      <n id="8" p="174 245" Element="6"/>
+      <b id="9" B="3" E="4"/>
+      <b id="10" B="4" E="5" Order="2"/>
+      <b id="11" B="5" E="6"/>
+      <b id="12" B="6" E="7" Order="2"/>
+      <b id="13" B="7" E="8"/>
+      <b id="14" B="8" E="3" Order="2"/>
+    </fragment>
+    <fragment id="15">
+      <n id="16" p="374 215" Element="7" color="4"/>
+      <n id="17" p="400 200" Element="6"/>
+      <n id="18" p="426 215" Element="6"/>
+      <n id="19" p="426 245" Element="6"/>
+      <n id="20" p="400 260" Element="6"/>
+      <n id="21" p="374 245" Element="6"/>
+      <b id="22" B="16" E="17"/>
+      <b id="23" B="17" E="18" Order="2"/>
+      <b id="24" B="18" E="19"/>
+      <b id="25" B="19" E="20" Order="2"/>
+      <b id="26" B="20" E="21"/>
+      <b id="27" B="21" E="16" Order="2"/>
+    </fragment>
+  </page>
+</CDXML>

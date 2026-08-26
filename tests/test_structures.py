@@ -2823,6 +2823,96 @@ class TestPKaMolecule:
             assert a["color"] == b["color"]
             assert a["symbol"] == b["symbol"]
 
+    def test_get_colored_basic_atom_index_auto_detect(
+        self, colored_basic_atom_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=colored_basic_atom_cdxml_file)
+        site = cdx_file.get_colored_basic_atom_index()
+        mol = cdx_file.molecules[0]
+        assert mol.chemical_symbols[site - 1] == "N"
+
+    def test_get_colored_basic_atom_index_user_specified(
+        self, two_color_basic_atom_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=two_color_basic_atom_cdxml_file)
+        with pytest.raises(ValueError, match="Multiple uniquely coloured"):
+            cdx_file.get_colored_basic_atom_index()
+        site = cdx_file.get_colored_basic_atom_index(color_code=4)
+        mol = cdx_file.molecules[0]
+        assert mol.chemical_symbols[site - 1] == "N"
+
+    def test_get_colored_basic_atom_index_no_unique_color_raises(
+        self, uncolored_pyridine_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=uncolored_pyridine_cdxml_file)
+        with pytest.raises(ValueError, match="same colour"):
+            cdx_file.get_colored_basic_atom_index()
+
+    def test_get_colored_basic_atom_index_colored_hydrogen_raises(
+        self, colored_proton_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=colored_proton_cdxml_file)
+        with pytest.raises(ValueError, match="colour the basic"):
+            cdx_file.get_colored_basic_atom_index()
+
+    def test_detect_basic_atom_in_fragment(
+        self, colored_basic_atom_two_molecule_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(
+            filename=colored_basic_atom_two_molecule_cdxml_file
+        )
+        fragments = cdx_file.parse_cdxml_fragment_colors()
+        assert len(fragments) == 2
+        for frag_idx, frag_atoms in enumerate(fragments):
+            detection = cdx_file._detect_basic_atom_in_fragment(
+                frag_atoms, fragment_index=frag_idx + 1
+            )
+            assert detection["type"] == "heavy"
+            assert detection["atom"]["symbol"] == "N"
+
+    def test_detect_basic_atom_in_fragment_uniform_color_raises(
+        self, uncolored_pyridine_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=uncolored_pyridine_cdxml_file)
+        fragments = cdx_file.parse_cdxml_fragment_colors()
+        with pytest.raises(ValueError, match="same colour"):
+            cdx_file._detect_basic_atom_in_fragment(
+                fragments[0], fragment_index=1
+            )
+
+    def test_get_pkb_molecules_auto_single_fragment(
+        self, colored_basic_atom_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=colored_basic_atom_cdxml_file)
+        mol = cdx_file.molecules[0]
+        pkb_mols = cdx_file.get_pkb_molecules_auto()
+        assert len(pkb_mols) == 1
+        pkb_mol = pkb_mols[0]
+        assert isinstance(pkb_mol, PKaMolecule)
+        assert pkb_mol.num_atoms == mol.num_atoms + 1
+        assert pkb_mol.charge == (0 if mol.charge is None else mol.charge) + 1
+        assert pkb_mol.chemical_symbols[pkb_mol.proton_index - 1] == "H"
+
+    def test_get_pkb_molecules_auto_two_fragments(
+        self, colored_basic_atom_two_molecule_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(
+            filename=colored_basic_atom_two_molecule_cdxml_file
+        )
+        pkb_mols = cdx_file.get_pkb_molecules_auto()
+        assert len(pkb_mols) == 2
+        for pkb_mol in pkb_mols:
+            assert isinstance(pkb_mol, PKaMolecule)
+            assert pkb_mol.chemical_symbols[pkb_mol.proton_index - 1] == "H"
+            assert pkb_mol.charge == 1
+
+    def test_get_pkb_molecules_auto_colored_hydrogen_raises(
+        self, colored_proton_cdxml_file
+    ):
+        cdx_file = PKaCDXFile(filename=colored_proton_cdxml_file)
+        with pytest.raises(ValueError, match="colour the basic"):
+            cdx_file.get_pkb_molecules_auto()
+
     def test_pka_molecule(self, single_molecule_xyz_file):
         mol = Molecule.from_filepath(single_molecule_xyz_file)
         h_indices = [i + 1 for i, s in enumerate(mol.symbols) if s == "H"]

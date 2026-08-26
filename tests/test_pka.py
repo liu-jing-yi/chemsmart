@@ -1849,6 +1849,100 @@ class TestPKa:
         assert mol.chemical_symbols[site - 1] == "N"
         assert site == resolve_ionizable_site(mol, mode="base")
 
+    def test_resolve_proton_index_cdxml_pkb_colored_n(
+        self, colored_basic_atom_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+        from chemsmart.io.molecules.structure import Molecule
+
+        site, molecules = resolve_proton_index(
+            colored_basic_atom_cdxml_file, None, None, mode="base"
+        )
+        mol = Molecule.from_filepath(colored_basic_atom_cdxml_file)
+        assert molecules is None
+        assert mol.chemical_symbols[site - 1] == "N"
+
+    def test_resolve_proton_index_cdxml_pkb_color_code(
+        self, two_color_basic_atom_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+        from chemsmart.io.molecules.structure import Molecule
+
+        with pytest.raises(ValueError, match="Multiple uniquely coloured"):
+            resolve_proton_index(
+                two_color_basic_atom_cdxml_file, None, None, mode="base"
+            )
+        site, molecules = resolve_proton_index(
+            two_color_basic_atom_cdxml_file, None, 4, mode="base"
+        )
+        mol = Molecule.from_filepath(two_color_basic_atom_cdxml_file)
+        assert molecules is None
+        assert mol.chemical_symbols[site - 1] == "N"
+
+    def test_resolve_proton_index_cdxml_pkb_colored_h_errors(
+        self, colored_proton_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+
+        with pytest.raises(ValueError, match="colour the basic"):
+            resolve_proton_index(
+                colored_proton_cdxml_file, None, None, mode="base"
+            )
+
+    def test_resolve_proton_index_uncolored_cdxml_falls_through_to_pka_smarts(
+        self, single_molecule_cdxml_file_benzene
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+
+        with pytest.raises(ValueError, match="SMARTS matches"):
+            resolve_proton_index(
+                single_molecule_cdxml_file_benzene, None, None, mode="acid"
+            )
+
+    def test_resolve_proton_index_uncolored_cdxml_falls_through_to_pkb_smarts(
+        self, uncolored_pyridine_cdxml_file
+    ):
+        from chemsmart.cli.pka import (
+            resolve_ionizable_site,
+            resolve_proton_index,
+        )
+        from chemsmart.io.molecules.structure import Molecule
+
+        site, molecules = resolve_proton_index(
+            uncolored_pyridine_cdxml_file, None, None, mode="base"
+        )
+        mol = Molecule.from_filepath(uncolored_pyridine_cdxml_file)
+        assert molecules is None
+        assert mol.chemical_symbols[site - 1] == "N"
+        assert site == resolve_ionizable_site(mol, mode="base")
+
+    def test_resolve_proton_index_cdxml_pkb_two_fragments(
+        self, colored_basic_atom_two_molecule_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+
+        site, molecules = resolve_proton_index(
+            colored_basic_atom_two_molecule_cdxml_file,
+            None,
+            None,
+            mode="base",
+        )
+        assert site is None
+        assert len(molecules) == 2
+        for mol in molecules:
+            assert mol.chemical_symbols[mol.proton_index - 1] == "N"
+
+    def test_resolve_proton_index_pka_colour_still_wins_over_smarts(
+        self, colored_proton_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_proton_index
+
+        proton_index, molecules = resolve_proton_index(
+            colored_proton_cdxml_file, None, None, mode="acid"
+        )
+        assert molecules is None
+        assert proton_index == 8
+
     def test_prepare_pkb_submit_molecule_protonates_and_increments_charge(
         self,
     ):
@@ -1899,6 +1993,16 @@ class TestPKa:
         assert proton_index == 8
         assert isinstance(molecule, PKaMolecule)
         assert molecule.proton_index == 8
+
+    def test_resolve_pka_batch_row_pkb_auto_detects_coloured_n(
+        self, colored_basic_atom_cdxml_file
+    ):
+        from chemsmart.cli.pka import resolve_pka_batch_row
+
+        site, molecule = resolve_pka_batch_row(
+            colored_basic_atom_cdxml_file, proton_index=None, pkb=True
+        )
+        assert molecule.chemical_symbols[site - 1] == "N"
 
     def test_resolve_pka_batch_row_explicit_index_overrides_cdxml(
         self, colored_proton_cdxml_file
@@ -2026,6 +2130,127 @@ class TestPKa:
         assert job.molecule.charge == 1
         assert job.protonated_job.settings.charge == 1
         assert job.conjugate_base_job.settings.charge == 0
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pkb_cdxml_colored_n_without_pi(
+        self, tmp_path, monkeypatch, backend, colored_basic_atom_cdxml_file
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        mol = Molecule.from_filepath(colored_basic_atom_cdxml_file)
+        n_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "N"
+        )
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                colored_basic_atom_cdxml_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "--pkb",
+                "-s",
+                "direct",
+                "submit",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.settings.pkb is True
+        assert job.settings.charge == 1
+        assert job.molecule.num_atoms == mol.num_atoms + 1
+        assert job.settings.proton_index == job.molecule.num_atoms
+        assert job.molecule.chemical_symbols[
+            job.settings.proton_index - 1
+        ] == ("H")
+        assert mol.chemical_symbols[n_index - 1] == "N"
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pkb_uncolored_cdxml_falls_through_to_smarts(
+        self, tmp_path, monkeypatch, backend, uncolored_pyridine_cdxml_file
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        mol = Molecule.from_filepath(uncolored_pyridine_cdxml_file)
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                uncolored_pyridine_cdxml_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "--pkb",
+                "-s",
+                "direct",
+                "submit",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.settings.pkb is True
+        assert job.settings.charge == 1
+        assert job.molecule.num_atoms == mol.num_atoms + 1
+        assert job.molecule.chemical_symbols[
+            job.settings.proton_index - 1
+        ] == ("H")
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pkb_cdxml_batch_per_fragment(
+        self,
+        tmp_path,
+        monkeypatch,
+        backend,
+        colored_basic_atom_two_molecule_cdxml_file,
+    ):
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                colored_basic_atom_two_molecule_cdxml_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "--pkb",
+                "-s",
+                "direct",
+                "batch",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 2
+        for job in jobs:
+            assert job.settings.pkb is True
+            assert job.settings.charge == 1
+            assert job.molecule.chemical_symbols[
+                job.settings.proton_index - 1
+            ] == ("H")
+            assert job._batch_entry["proton_index"] is not None
+            assert (
+                job.molecule.chemical_symbols[
+                    job._batch_entry["proton_index"] - 1
+                ]
+                == "N"
+            )
+            assert job._batch_entry["charge"] == 0
+            assert "_frag" in job.label
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_sub_pkb_batch_table_uses_basic_atom_index(

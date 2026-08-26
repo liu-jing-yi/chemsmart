@@ -2086,6 +2086,26 @@ def pka_scale_cdxml_file(chemdraw_directory):
 
 
 @pytest.fixture()
+def colored_basic_atom_cdxml_file(chemdraw_directory):
+    return os.path.join(chemdraw_directory, "pyridine.cdxml")
+
+
+@pytest.fixture()
+def uncolored_pyridine_cdxml_file(chemdraw_directory):
+    return os.path.join(chemdraw_directory, "pyridine_uncolored.cdxml")
+
+
+@pytest.fixture()
+def two_color_basic_atom_cdxml_file(chemdraw_directory):
+    return os.path.join(chemdraw_directory, "pyridine_two_colors.cdxml")
+
+
+@pytest.fixture()
+def colored_basic_atom_two_molecule_cdxml_file(chemdraw_directory):
+    return os.path.join(chemdraw_directory, "pyridine_two_molecule.cdxml")
+
+
+@pytest.fixture()
 def utils_test_directory(test_data_directory):
     return os.path.join(test_data_directory, "YAMLTests")
 

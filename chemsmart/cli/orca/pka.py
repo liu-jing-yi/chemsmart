@@ -487,7 +487,11 @@ def _create_orca_pka_jobs_from_molecules(
         job._batch_entry = {
             "filepath": str(filename),
             "proton_index": pka_mol.proton_index,
-            "charge": int(pka_settings.charge),
+            "charge": (
+                int(pka_mol.charge)
+                if pka_mol.charge is not None
+                else int(pka_settings.charge)
+            ),
             "multiplicity": int(pka_settings.multiplicity),
             "scheme": shared["scheme"],
             "fragment_index": idx,

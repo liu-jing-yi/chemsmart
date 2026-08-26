@@ -923,6 +923,26 @@ def _resolve_site_from_molecule_file(filename, mode):
     return resolve_ionizable_site(molecule, mode=mode), None
 
 
+def _resolve_cdxml_smarts_sites(filename, mode):
+    """Resolve a unique SMARTS site for each CDXML fragment."""
+    from chemsmart.io.file import PKaCDXFile
+
+    molecules = list(PKaCDXFile(filename).molecules)
+    if not molecules:
+        raise ValueError(
+            f"Could not read a molecule from {filename}. "
+            "Specify -pi/--proton-index or -cc/--color-code."
+        )
+    prepared = []
+    for molecule in molecules:
+        site = resolve_ionizable_site(molecule, mode=mode)
+        molecule.proton_index = site
+        prepared.append(molecule)
+    if len(prepared) > 1:
+        return None, prepared
+    return prepared[0].proton_index, None
+
+
 def resolve_proton_index(filename, proton_index, color_code=None, mode="acid"):
     """Resolve the ionizable site for pKa or ``--pkb`` submission.
 
@@ -964,11 +984,13 @@ def resolve_proton_index(filename, proton_index, color_code=None, mode="acid"):
         from chemsmart.io.file import PKaCDXFile
 
         try:
-            return PKaCDXFile(filename)._resolve_proton_from_cdxml(color_code)
+            return PKaCDXFile(filename)._resolve_proton_from_cdxml(
+                color_code, mode=mode
+            )
         except ValueError as exc:
             if color_code is not None or not _cdxml_has_no_colour_markup(exc):
                 raise
-            return _resolve_site_from_molecule_file(filename, mode)
+            return _resolve_cdxml_smarts_sites(filename, mode)
 
     if color_code is not None:
         raise ValueError(
@@ -1142,6 +1164,24 @@ def resolve_pka_batch_row(
                 "blank."
             )
         return resolve_ionizable_site(molecule, mode=mode), molecule
+
+    if pkb:
+        site, molecules = resolve_proton_index(
+            filepath, None, color_code, mode="base"
+        )
+        if molecules is not None:
+            if len(molecules) != 1:
+                raise ValueError(
+                    f"CDXML file {filepath} contains {len(molecules)} "
+                    "molecules. Submission-table rows support "
+                    "single-molecule CDXML files only. Pass a "
+                    "multi-molecule CDXML file directly as -f with pka batch."
+                )
+            return molecules[0].proton_index, molecules[0]
+        molecule = Molecule.from_filepath(filepath)
+        if molecule is None:
+            raise ValueError(f"Could not read a molecule from {filepath}.")
+        return site, molecule
 
     cdx_file = PKaCDXFile(filepath)
     try:

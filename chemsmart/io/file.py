@@ -27,6 +27,22 @@ def _find_element_parent(root, target):
     return None
 
 
+def _cdxml_atom_color_counts(atoms):
+    """Return colour-table counts for node colours and implicit-H spans."""
+    colors = []
+    for atom in atoms:
+        colors.append(atom["color"])
+        if atom["implicit_h_color"] is not None:
+            colors.append(atom["implicit_h_color"])
+    return Counter(colors)
+
+
+_PKB_COLORED_HYDROGEN_ERROR = (
+    "Uniquely coloured atom is hydrogen. With --pkb, colour the basic "
+    "heavy atom to protonate, or drop --pkb and run pKa."
+)
+
+
 class SDFFile(FileMixin):
     """
     SDF file object.
@@ -535,21 +551,56 @@ class PKaCDXFile(CDXFile):
     ionizable sites and their associated protons can be identified reliably.
     """
 
-    def _resolve_proton_from_cdxml(self, color_code=None):
-        """Auto-detect proton index from CDX/CDXML colour markup.
+    def _resolve_proton_from_cdxml(self, color_code=None, mode="acid"):
+        """Auto-detect the ionizable site from CDX/CDXML colour markup.
 
         Args:
             color_code: CDXML color-table index used for auto-detection.
+            mode: ``"acid"`` (coloured hydrogen) or ``"base"`` (coloured
+                heavy atom to protonate).
 
         Returns:
             tuple[int | None, list | None]:
-                - Proton index when a single molecule is resolved.
+                - Site index when a single molecule is resolved.
                 - ``None`` for the index with a list of per-fragment molecules
                   when multiple molecules are detected.
 
         Raises:
             ValueError: If CDXML colour parsing fails.
         """
+        if mode == "base":
+            try:
+                pairs = list(
+                    self._iter_colored_sites(
+                        color_code=color_code, mode="base"
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "Could not auto-detect basic atom from CDXML colour: "
+                    f"{exc}\n"
+                    "Use -pi/--proton-index to specify the atom explicitly."
+                ) from exc
+            if len(pairs) > 1:
+                mols = []
+                for mol, site in pairs:
+                    mol.proton_index = site
+                    mols.append(mol)
+                logger.info(
+                    "Detected %s molecules with per-fragment basic-atom "
+                    "auto-detection in %s.",
+                    len(mols),
+                    self.filename,
+                )
+                return None, mols
+            site = pairs[0][1]
+            logger.info(
+                "Detected basic atom index %s from CDXML colour in %s.",
+                site,
+                self.filename,
+            )
+            return site, None
+
         try:
             pka_mols = self.get_pka_molecules(
                 color_code=color_code, index=":", return_list=True
@@ -822,8 +873,8 @@ class PKaCDXFile(CDXFile):
         )
         return proton_index
 
-    def get_colored_proton_index(self, color_code=None):
-        """Identify the 1-based atom index of a proton marked by colour.
+    def get_colored_proton_index(self, color_code=None, mode="acid"):
+        """Identify the 1-based atom index of a site marked by colour.
 
         Supports two kinds of coloured protons:
 
@@ -847,14 +898,17 @@ class PKaCDXFile(CDXFile):
         Args:
             color_code (int | None): Colour-table index to look for.
                 ``None`` triggers automatic detection.
+            mode: ``"acid"`` (default) returns the uniquely coloured
+                hydrogen. ``"base"`` returns the uniquely coloured
+                heavy atom to protonate.
 
         Returns:
-            int: 1-based index of the hydrogen atom in the Molecule
+            int: 1-based index of the marked atom in the Molecule
                 produced by ``CDXFile.get_molecules`` (i.e. after
                 ``Chem.AddHs`` and 3-D embedding).
 
         Raises:
-            ValueError: When the proton cannot be identified unambiguously.
+            ValueError: When the site cannot be identified unambiguously.
         """
         atoms = self.parse_cdxml_element_colors()
 
@@ -862,13 +916,45 @@ class PKaCDXFile(CDXFile):
             raise ValueError(f"No atoms found in CDXML file: {self.filename}")
 
         if color_code is not None:
-            return self._proton_index_by_color(atoms, color_code)
-        return self._proton_index_auto(atoms)
+            return self._proton_index_by_color(atoms, color_code, mode=mode)
+        return self._proton_index_auto(atoms, mode=mode)
 
     # ----- private helpers for get_colored_proton_index -----
 
-    def _proton_index_by_color(self, atoms, color_code):
-        """Return the 1-based proton index for a user-specified colour."""
+    def _proton_index_by_color(self, atoms, color_code, mode="acid"):
+        """Return the 1-based site index for a user-specified colour."""
+        if mode == "base":
+            heavy = [
+                (i, a)
+                for i, a in enumerate(atoms)
+                if a["color"] == color_code and a["symbol"] != "H"
+            ]
+            if len(heavy) == 1:
+                idx, atom = heavy[0]
+                site = idx + 1
+                logger.info(
+                    f"User-specified colour: basic atom at 1-based index "
+                    f"{site} (CDXML id={atom['cdxml_id']}, "
+                    f"symbol={atom['symbol']}, color={color_code})."
+                )
+                return site
+            if len(heavy) > 1:
+                raise ValueError(
+                    f"Multiple heavy atoms ({len(heavy)}) have "
+                    f"color code {color_code}."
+                )
+            hydrogenish = [
+                a
+                for a in atoms
+                if a["color"] == color_code and a["symbol"] == "H"
+            ] or [a for a in atoms if a["implicit_h_color"] == color_code]
+            if hydrogenish:
+                raise ValueError(_PKB_COLORED_HYDROGEN_ERROR)
+            raise ValueError(
+                f"No atoms with color code {color_code} found in "
+                f"{self.filename}."
+            )
+
         # Case 1: explicit H node with that colour
         explicit_h = [
             (i, a)
@@ -919,21 +1005,18 @@ class PKaCDXFile(CDXFile):
         cdxml_idx, atom = fg_matches[0]
         return self._resolve_implicit_h_index(atoms, cdxml_idx, atom)
 
-    def _proton_index_auto(self, atoms):
-        """Auto-detect the uniquely coloured proton."""
+    def _proton_index_auto(self, atoms, mode="acid"):
+        """Auto-detect the uniquely coloured acid or base site."""
         # Gather *all* colours that appear – both node colours and
         # implicit-H span colours.
-        all_colors = []
-        for a in atoms:
-            all_colors.append(a["color"])
-            if a["implicit_h_color"] is not None:
-                all_colors.append(a["implicit_h_color"])
-
-        color_counts = Counter(all_colors)
+        color_counts = _cdxml_atom_color_counts(atoms)
+        kind = (
+            "basic atom to protonate" if mode == "base" else "proton to remove"
+        )
         if len(color_counts) < 2:
             raise ValueError(
                 "All atoms in the CDXML file share the same colour. "
-                "Cannot auto-detect the proton to remove. "
+                f"Cannot auto-detect the {kind}. "
                 "Use -cl/--color-code to specify the colour explicitly, "
                 "or use -pi/--proton-index."
             )
@@ -955,6 +1038,34 @@ class PKaCDXFile(CDXFile):
             if a["implicit_h_color"] is not None
             and a["implicit_h_color"] != majority_color
         ]
+        unique_heavy = [
+            (i, a)
+            for i, a in enumerate(atoms)
+            if a["symbol"] != "H" and a["color"] != majority_color
+        ]
+
+        if mode == "base":
+            if len(unique_heavy) == 1 and not explicit_h and not fg_h:
+                idx, atom = unique_heavy[0]
+                site = idx + 1
+                logger.info(
+                    f"Auto-detected basic atom at 1-based index "
+                    f"{site} (CDXML id={atom['cdxml_id']}, "
+                    f"symbol={atom['symbol']}, color={atom['color']})."
+                )
+                return site
+            if len(unique_heavy) > 1:
+                raise ValueError(
+                    f"Multiple uniquely coloured heavy atoms found "
+                    f"({len(unique_heavy)}). Cannot determine which atom "
+                    f"to protonate. Use -cc/--color-code or "
+                    f"-pi/--proton-index to specify explicitly."
+                )
+            if explicit_h or fg_h:
+                raise ValueError(_PKB_COLORED_HYDROGEN_ERROR)
+            raise ValueError(
+                "No uniquely coloured atom found in the CDXML file."
+            )
 
         total_candidates = len(explicit_h) + len(fg_h)
 
@@ -1036,6 +1147,16 @@ class PKaCDXFile(CDXFile):
         raise ValueError(
             f"No hydrogen bonded to {atom['symbol']} "
             f"(CDXML id={atom['cdxml_id']}) after AddHs."
+        )
+
+    def get_colored_basic_atom_index(self, color_code=None):
+        """Identify the 1-based index of a heavy atom marked by colour.
+
+        Thin wrapper around :meth:`get_colored_proton_index` with
+        ``mode="base"``.
+        """
+        return self.get_colored_proton_index(
+            color_code=color_code, mode="base"
         )
 
     # ------------------------------------------------------------------
@@ -1155,8 +1276,10 @@ class PKaCDXFile(CDXFile):
 
         return fragments_atoms
 
-    def _detect_proton_in_fragment(self, atoms, fragment_index=None):
-        """Auto-detect the uniquely coloured proton within a single fragment.
+    def _detect_proton_in_fragment(
+        self, atoms, fragment_index=None, mode="acid"
+    ):
+        """Auto-detect the uniquely coloured site within a single fragment.
 
         The logic mirrors :meth:`_proton_index_auto` but operates on a
         fragment-local atom list and returns a **fragment-local** 0-based
@@ -1171,16 +1294,18 @@ class PKaCDXFile(CDXFile):
             atoms: List of atom dicts for one fragment (from
                 :meth:`parse_cdxml_fragment_colors`).
             fragment_index: Optional fragment number for error messages.
+            mode: ``"acid"`` (coloured hydrogen) or ``"base"`` (coloured
+                heavy atom).
 
         Returns:
             dict: With keys:
-                * ``type`` – ``"explicit"`` or ``"implicit"``
+                * ``type`` – ``"explicit"``, ``"implicit"``, or ``"heavy"``
                 * ``local_idx`` – 0-based position in the fragment's
                   atom list (before ``AddHs``)
                 * ``atom`` – the atom dict
 
         Raises:
-            ValueError: When the proton cannot be identified.
+            ValueError: When the site cannot be identified.
         """
         frag_info = (
             f" (fragment {fragment_index})"
@@ -1188,17 +1313,14 @@ class PKaCDXFile(CDXFile):
             else ""
         )
 
-        all_colors = []
-        for a in atoms:
-            all_colors.append(a["color"])
-            if a["implicit_h_color"] is not None:
-                all_colors.append(a["implicit_h_color"])
-
-        color_counts = Counter(all_colors)
+        color_counts = _cdxml_atom_color_counts(atoms)
+        kind = (
+            "basic atom to protonate" if mode == "base" else "proton to remove"
+        )
         if len(color_counts) < 2:
             raise ValueError(
                 f"All atoms in fragment{frag_info} share the same colour. "
-                "Cannot auto-detect the proton to remove."
+                f"Cannot auto-detect the {kind}."
             )
 
         majority_color = color_counts.most_common(1)[0][0]
@@ -1217,6 +1339,27 @@ class PKaCDXFile(CDXFile):
             and a["implicit_h_color"] is not None
             and a["implicit_h_color"] != majority_color
         ]
+        unique_heavy = [
+            (i, a)
+            for i, a in enumerate(atoms)
+            if a["symbol"] != "H" and a["color"] != majority_color
+        ]
+
+        if mode == "base":
+            if len(unique_heavy) == 1 and not explicit_h and not fg_h:
+                idx, atom = unique_heavy[0]
+                return {"type": "heavy", "local_idx": idx, "atom": atom}
+            if len(unique_heavy) > 1:
+                raise ValueError(
+                    f"Multiple uniquely coloured heavy atoms "
+                    f"({len(unique_heavy)}) in fragment{frag_info}. "
+                    f"Cannot determine which atom to protonate."
+                )
+            if explicit_h or fg_h:
+                raise ValueError(_PKB_COLORED_HYDROGEN_ERROR)
+            raise ValueError(
+                f"No uniquely coloured atom found in fragment{frag_info}."
+            )
 
         total = len(explicit_h) + len(fg_h)
 
@@ -1246,105 +1389,135 @@ class PKaCDXFile(CDXFile):
         idx, atom = fg_h[0]
         return {"type": "implicit", "local_idx": idx, "atom": atom}
 
-    def get_pka_molecules_auto(self):
-        """Per-fragment proton auto-detection → list of PKaMolecule.
+    def _detect_basic_atom_in_fragment(self, atoms, fragment_index=None):
+        """Thin wrapper around :meth:`_detect_proton_in_fragment` for ``--pkb``."""
+        return self._detect_proton_in_fragment(
+            atoms, fragment_index=fragment_index, mode="base"
+        )
 
-        For each top-level ``<fragment>`` in the CDXML file:
-
-        1. Parse atom colours within that fragment.
-        2. Identify the dominant colour of the fragment.
-        3. Find the uniquely coloured hydrogen (explicit or
-           functional-group implicit).
-        4. Map the proton back to the 1-based index in the
-           ``Molecule`` produced after ``Chem.AddHs`` + embedding.
-        5. Wrap the molecule as a :class:`PKaMolecule`.
-
-        Falls back to :meth:`get_colored_proton_index` (file-global
-        detection) if per-fragment parsing produces only one fragment.
-
-        Returns:
-            list[PKaMolecule]: One ``PKaMolecule`` per fragment with
-                the per-fragment ``proton_index`` attached.
-
-        Raises:
-            ValueError: If detection fails for any fragment.
-        """
+    def _rdkit_mols_with_hs(self):
+        """Return RDKit molecules from this file after ``Chem.AddHs``."""
         from rdkit import Chem
 
-        from chemsmart.io.molecules.structure import PKaMolecule
+        rdkit_mols = list(
+            Chem.MolsFromCDXMLFile(self.filename, removeHs=False)
+        )
+        result = []
+        for rdkit_mol in rdkit_mols:
+            if rdkit_mol is not None:
+                result.append(Chem.AddHs(rdkit_mol))
+            else:
+                result.append(None)
+        return result
+
+    def _site_index_from_fragment_detection(
+        self, detection, rdkit_mol_h, fragment_index
+    ):
+        """Map a fragment colour detection to a 1-based Molecule index."""
+        if rdkit_mol_h is None:
+            raise ValueError(
+                f"RDKit molecule for fragment {fragment_index} is "
+                f"None; cannot resolve site index."
+            )
+        if detection["type"] != "implicit":
+            heavy_idx = self._rdkit_atom_idx_by_cdxml_id(
+                rdkit_mol_h, detection["atom"]["cdxml_id"]
+            )
+            if heavy_idx is None:
+                heavy_idx = detection["local_idx"]
+            return heavy_idx + 1
+        heavy_idx = self._rdkit_heavy_idx_for_implicit_h(
+            rdkit_mol_h,
+            detection["atom"],
+            local_idx=detection["local_idx"],
+        )
+        if heavy_idx is None:
+            raise ValueError(
+                f"No hydrogen bonded to "
+                f"{detection['atom']['symbol']} "
+                f"(CDXML id={detection['atom']['cdxml_id']}) "
+                f"in fragment {fragment_index} after AddHs."
+            )
+        return self._proton_index_from_rdkit_heavy(
+            rdkit_mol_h, heavy_idx, detection["atom"]
+        )
+
+    def _iter_colored_sites(self, color_code=None, mode="acid"):
+        """Yield ``(molecule, 1-based site index)`` for each CDXML fragment."""
+        molecules = list(self.molecules)
+        if color_code is not None:
+            site = self.get_colored_proton_index(
+                color_code=color_code, mode=mode
+            )
+            for mol in molecules:
+                yield mol, site
+            return
 
         fragments_atoms = self.parse_cdxml_fragment_colors()
-        molecules = self.molecules  # list[Molecule], one per fragment
-
         if len(fragments_atoms) != len(molecules):
             logger.warning(
                 f"Fragment count ({len(fragments_atoms)}) differs from "
                 f"molecule count ({len(molecules)}). Falling back to "
-                f"global proton detection."
+                f"global colour detection."
             )
-            proton_index = self.get_colored_proton_index()
-            return [
-                PKaMolecule(molecule=mol, proton_index=proton_index)
-                for mol in molecules
-            ]
+            site = self.get_colored_proton_index(mode=mode)
+            for mol in molecules:
+                yield mol, site
+            return
 
-        # Read RDKit mols once for implicit-H resolution
-        rdkit_mols = list(
-            Chem.MolsFromCDXMLFile(self.filename, removeHs=False)
-        )
-        rdkit_mols_h = []
-        for rm in rdkit_mols:
-            if rm is not None:
-                rdkit_mols_h.append(Chem.AddHs(rm))
-            else:
-                rdkit_mols_h.append(None)
-
-        pka_molecules = []
+        rdkit_mols_h = self._rdkit_mols_with_hs()
         for frag_idx, (frag_atoms, mol, rdkit_mol_h) in enumerate(
             zip(fragments_atoms, molecules, rdkit_mols_h)
         ):
             detection = self._detect_proton_in_fragment(
-                frag_atoms, fragment_index=frag_idx + 1
+                frag_atoms, fragment_index=frag_idx + 1, mode=mode
             )
-
-            if rdkit_mol_h is None:
-                raise ValueError(
-                    f"RDKit molecule for fragment {frag_idx + 1} is "
-                    f"None; cannot resolve proton index."
-                )
-
-            if detection["type"] == "explicit":
-                heavy_idx = self._rdkit_atom_idx_by_cdxml_id(
-                    rdkit_mol_h, detection["atom"]["cdxml_id"]
-                )
-                if heavy_idx is None:
-                    heavy_idx = detection["local_idx"]
-                proton_index = heavy_idx + 1
-            else:
-                heavy_idx = self._rdkit_heavy_idx_for_implicit_h(
-                    rdkit_mol_h,
-                    detection["atom"],
-                    local_idx=detection["local_idx"],
-                )
-                if heavy_idx is None:
-                    raise ValueError(
-                        f"No hydrogen bonded to "
-                        f"{detection['atom']['symbol']} "
-                        f"(CDXML id={detection['atom']['cdxml_id']}) "
-                        f"in fragment {frag_idx + 1} after AddHs."
-                    )
-                proton_index = self._proton_index_from_rdkit_heavy(
-                    rdkit_mol_h, heavy_idx, detection["atom"]
-                )
-
+            site = self._site_index_from_fragment_detection(
+                detection, rdkit_mol_h, frag_idx + 1
+            )
             logger.info(
-                f"Fragment {frag_idx + 1}: detected proton at 1-based "
-                f"index {proton_index} "
+                f"Fragment {frag_idx + 1}: detected site at 1-based "
+                f"index {site} "
                 f"(type={detection['type']}, "
                 f"cdxml_id={detection['atom']['cdxml_id']})."
             )
-            pka_molecules.append(
-                PKaMolecule(molecule=mol, proton_index=proton_index)
-            )
+            yield mol, site
 
-        return pka_molecules
+    def get_pka_molecules_auto(self, mode="acid"):
+        """Per-fragment colour auto-detection → list of PKaMolecule.
+
+        For each top-level ``<fragment>`` in the CDXML file:
+
+        1. Parse atom colours within that fragment.
+        2. Identify the uniquely coloured site (acidic H, or with
+           ``mode="base"`` the heavy atom to protonate).
+        3. Map the site to the 1-based index in the ``Molecule``
+           produced after ``Chem.AddHs`` + embedding.
+        4. Wrap as a :class:`PKaMolecule`. For ``mode="base"`` the
+           molecule is protonated first so ``proton_index`` is the
+           added hydrogen.
+
+        Falls back to :meth:`get_colored_proton_index` if per-fragment
+        parsing produces a fragment/molecule count mismatch.
+
+        Returns:
+            list[PKaMolecule]: One ``PKaMolecule`` per fragment.
+
+        Raises:
+            ValueError: If detection fails for any fragment.
+        """
+        from chemsmart.io.molecules.structure import PKaMolecule
+
+        if mode == "base":
+            return [
+                PKaMolecule.add_proton_at_atom(mol, site)
+                for mol, site in self._iter_colored_sites(mode="base")
+            ]
+        return [
+            PKaMolecule(molecule=mol, proton_index=site)
+            for mol, site in self._iter_colored_sites(mode="acid")
+        ]
+
+    def get_pkb_molecules_auto(self):
+        """Per-fragment basic-atom auto-detection → protonated PKaMolecules."""
+        return self.get_pka_molecules_auto(mode="base")
