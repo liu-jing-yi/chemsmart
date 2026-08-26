@@ -3941,6 +3941,9 @@ class ORCApKaOutput(ORCAOutput):
         entropy_method="grimme",
         scheme="proton exchange",
         delta_G_proton=None,
+        pkb=False,
+        pks=None,
+        solvent_id=None,
     ):
         """Print formatted pKa summary."""
         from chemsmart.cli.pka import print_pka_summary as _print_pka_summary
@@ -3963,4 +3966,7 @@ class ORCApKaOutput(ORCAOutput):
             entropy_method=entropy_method,
             scheme=scheme,
             delta_G_proton=delta_G_proton,
+            pkb=pkb,
+            pks=pks,
+            solvent_id=solvent_id,
         )

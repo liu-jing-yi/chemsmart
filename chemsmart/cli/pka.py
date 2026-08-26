@@ -131,6 +131,7 @@ KELLY_PROTON_SOLVATION_FREE_ENERGY_KCAL_MOL = -265.9
 # Sackur–Tetrode / JANAF S°(H+, 1 atm).
 PROTON_GAS_STANDARD_ENTROPY_CAL_MOL_K = 26.016
 _AQUEOUS_SOLVENT_IDS = frozenset({"water", "h2o"})
+DEFAULT_PKS = 14.0
 
 
 def aqueous_proton_solution_free_energy_kcal_mol(
@@ -173,6 +174,39 @@ def warn_if_non_aqueous_direct_proton_default(
         "Computed default G_soln(H+) is for aqueous water; "
         "solvent_id=%r is not water. Pass -dG/--delta-g-proton for a "
         "literature non-aqueous G_soln(H+) value.",
+        solvent_id,
+    )
+
+
+def pks_to_pkb(pka, pks):
+    """Return pKb = pKs − pKa."""
+    return pks - pka
+
+
+def resolve_pkb_reporting(pkb=False, pks=None):
+    """Return ``(report_pkb, pks, pks_defaulted)`` for pKb conversion.
+
+    Reporting is enabled when ``pkb`` is true or ``pks`` is supplied.
+    If reporting is enabled and ``pks`` is omitted, ``DEFAULT_PKS`` is used.
+    """
+    report = bool(pkb) or pks is not None
+    if not report:
+        return False, None, False
+    if pks is None:
+        return True, DEFAULT_PKS, True
+    return True, pks, False
+
+
+def warn_if_default_pks_non_aqueous(pks_defaulted, solvent_id):
+    """Warn if default aqueous pKs=14 is used with a non-water solvent."""
+    if not pks_defaulted or solvent_id is None:
+        return
+    if str(solvent_id).strip().lower() in _AQUEOUS_SOLVENT_IDS:
+        return
+    logger.warning(
+        "Default pKs = 14.0 is for aqueous water; "
+        "solvent_id=%r is not water. Pass --pks for a literature "
+        "non-aqueous autoprotolysis constant.",
         solvent_id,
     )
 
@@ -424,6 +458,22 @@ def compute_pka_thermochemistry(
     return results
 
 
+def _print_computed_pka_pkb(pka, pkb=False, pks=None, solvent_id=None):
+    """Print the computed pKa line and optional pKb conversion lines."""
+    report_pkb, pks_value, pks_defaulted = resolve_pkb_reporting(
+        pkb=pkb, pks=pks
+    )
+    warn_if_default_pks_non_aqueous(pks_defaulted, solvent_id)
+    if report_pkb:
+        source = "default aqueous" if pks_defaulted else "user-supplied"
+        print(f"  pKs = {pks_value:.2f} ({source})")
+        print()
+        print(f"  *** Computed pKa(HA) = {pka:.2f} ***")
+        print(f"  *** Computed pKb(B)  = {pks_to_pkb(pka, pks_value):.2f} ***")
+        return
+    print(f"  *** Computed pKa(HA) = {pka:.2f} ***")
+
+
 def print_pka_summary(
     ha_gas_file,
     a_gas_file,
@@ -442,6 +492,9 @@ def print_pka_summary(
     entropy_method="grimme",
     scheme="proton exchange",
     delta_G_proton=None,
+    pkb=False,
+    pks=None,
+    solvent_id=None,
 ):
     """Print a formatted summary of a dual-level pKa calculation."""
     result = compute_pka(
@@ -508,7 +561,9 @@ def print_pka_summary(
         print(f"  ΔG_diss = {result['delta_G_diss_au']:.10f} au")
         print(f"         = {result['delta_G_diss_kcal_mol']:.4f} kcal/mol")
         print()
-        print(f"  *** Computed pKa(HA) = {result['pKa']:.2f} ***")
+        _print_computed_pka_pkb(
+            result["pKa"], pkb=pkb, pks=pks, solvent_id=solvent_id
+        )
         print("=" * 78)
         return
 
@@ -557,8 +612,34 @@ def print_pka_summary(
     print(f"         = {result['delta_G_soln_kcal_mol']:.4f} kcal/mol")
     print(f"  pKa(HRef)_ref = {pka_reference:.2f}")
     print()
-    print(f"  *** Computed pKa(HA) = {result['pKa']:.2f} ***")
+    _print_computed_pka_pkb(
+        result["pKa"], pkb=pkb, pks=pks, solvent_id=solvent_id
+    )
     print("=" * 78)
+
+
+def click_pka_pkb_options(f):
+    """pKb conversion options for pKa submission and analysis."""
+    f = click.option(
+        "--pks",
+        type=float,
+        default=None,
+        help=(
+            "Solvent autoprotolysis constant. If --pkb is set and --pks "
+            "is omitted, 14.0 is used. Supplying --pks also enables "
+            "pKb reporting."
+        ),
+    )(f)
+    f = click.option(
+        "--pkb",
+        is_flag=True,
+        default=False,
+        help=(
+            "Enable pKb reporting (pKb = pKs - pKa). If --pks is omitted, "
+            "14.0 is used."
+        ),
+    )(f)
+    return f
 
 
 def click_pka_thermochemistry_options(f):
@@ -579,6 +660,7 @@ def click_pka_thermochemistry_options(f):
 
 def click_pka_shared_options(f):
     f = click_pka_thermochemistry_options(f)
+    f = click_pka_pkb_options(f)
 
     @click.option(
         "-s",
@@ -1069,6 +1151,7 @@ def click_pka_proton_options(f):
 
 def click_pka_analysis_scheme_options(f):
     """Scheme and proton solvation options for pKa output analysis."""
+    f = click_pka_pkb_options(f)
 
     @click.option(
         "-s",
@@ -1402,6 +1485,8 @@ def pka(
     cutoff_enthalpy,
     scheme,
     delta_g_proton,
+    pkb,
+    pks,
 ):
     """Backend-independent pKa output analysis."""
     s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
@@ -1418,6 +1503,8 @@ def pka(
         entropy_method=entropy_method,
         scheme=scheme,
         delta_g_proton=delta_g_proton,
+        pkb=pkb,
+        pks=pks,
     )
 
 
@@ -1507,6 +1594,8 @@ def analyze(
             cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
             cutoff_enthalpy=shared["cutoff_enthalpy"],
             entropy_method=shared["entropy_method"],
+            pkb=shared["pkb"],
+            pks=shared["pks"],
         )
         return None
 
@@ -1555,6 +1644,8 @@ def analyze(
         cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
         cutoff_enthalpy=shared["cutoff_enthalpy"],
         entropy_method=shared["entropy_method"],
+        pkb=shared["pkb"],
+        pks=shared["pks"],
     )
 
     # Return None so process_pipeline skips jobrunner execution.
@@ -1644,6 +1735,8 @@ def batch_analyze(ctx, output_table, output_results, program, **kwargs):
         temperature=shared["temperature"],
         pressure=shared["pressure"],
         scheme=scheme,
+        pkb=shared["pkb"],
+        pks=shared["pks"],
     )
     click.echo(output_string)
 

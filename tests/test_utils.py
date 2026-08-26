@@ -2253,6 +2253,46 @@ class TestPKaTableParsing:
         assert "12.34" in expected
         assert "7.8900" in expected
 
+    def test_format_pka_batch_results_table_pkb_columns(self):
+        from chemsmart.utils.datasets import (
+            PKaOutputTable,
+            PKaOutputTableEntry,
+        )
+
+        entries = [
+            PKaOutputTableEntry(
+                {
+                    "basename": "sys1",
+                    "ha_gas": "a.log",
+                    "a_gas": "b.log",
+                    "href_gas": "c.log",
+                    "ref_gas": "d.log",
+                    "ha_sp": "e.log",
+                    "a_sp": "f.log",
+                    "href_sp": "g.log",
+                    "ref_sp": "h.log",
+                    "pka_ref": 6.75,
+                }
+            ),
+        ]
+        results = [
+            {"pKa": 6.75, "delta_G_soln_kcal_mol": 0.0, "basename": "sys1"},
+        ]
+        text = PKaOutputTable.format_pka_batch_results_table(
+            entries,
+            results,
+            temperature=298.15,
+            pressure=1.0,
+            scheme="proton exchange",
+            pkb=True,
+            pks=16.7,
+        )
+        assert "pKb" in text
+        assert "pKs" in text
+        assert "6.75" in text
+        assert "9.95" in text
+        assert "16.70" in text
+
     def test_export_pka_results_table_direct_scheme(self, tmp_path):
         """Direct-cycle export uses the ΔG_diss column label."""
         from chemsmart.utils.datasets import (

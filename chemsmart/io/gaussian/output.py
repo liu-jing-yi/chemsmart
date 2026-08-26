@@ -3458,6 +3458,9 @@ class Gaussian16pKaOutput(Gaussian16Output):
         entropy_method: str = "grimme",
         scheme="proton exchange",
         delta_G_proton=None,
+        pkb=False,
+        pks=None,
+        solvent_id=None,
     ):
         """Print a formatted summary of a dual-level pKa calculation."""
         from chemsmart.cli.pka import print_pka_summary as _print_pka_summary
@@ -3480,4 +3483,7 @@ class Gaussian16pKaOutput(Gaussian16Output):
             entropy_method=entropy_method,
             scheme=scheme,
             delta_G_proton=delta_G_proton,
+            pkb=pkb,
+            pks=pks,
+            solvent_id=solvent_id,
         )

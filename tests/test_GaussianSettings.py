@@ -1137,6 +1137,43 @@ class TestGaussianpKaJobSettings:
             )
         assert not any("not water" in rec.message for rec in caplog.records)
 
+    def test_pkb_default_pks_warns_on_non_water_solvent(self, caplog):
+        """Default pKs=14 with a non-water solvent logs a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            settings = GaussianpKaJobSettings(
+                proton_index=10,
+                scheme="proton exchange",
+                charge=0,
+                multiplicity=1,
+                solvent_id="acetonitrile",
+                pkb=True,
+            )
+        assert settings.pkb is True
+        assert settings.pks is None
+        assert any(
+            "pKs = 14.0" in rec.message and "acetonitrile" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_pkb_user_pks_suppresses_non_water_warning(self, caplog):
+        """Explicit --pks suppresses the default-14 non-water warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            settings = GaussianpKaJobSettings(
+                proton_index=10,
+                scheme="proton exchange",
+                charge=0,
+                multiplicity=1,
+                solvent_id="acetonitrile",
+                pkb=True,
+                pks=16.7,
+            )
+        assert settings.pks == 16.7
+        assert not any("pKs = 14.0" in rec.message for rec in caplog.records)
+
     def test_proton_exchange_with_reference_file(
         self, single_molecule_xyz_file
     ):

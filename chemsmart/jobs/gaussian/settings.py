@@ -1076,6 +1076,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         cutoff_entropy_grimme=100.0,
         cutoff_enthalpy=100.0,
         energy_units="hartree",
+        pkb=False,
+        pks=None,
         **kwargs,
     ):
         """
@@ -1179,11 +1181,19 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             self.reference_conjugate_base_multiplicity = None
 
         self.delta_G_proton = delta_G_proton
-        from chemsmart.cli.pka import warn_if_non_aqueous_direct_proton_default
+        self.pkb = bool(pkb)
+        self.pks = pks
+        from chemsmart.cli.pka import (
+            resolve_pkb_reporting,
+            warn_if_default_pks_non_aqueous,
+            warn_if_non_aqueous_direct_proton_default,
+        )
 
         warn_if_non_aqueous_direct_proton_default(
             self.scheme, self.delta_G_proton, self.solvent_id
         )
+        _, _, pks_defaulted = resolve_pkb_reporting(pkb=self.pkb, pks=self.pks)
+        warn_if_default_pks_non_aqueous(pks_defaulted, self.solvent_id)
 
     @classmethod
     def build_gaussian_pka_settings(

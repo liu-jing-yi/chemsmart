@@ -799,6 +799,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
         cutoff_entropy_grimme=100.0,
         cutoff_enthalpy=100.0,
         energy_units="hartree",
+        pkb=False,
+        pks=None,
         **kwargs,
     ):
         if "thermodynamic_cycle" in kwargs:
@@ -846,11 +848,19 @@ class ORCApKaJobSettings(ORCAJobSettings):
             self.reference_conjugate_base_multiplicity = None
 
         self.delta_G_proton = delta_G_proton
-        from chemsmart.cli.pka import warn_if_non_aqueous_direct_proton_default
+        self.pkb = bool(pkb)
+        self.pks = pks
+        from chemsmart.cli.pka import (
+            resolve_pkb_reporting,
+            warn_if_default_pks_non_aqueous,
+            warn_if_non_aqueous_direct_proton_default,
+        )
 
         warn_if_non_aqueous_direct_proton_default(
             self.scheme, self.delta_G_proton, self.solvent_id
         )
+        _, _, pks_defaulted = resolve_pkb_reporting(pkb=self.pkb, pks=self.pks)
+        warn_if_default_pks_non_aqueous(pks_defaulted, self.solvent_id)
 
     @classmethod
     def build_orca_pka_settings(cls, proton_index, shared, opt_settings):
@@ -895,6 +905,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             pressure=shared["pressure"],
             cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
             cutoff_enthalpy=shared["cutoff_enthalpy"],
+            pkb=shared.get("pkb", False),
+            pks=shared.get("pks"),
             charge=opt_settings.charge,
             multiplicity=opt_settings.multiplicity,
             functional=opt_settings.functional,

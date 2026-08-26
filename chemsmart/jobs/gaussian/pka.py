@@ -655,6 +655,9 @@ class GaussianpKaJob(GaussianJob):
             cutoff_enthalpy=self.settings.cutoff_enthalpy,
             scheme=self.settings.scheme,
             delta_G_proton=getattr(self.settings, "delta_G_proton", None),
+            pkb=self.settings.pkb,
+            pks=self.settings.pks,
+            solvent_id=self.settings.solvent_id,
         )
 
     @property

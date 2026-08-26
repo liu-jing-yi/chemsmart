@@ -284,6 +284,238 @@ class TestAqueousProtonSolutionFreeEnergy:
         assert result["delta_G_proton_user_supplied"] is True
 
 
+class TestPkbConversion:
+    """pKb = pKs − pKa conversion for analysis and summaries."""
+
+    def test_pks_to_pkb_arithmetic(self):
+        from chemsmart.cli.pka import pks_to_pkb
+
+        assert pks_to_pkb(4.5, 14.0) == pytest.approx(9.5)
+        assert pks_to_pkb(6.75, 16.7) == pytest.approx(9.95)
+        assert pks_to_pkb(10.0, 14.0) == pytest.approx(4.0)
+
+    def test_resolve_pkb_reporting_defaults(self):
+        from chemsmart.cli.pka import DEFAULT_PKS, resolve_pkb_reporting
+
+        assert resolve_pkb_reporting() == (False, None, False)
+        assert resolve_pkb_reporting(pkb=False, pks=None) == (
+            False,
+            None,
+            False,
+        )
+        assert resolve_pkb_reporting(pkb=True) == (True, DEFAULT_PKS, True)
+        assert resolve_pkb_reporting(pkb=True, pks=16.7) == (True, 16.7, False)
+        assert resolve_pkb_reporting(pkb=False, pks=16.7) == (
+            True,
+            16.7,
+            False,
+        )
+
+    def test_compute_pka_does_not_return_pkb(self, tmp_path, monkeypatch):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        from chemsmart.cli.pka import compute_pka
+
+        result = compute_pka(
+            ha_gas_file=files["ha.log"],
+            a_gas_file=files["a.log"],
+            href_gas_file=files["hb.log"],
+            ref_gas_file=files["b.log"],
+            ha_solv_file=files["has.log"],
+            a_solv_file=files["as.log"],
+            href_solv_file=files["hbs.log"],
+            ref_solv_file=files["bs.log"],
+            pka_reference=6.75,
+        )
+        assert "pKa" in result
+        assert "pKb" not in result
+        assert "pKs" not in result
+
+    def test_warn_if_default_pks_non_aqueous(self, caplog):
+        import logging
+
+        from chemsmart.cli.pka import warn_if_default_pks_non_aqueous
+
+        with caplog.at_level(logging.WARNING):
+            warn_if_default_pks_non_aqueous(True, "acetonitrile")
+        assert any(
+            "pKs = 14.0" in rec.message and "acetonitrile" in rec.message
+            for rec in caplog.records
+        )
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            warn_if_default_pks_non_aqueous(True, "water")
+            warn_if_default_pks_non_aqueous(False, "acetonitrile")
+            warn_if_default_pks_non_aqueous(True, None)
+        assert not caplog.records
+
+    def test_analyze_pkb_defaults_pks_to_14(self, tmp_path, monkeypatch):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "pka",
+                "--pkb",
+                "analyze",
+                "-ha",
+                files["ha.log"],
+                "-a",
+                files["a.log"],
+                "-hr",
+                files["hb.log"],
+                "-r",
+                files["b.log"],
+                "-has",
+                files["has.log"],
+                "-as",
+                files["as.log"],
+                "--href-solv",
+                files["hbs.log"],
+                "--ref-solv",
+                files["bs.log"],
+                "-rp",
+                "6.75",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "pKs = 14.00 (default aqueous)" in result.output
+        assert "Computed pKa(HA) = 6.75" in result.output
+        assert "Computed pKb(B)  = 7.25" in result.output
+
+    def test_analyze_pks_without_pkb_enables_reporting(
+        self, tmp_path, monkeypatch
+    ):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "pka",
+                "--pks",
+                "16.7",
+                "analyze",
+                "-ha",
+                files["ha.log"],
+                "-a",
+                files["a.log"],
+                "-hr",
+                files["hb.log"],
+                "-r",
+                files["b.log"],
+                "-has",
+                files["has.log"],
+                "-as",
+                files["as.log"],
+                "--href-solv",
+                files["hbs.log"],
+                "--ref-solv",
+                files["bs.log"],
+                "-rp",
+                "6.75",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "pKs = 16.70 (user-supplied)" in result.output
+        assert "Computed pKa(HA) = 6.75" in result.output
+        assert "Computed pKb(B)  = 9.95" in result.output
+
+    def test_analyze_pkb_with_custom_pks(self, tmp_path, monkeypatch):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "pka",
+                "--pkb",
+                "--pks",
+                "16.7",
+                "analyze",
+                "-ha",
+                files["ha.log"],
+                "-a",
+                files["a.log"],
+                "-hr",
+                files["hb.log"],
+                "-r",
+                files["b.log"],
+                "-has",
+                files["has.log"],
+                "-as",
+                files["as.log"],
+                "--href-solv",
+                files["hbs.log"],
+                "--ref-solv",
+                files["bs.log"],
+                "-rp",
+                "6.75",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "pKs = 16.70 (user-supplied)" in result.output
+        assert "Computed pKb(B)  = 9.95" in result.output
+
+    def test_batch_analyze_pkb_adds_table_columns(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        basename = "target"
+        for suffix in ("_pka_HA_opt", "_pka_A_opt", "_pka_HA_sp", "_pka_A_sp"):
+            (tmp_path / f"{basename}{suffix}.log").write_text(
+                "Gaussian, Inc.\n"
+            )
+        for name in ("ref_HA_opt", "ref_A_opt", "ref_HA_sp", "ref_A_sp"):
+            (tmp_path / f"{name}.log").write_text("Gaussian, Inc.\n")
+
+        table = tmp_path / "pka_output.csv"
+        table.write_text(
+            "basename,ha_gas,a_gas,ha_sp,a_sp,href_gas,ref_gas,href_sp,ref_sp,pka_ref\n"
+            f"{basename},,,,,ref_HA_opt.log,ref_A_opt.log,ref_HA_sp.log,ref_A_sp.log,6.75\n"
+        )
+        _install_fake_thermochemistry(monkeypatch)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            ["pka", "--pkb", "batch-analyze", "-o", str(table)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "pKb" in result.output
+        assert "pKs" in result.output
+        assert "7.25" in result.output
+        assert "14.00" in result.output
+
+    def test_print_pka_summary_warns_default_pks_non_water(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        import logging
+
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        from chemsmart.cli.pka import print_pka_summary
+
+        with caplog.at_level(logging.WARNING):
+            print_pka_summary(
+                ha_gas_file=files["ha.log"],
+                a_gas_file=files["a.log"],
+                href_gas_file=files["hb.log"],
+                ref_gas_file=files["b.log"],
+                ha_solv_file=files["has.log"],
+                a_solv_file=files["as.log"],
+                href_solv_file=files["hbs.log"],
+                ref_solv_file=files["bs.log"],
+                pka_reference=6.75,
+                pkb=True,
+                solvent_id="acetonitrile",
+            )
+        assert any(
+            "pKs = 14.0" in rec.message and "acetonitrile" in rec.message
+            for rec in caplog.records
+        )
+
+
 class TestPKa:
     """pKa CLI, batch submission, and job workflow tests."""
 
@@ -1052,6 +1284,8 @@ class TestPKa:
         assert result.exit_code == 0, result.output
         assert "analyze" in result.output
         assert "batch-analyze" in result.output
+        assert "--pkb" in result.output
+        assert "--pks" in result.output
 
     def test_validate_reference_options_requires_reference_for_proton_exchange(
         self, tmp_path

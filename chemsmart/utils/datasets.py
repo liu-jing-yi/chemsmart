@@ -1012,33 +1012,57 @@ class PKaOutputTable:
         temperature,
         pressure,
         scheme=None,
+        pkb=False,
+        pks=None,
     ):
         """Return the formatted batch pKa summary table shown on stdout."""
+        from chemsmart.cli.pka import pks_to_pkb, resolve_pkb_reporting
+
         display_scheme = scheme
         if display_scheme is None and results:
             display_scheme = results[0].get("scheme")
 
         header = PKaOutputTable._scheme_batch_header(display_scheme)
         dg_label = PKaOutputTable._scheme_delta_g_label(display_scheme)
+        report_pkb, pks_value, _ = resolve_pkb_reporting(pkb=pkb, pks=pks)
+
+        if report_pkb:
+            col_header = (
+                f"{'basename':<30} {'pKa':>10} {'pKb':>10} "
+                f"{'pKs':>8} {dg_label:>20}"
+            )
+        else:
+            col_header = f"{'basename':<30} {'pKa':>10} {dg_label:>20}"
+        width = max(78, len(col_header))
 
         lines = [
-            "=" * 78,
+            "=" * width,
             header,
-            "=" * 78,
+            "=" * width,
             f"Temperature: {temperature} K",
             f"Pressure: {pressure} atm",
-            f"{'basename':<30} {'pKa':>10} {dg_label:>20}",
-            "-" * 78,
+            col_header,
+            "-" * width,
         ]
 
         for entry, result in zip(entries, results):
             dg_value = PKaOutputTable.pka_scheme_delta_g_value(result, scheme)
-            lines.append(
-                f"{entry['basename']:<30} "
-                f"{result['pKa']:>10.2f} "
-                f"{dg_value:>20.4f}"
-            )
-        lines.append("=" * 78)
+            if report_pkb:
+                pkb_value = pks_to_pkb(result["pKa"], pks_value)
+                lines.append(
+                    f"{entry['basename']:<30} "
+                    f"{result['pKa']:>10.2f} "
+                    f"{pkb_value:>10.2f} "
+                    f"{pks_value:>8.2f} "
+                    f"{dg_value:>20.4f}"
+                )
+            else:
+                lines.append(
+                    f"{entry['basename']:<30} "
+                    f"{result['pKa']:>10.2f} "
+                    f"{dg_value:>20.4f}"
+                )
+        lines.append("=" * width)
         return "\n".join(lines)
 
     def echo_pka_output_table_results(
@@ -1048,6 +1072,8 @@ class PKaOutputTable:
         temperature,
         pressure,
         scheme=None,
+        pkb=False,
+        pks=None,
     ):
         table_text = self.format_pka_batch_results_table(
             self.entries,
@@ -1055,6 +1081,8 @@ class PKaOutputTable:
             temperature,
             pressure,
             scheme=scheme,
+            pkb=pkb,
+            pks=pks,
         )
         if output_results is not None:
             self.export_results(
@@ -1063,6 +1091,8 @@ class PKaOutputTable:
                 scheme=scheme,
                 temperature=temperature,
                 pressure=pressure,
+                pkb=pkb,
+                pks=pks,
             )
         return table_text
 
@@ -1092,6 +1122,8 @@ class PKaOutputTable:
         scheme: str = None,
         temperature: float = 298.15,
         pressure: float = 1.0,
+        pkb: bool = False,
+        pks: float = None,
     ) -> None:
         """Write the formatted batch pKa summary table to *output_path*."""
         table_text = PKaOutputTable.format_pka_batch_results_table(
@@ -1100,6 +1132,8 @@ class PKaOutputTable:
             temperature,
             pressure,
             scheme=scheme,
+            pkb=pkb,
+            pks=pks,
         )
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write(table_text + "\n")
@@ -1181,6 +1215,8 @@ class PKaOutputTable:
         scheme: str = None,
         temperature: float = 298.15,
         pressure: float = 1.0,
+        pkb: bool = False,
+        pks: float = None,
     ) -> None:
         """Export the formatted batch pKa summary table for this table."""
         self.export_pka_results_table(
@@ -1190,6 +1226,8 @@ class PKaOutputTable:
             scheme=scheme,
             temperature=temperature,
             pressure=pressure,
+            pkb=pkb,
+            pks=pks,
         )
 
     @staticmethod
