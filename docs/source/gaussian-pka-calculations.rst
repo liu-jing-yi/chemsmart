@@ -45,9 +45,12 @@ Where:
 
 -  ``-p my_project``: Project settings (functional, basis set, etc.)
 -  ``-f acid.xyz``: Input geometry (XYZ, LOG, COM, CDXML, …)
--  ``-c 0 -m 1``: Charge and multiplicity of the protonated acid (HA)
--  ``-pi 10``: 1-based index of the proton to remove
--  ``-r`` / ``-rpi`` / ``-rc`` / ``-rm``: Reference acid HRef and its deprotonation settings
+-  ``-c 0 -m 1``: Charge and multiplicity of the protonated acid (HA). With ``--pkb``, these are the charge and
+   multiplicity of the **free base** B; HA (BH⁺) charge becomes ``-c + 1``.
+-  ``-pi 10``: 1-based index of the proton to remove. Optional when ChemDraw colour or a unique SMARTS match identifies
+   the site (see :ref:`pka-site-resolution`). With ``--pkb``, ``-pi`` is the heavy atom to protonate.
+-  ``-r`` / ``-rpi`` / ``-rc`` / ``-rm``: Reference acid HRef and its deprotonation settings. Proton exchange still
+   requires the experimental **pKa** of HRef (for amines, use a similar cationic acid).
 
 This runs gas-phase opt+freq and solvent single-points for HA, A⁻, HRef, and Ref⁻ (default solvent: SMD/water from
 project or CLI).
@@ -62,10 +65,32 @@ Use ``-s direct`` when you do **not** want a reference acid. Only HA and A⁻ ca
        -pi 10 \
        -s direct
 
+**pKb (free base → BH⁺)**
+
+Pass the free base and ``--pkb``. Site resolution follows ``-pi``, then ChemDraw colour, then SMARTS
+(:ref:`pka-site-resolution`). Omit ``--pks`` only in water (default 14.0); otherwise pass a literature value
+(:ref:`pka-pkb`).
+
+.. code:: bash
+
+   chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb \
+       -r ref_acid.xyz \
+       -rpi 21 \
+       -rc 1 \
+       -rm 1
+
+   # Non-aqueous: do not rely on default pKs = 14
+   chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 -si acetonitrile pka \
+       --pkb --pks 33.3 \
+       -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
 **ChemDraw CDXML / CDX input**
 
-Structures drawn in ChemDraw can be submitted directly. Mark the acidic proton with a **distinct atom colour**;
-CHEMSMART reads the drawing and auto-detects it, so ``-pi`` is optional for single-fragment files.
+Structures drawn in ChemDraw can be submitted directly. For pKa, mark the acidic proton with a **distinct atom colour**.
+For ``--pkb``, colour the **basic heavy atom** (for example the pyridine nitrogen), not a hydrogen. CHEMSMART reads the
+drawing and auto-detects a uniquely coloured site, so ``-pi`` is optional for single-fragment files. Uncoloured CDXML
+falls through to SMARTS.
 
 .. code:: bash
 
@@ -77,7 +102,12 @@ CHEMSMART reads the drawing and auto-detects it, so ``-pi`` is optional for sing
    chemsmart run gaussian -p my_project -f phenol.cdxml -c 0 -m 1 pka \
        -r ref_acid.cdxml -rc 1 -rm 1
 
-See :ref:`pka-calculations` for multi-molecule CDXML batch submission and the ``-cc`` / ``-rcc`` colour options.
+   # pKb: colour the basic atom in ChemDraw
+   chemsmart run gaussian -p my_project -f pyridine.cdxml -c 0 -m 1 pka \
+       --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+See :ref:`pka-calculations` for site precedence, multi-molecule CDXML batch submission, and the ``-cc`` / ``-rcc``
+colour options.
 
 ************************
  Job Output File Naming
@@ -137,10 +167,11 @@ Table Format
 
 Required columns (comma or whitespace delimited):
 
--  ``filepath``: Path to the input geometry for HA
--  ``proton_index``: 1-based index of the proton to remove
--  ``charge``: Charge of HA
--  ``multiplicity``: Multiplicity of HA
+-  ``filepath``: Path to the input geometry for HA (or the free base when ``--pkb`` is set)
+-  ``proton_index``: 1-based index of the proton to remove (or the basic atom to protonate with ``--pkb``). Blank uses
+   ChemDraw colour or a unique SMARTS match (:ref:`pka-site-resolution`)
+-  ``charge``: Charge of HA (or of the free base with ``--pkb``)
+-  ``multiplicity``: Multiplicity of HA (or of the free base with ``--pkb``)
 
 Example ``pka_input_table.csv``:
 
@@ -153,8 +184,9 @@ Example ``pka_input_table.csv``:
 
 .. note::
 
-   For single-molecule ``.cdxml`` / ``.cdx`` table rows, leave ``proton_index`` blank to auto-detect the coloured
-   proton. Multi-fragment CDXML expansion applies only when the CDXML file is passed directly as ``-f`` (see **ChemDraw
+   For single-molecule ``.cdxml`` / ``.cdx`` table rows, leave ``proton_index`` blank to auto-detect the coloured site
+   (or SMARTS when there is no colour markup). XYZ rows may also omit ``proton_index`` when SMARTS finds exactly one
+   site. Multi-fragment CDXML expansion applies only when the CDXML file is passed directly as ``-f`` (see **ChemDraw
    CDXML / CDX batch input** below).
 
 .. note::
@@ -167,8 +199,9 @@ ChemDraw CDXML / CDX batch input
 ================================
 
 When ``-f`` is a ``.cdxml`` or ``.cdx`` file (not a CSV table), ``pka batch`` reads **every ChemDraw fragment** in the
-file, auto-detects the coloured proton in each fragment independently, and submits one pKa job per molecule. Labels
-follow ``<basename>_frag<N>_pka`` (e.g. ``acids_frag1_pka_HA_opt.log``).
+file, auto-detects the coloured site in each fragment independently (falling through to SMARTS when there is no colour
+markup), and submits one pKa job per molecule. With ``--pkb``, the coloured site is the basic atom. Labels follow
+``<basename>_frag<N>_pka`` (e.g. ``acids_frag1_pka_HA_opt.log``).
 
 .. code:: bash
 
@@ -183,8 +216,8 @@ follow ``<basename>_frag<N>_pka`` (e.g. ``acids_frag1_pka_HA_opt.log``).
    chemsmart run gaussian -p my_project -f acids.cdxml -c 0 -m 1 pka -cc 4 -s direct batch
 
 A CSV table may list single-molecule ``.cdxml`` paths per row (see Table Format above); blank ``proton_index`` triggers
-coloured-proton auto-detection for that row. ``charge`` and ``multiplicity`` still come from the table columns for CSV
-rows; for multi-fragment CDXML passed directly as ``-f``, see :ref:`pka-calculations` (Charge and multiplicity).
+site auto-detection for that row. ``charge`` and ``multiplicity`` still come from the table columns for CSV rows; for
+multi-fragment CDXML passed directly as ``-f``, see :ref:`pka-calculations` (Charge and multiplicity).
 
 On clusters, ``chemsmart sub ... pka batch`` with a CDXML file creates one submission per fragment; each run script
 targets a single fragment via ``--index``. See :ref:`pka-hpc-batch-submission`.
@@ -222,11 +255,21 @@ Core Options
 
    -  -  ``-pi``
       -  ``--proton-index``
-      -  **Required** in single-molecule mode (unless CDXML auto-detection applies). 1-based proton index.
+      -  Optional when ChemDraw colour or a unique SMARTS match identifies the site. pKa: 1-based hydrogen to remove.
+         ``--pkb``: 1-based heavy atom to protonate. See :ref:`pka-site-resolution`.
 
    -  -  ``-cc``
       -  ``--color-code``
-      -  CDXML colour-table index for the proton to remove. Auto-detected when uniquely coloured.
+      -  CDXML colour-table index for the site. Auto-detected when uniquely coloured. pKa: acidic proton. ``--pkb``:
+         basic heavy atom.
+
+   -  -
+      -  ``--pkb``
+      -  Submit: protonate the input free base (B → BH⁺), then run pKa jobs. Analysis: also print pKb = pKs − pKa.
+
+   -  -
+      -  ``--pks``
+      -  Solvent autoprotolysis constant. If ``--pkb`` is set and ``--pks`` is omitted, 14.0 is used (water only).
 
    -  -  ``-s``
       -  ``--scheme``
@@ -301,6 +344,11 @@ Solvent Options
    -  -  ``-si``
       -  ``--solvent-id``
       -  Solvent identifier. Default: ``water``.
+
+.. warning::
+
+   Default pKs = 14.0 is for aqueous water only. When ``--pkb`` is used without ``--pks`` and ``-si`` is not water (or
+   ``h2o``), CHEMSMART warns: pass a literature ``--pks``. See :ref:`pka-pkb`.
 
 Thermochemistry Options
 =======================
@@ -405,6 +453,25 @@ Example 5: Direct-Cycle Analysis
    chemsmart run pka -s direct analyze \
        -ha phenol_HA_opt.log \
        -T 298.15 -csg 100 -ch 100
+
+Example 6: pKb Submit and Analyze
+=================================
+
+.. code:: bash
+
+   chemsmart run gaussian -p b3lyp_project -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb \
+       -r acetic_acid.xyz -rpi 10 -rc 0 -rm 1
+
+   chemsmart run pka --pkb analyze \
+       -ha pyridine_HA_opt.log \
+       -hr ref_acid_HRef_opt.log \
+       -rp 6.75
+
+   chemsmart run pka --pkb --pks 16.7 analyze \
+       -ha pyridine_HA_opt.log \
+       -hr ref_acid_HRef_opt.log \
+       -rp 6.75
 
 **********
  See Also

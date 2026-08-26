@@ -37,9 +37,12 @@ Where:
 
 -  ``-p my_project``: ORCA project settings
 -  ``-f acid.xyz``: Input geometry
--  ``-c 0 -m 1``: Charge and multiplicity of HA
--  ``-pi 10``: 1-based proton index
--  ``-r`` / ``-rpi`` / ``-rc`` / ``-rm``: Reference acid HRef
+-  ``-c 0 -m 1``: Charge and multiplicity of HA. With ``--pkb``, these are the charge and multiplicity of the **free
+   base** B; HA (BH⁺) charge becomes ``-c + 1``.
+-  ``-pi 10``: 1-based proton index. Optional when ChemDraw colour or a unique SMARTS match identifies the site (see
+   :ref:`pka-site-resolution`). With ``--pkb``, ``-pi`` is the heavy atom to protonate.
+-  ``-r`` / ``-rpi`` / ``-rc`` / ``-rm``: Reference acid HRef. Proton exchange still requires the experimental **pKa**
+   of HRef (for amines, use a similar cationic acid).
 
 This runs gas-phase opt+freq and CPCM/water solvent single-points for HA, A⁻, HRef, and Ref⁻.
 
@@ -51,10 +54,27 @@ This runs gas-phase opt+freq and CPCM/water solvent single-points for HA, A⁻, 
        -pi 10 \
        -s direct
 
+**pKb (free base → BH⁺)**
+
+Pass the free base and ``--pkb``. Site resolution follows ``-pi``, then ChemDraw colour, then SMARTS
+(:ref:`pka-site-resolution`). Omit ``--pks`` only in water (default 14.0); otherwise pass a literature value
+(:ref:`pka-pkb`).
+
+.. code:: bash
+
+   chemsmart run orca -p my_project -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb \
+       -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+   chemsmart run orca -p my_project -f pyridine.xyz -c 0 -m 1 -si acetonitrile pka \
+       --pkb --pks 33.3 \
+       -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
 **ChemDraw CDXML / CDX input**
 
-ChemDraw ``.cdxml`` and ``.cdx`` files are supported. Colour the acidic proton in ChemDraw; CHEMSMART reads the drawing
-and detects it automatically, so ``-pi`` can be omitted for single-fragment inputs.
+ChemDraw ``.cdxml`` and ``.cdx`` files are supported. For pKa, colour the acidic proton in ChemDraw. For ``--pkb``,
+colour the **basic heavy atom** (not a hydrogen). CHEMSMART detects a uniquely coloured site automatically, so ``-pi``
+can be omitted for single-fragment inputs. Uncoloured CDXML falls through to SMARTS.
 
 .. code:: bash
 
@@ -64,7 +84,10 @@ and detects it automatically, so ``-pi`` can be omitted for single-fragment inpu
    chemsmart run orca -p my_project -f phenol.cdxml -c 0 -m 1 pka \
        -r ref_acid.cdxml -rc 1 -rm 1
 
-See :ref:`pka-calculations` for multi-molecule CDXML workflows and colour-code options.
+   chemsmart run orca -p my_project -f pyridine.cdxml -c 0 -m 1 pka \
+       --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+See :ref:`pka-calculations` for site precedence, multi-molecule CDXML workflows, and colour-code options.
 
 ************************
  Job Output File Naming
@@ -120,15 +143,15 @@ Table Format
 ============
 
 Required columns: ``filepath``, ``proton_index``, ``charge``, ``multiplicity``. See :ref:`gaussian-pka-calculations` for
-CSV examples. For single-molecule ``.cdxml`` / ``.cdx`` rows, ``proton_index`` may be left blank for coloured-proton
-auto-detection.
+CSV examples. Leave ``proton_index`` blank to use ChemDraw colour or a unique SMARTS match (:ref:`pka-site-resolution`).
+With ``--pkb``, ``proton_index`` is the basic-atom index.
 
 ChemDraw CDXML / CDX batch input
 ================================
 
 Pass a multi-molecule CDXML file directly as ``-f`` with ``pka batch``. Each ChemDraw fragment becomes one pKa job with
-per-fragment coloured-proton detection. Labels are ``<basename>_frag<N>_pka`` (outputs such as
-``acids_frag1_pka_HA_opt.out``).
+per-fragment site detection (colour, then SMARTS). With ``--pkb``, the coloured site is the basic atom. Labels are
+``<basename>_frag<N>_pka`` (outputs such as ``acids_frag1_pka_HA_opt.out``).
 
 .. code:: bash
 
@@ -170,11 +193,20 @@ of **SMD**).
 
    -  -  ``-pi``
       -  ``--proton-index``
-      -  **Required** in single-molecule mode (unless CDXML auto-detection applies).
+      -  Optional when ChemDraw colour or a unique SMARTS match identifies the site. pKa: hydrogen to remove. ``--pkb``:
+         heavy atom to protonate. See :ref:`pka-site-resolution`.
 
    -  -  ``-cc``
       -  ``--color-code``
-      -  CDXML colour-table index for the target proton.
+      -  CDXML colour-table index for the target site (acidic proton, or basic atom with ``--pkb``).
+
+   -  -
+      -  ``--pkb``
+      -  Submit: protonate the input free base (B → BH⁺), then run pKa jobs. Analysis: also print pKb = pKs − pKa.
+
+   -  -
+      -  ``--pks``
+      -  Solvent autoprotolysis constant. If ``--pkb`` is set and ``--pks`` is omitted, 14.0 is used (water only).
 
    -  -  ``-s``
       -  ``--scheme``
@@ -248,6 +280,11 @@ of **SMD**).
          aqueous default is computed from Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) =
          -265.9` kcal/mol.
 
+.. warning::
+
+   Default pKs = 14.0 is for aqueous water only. When ``--pkb`` is used without ``--pks`` and ``-si`` is not water (or
+   ``h2o``), CHEMSMART warns: pass a literature ``--pks``. See :ref:`pka-pkb`.
+
 **********
  Examples
 **********
@@ -309,6 +346,25 @@ Example 5: Mixed Gaussian/ORCA Batch Analysis
 
 With ``-p auto`` (default), ORCA target ``.out`` files and Gaussian reference ``.log`` files in the same table are
 supported. See :ref:`pka-calculations`.
+
+Example 6: pKb Submit and Analyze
+=================================
+
+.. code:: bash
+
+   chemsmart run orca -p orca_m062x -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb \
+       -r acetic_acid.xyz -rpi 10 -rc 0 -rm 1
+
+   chemsmart run pka --pkb analyze \
+       -ha pyridine_pka_HA_opt.out \
+       -hr ref_acid_pka_HRef_opt.out \
+       -rp 6.75
+
+   chemsmart run pka --pkb --pks 16.7 analyze \
+       -ha pyridine_pka_HA_opt.out \
+       -hr ref_acid_pka_HRef_opt.out \
+       -rp 6.75
 
 **********
  See Also

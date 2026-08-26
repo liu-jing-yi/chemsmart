@@ -7,11 +7,13 @@
 CHEMSMART provides pKa workflows in two separate stages:
 
 #. **Job submission** — generate and run Gaussian or ORCA calculations for HA, A⁻, and (optionally) a reference acid.
-   See :ref:`gaussian-pka-calculations` and :ref:`orca-pka-calculations`.
+   With ``--pkb``, the input is the free base B; CHEMSMART protonates it and runs the same HA / A⁻ jobs. See
+   :ref:`gaussian-pka-calculations`, :ref:`orca-pka-calculations`, and :ref:`pka-pkb`.
 
 #. **Output analysis** — compute pKa values from completed output files using the backend-independent command
-   ``chemsmart run pka``. Analysis is **program-agnostic**: the same workflow reads Gaussian ``.log`` and ORCA ``.out``
-   files and extracts the energies and thermal corrections needed for the pKa cycle.
+   ``chemsmart run pka``. Add ``--pkb`` / ``--pks`` to also report pKb = pKs − pKa. Analysis is **program-agnostic**:
+   the same workflow reads Gaussian ``.log`` and ORCA ``.out`` files and extracts the energies and thermal corrections
+   needed for the pKa cycle.
 
 .. toctree::
    :maxdepth: 2
@@ -32,6 +34,8 @@ CHEMSMART provides pKa workflows in two separate stages:
 
 -  ``chemsmart run/sub gaussian ... pka [submit|batch]`` — prepare and run Gaussian pKa calculations.
 -  ``chemsmart run/sub orca ... pka [submit|batch]`` — prepare and run ORCA pKa calculations.
+-  Add ``--pkb`` to protonate a free-base input and run the same HA / A⁻ jobs; add ``--pks`` for a non-default
+   autoprotolysis constant (see :ref:`pka-pkb`).
 -  Use ``chemsmart run`` for local preparation and execution; use ``chemsmart sub`` on HPC clusters to generate
    scheduler scripts (see :ref:`pka-hpc-batch-submission`).
 -  A single structure yields one job; batch input (CSV table or multi-molecule CDXML) can produce multiple jobs in one
@@ -43,6 +47,7 @@ CHEMSMART provides pKa workflows in two separate stages:
 
 -  ``chemsmart run pka analyze`` — single-system analysis from up to eight output files.
 -  ``chemsmart run pka batch-analyze`` — table-driven batch analysis.
+-  Add ``--pkb`` and/or ``--pks`` on the ``pka`` group to also report pKb = pKs − pKa (see :ref:`pka-pkb`).
 -  Both commands use the same pKa analysis workflow. Gaussian ``.log`` and ORCA ``.out`` files can be mixed in the same
    batch table; each file is read and interpreted on its own.
 -  Analysis never invokes ``gaussian`` or ``orca`` job submission — only reads completed output files.
@@ -160,6 +165,10 @@ The default scheme is **proton exchange**, which requires a reference acid (``-r
    chemsmart run gaussian -p my_project -f acid.xyz -c 0 -m 1 pka -pi 10 -s direct
    chemsmart run orca -p my_project -f acid.xyz -c 0 -m 1 pka -pi 10 -s direct
 
+   # pKb submit: input is the free base B; omit -pi when SMARTS finds one site
+   chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
    # Batch submission (proton exchange requires reference options on the pka group)
    chemsmart run gaussian -p my_project -f pka_input.csv pka \
        -r ref_acid.xyz -rpi 21 -rc 1 -rm 1 batch
@@ -169,19 +178,59 @@ The default scheme is **proton exchange**, which requires a reference acid (``-r
 
 **Submission input table** (``pka batch``)
 
-Comma- or whitespace-delimited table with columns ``filepath``, ``proton_index``, ``charge``, ``multiplicity``.
+Comma- or whitespace-delimited table with columns ``filepath``, ``proton_index``, ``charge``, ``multiplicity``. With
+``--pkb``, ``proton_index`` is the **basic-atom** index to protonate. Leave ``proton_index`` blank to use ChemDraw
+colour (CDXML) or a unique SMARTS match (see :ref:`pka-site-resolution`).
+
+.. _pka-site-resolution:
+
+***********************************************
+ Ionizable Site Resolution (pKa and ``--pkb``)
+***********************************************
+
+Job submission locates a single ionizable site in this order. The same sequence applies to ordinary pKa and to
+``--pkb``:
+
+#. **Explicit** ``-pi`` / ``--proton-index`` (always wins).
+
+   -  pKa: 1-based index of the **hydrogen to remove**.
+   -  ``--pkb``: 1-based index of the **heavy atom to protonate**. A hydrogen index is rejected.
+
+#. **ChemDraw colour** (``.cdxml`` / ``.cdx`` only).
+
+   -  pKa: uniquely coloured **hydrogen**.
+   -  ``--pkb``: uniquely coloured **non-hydrogen** (the basic atom).
+   -  Use ``-cc`` / ``--color-code`` when more than one non-majority colour exists.
+   -  This step is skipped when the file is not CDXML, or when every atom shares one colour (no colour markup).
+   -  Ambiguous colour markup (several uniquely coloured candidates) is an error. SMARTS is **not** used as a fallback
+      in that case.
+
+#. **RDKit SMARTS** — exactly one matching site. Zero or several matches raise an error asking for ``-pi`` or ``-cc``.
+
+SMARTS patterns are conservative:
+
+-  **pKa:** carboxylic acid H, phenol H, thiol H, and ammonium/iminium H. Generic alcohols are not selected.
+-  **``--pkb``:** neutral nitrogen bases (aliphatic and aromatic amines, pyridine-like ring nitrogen, anilines). Amides,
+   nitro groups, nitriles, and quaternary nitrogen are excluded.
+
+.. note::
+
+   Colour a hydrogen for pKa. For ``--pkb``, colour the **basic heavy atom** (for example the pyridine nitrogen) the
+   same way. Colouring a hydrogen while ``--pkb`` is set is an error: colour the basic atom, or drop ``--pkb`` and run
+   pKa.
 
 ***************************************
  ChemDraw CDXML / CDX Input (pKa Jobs)
 ***************************************
 
 pKa job submission can read structures directly from ChemDraw ``.cdxml`` and ``.cdx`` files. CHEMSMART reads atom
-colours in the drawing to identify the **acidic proton** to remove. Colour the proton (or the ``H`` in a functional
-group such as –OH) in ChemDraw with a distinct colour; CHEMSMART auto-detects it so ``-pi`` is often unnecessary.
+colours in the drawing to identify the ionizable site (see :ref:`pka-site-resolution`). For pKa, colour the **acidic
+proton** (or the ``H`` in a functional group such as –OH) with a distinct colour. For ``--pkb``, colour the **basic
+heavy atom** instead. CHEMSMART auto-detects a uniquely coloured site so ``-pi`` is often unnecessary.
 
 **Single-molecule submit**
 
-When ``-f`` points to one CDXML structure with a single fragment, omit ``-pi`` if the coloured proton is unique:
+When ``-f`` points to one CDXML structure with a single fragment, omit ``-pi`` if the coloured site is unique:
 
 .. code:: bash
 
@@ -190,14 +239,20 @@ When ``-f`` points to one CDXML structure with a single fragment, omit ``-pi`` i
 
    chemsmart run gaussian -p my_project -f phenol.cdxml -c 0 -m 1 pka -s direct
 
-Use ``-cc`` / ``--color-code`` when several hydrogens share similar styling and you need to select a specific ChemDraw
+   # pKb: colour the pyridine nitrogen (not a hydrogen)
+   chemsmart run gaussian -p my_project -f pyridine.cdxml -c 0 -m 1 pka \
+       --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+Use ``-cc`` / ``--color-code`` when several atoms share similar styling and you need to select a specific ChemDraw
 colour-table index. The reference acid may also be a CDXML file; in that case ``-rpi`` can be omitted when the reference
-proton is uniquely coloured (or use ``-rcc`` / ``--reference-color-code``).
+proton is uniquely coloured (or use ``-rcc`` / ``--reference-color-code``). If the CDXML file has **no colour markup**
+(all atoms the same colour), site resolution falls through to SMARTS, the same as for XYZ.
 
 **Multi-molecule CDXML (one job per fragment)**
 
 A single ``.cdxml`` / ``.cdx`` file may contain **multiple molecules** (multiple ChemDraw fragments). CHEMSMART performs
-**per-fragment** coloured-proton detection and creates **one pKa job per fragment**.
+**per-fragment** colour detection and creates **one pKa job per fragment**. With ``--pkb``, each fragment is protonated
+at its coloured (or SMARTS) basic atom.
 
 Pass the file with ``pka batch`` (or ``pka submit`` for a single-fragment file):
 
@@ -232,14 +287,14 @@ How charge and multiplicity are resolved depends on the input mode:
    -  -  Single-molecule submit (XYZ, LOG, CDXML, …)
       -  ``-c`` and ``-m`` on the backend command are required unless already present on merged project/job settings.
 
-Blank ``proton_index`` in a **single-molecule CDXML table row** triggers coloured-proton auto-detection only; it does
-**not** remove the requirement for ``charge`` and ``multiplicity`` columns in CSV tables.
+Blank ``proton_index`` in a table row uses the site order in :ref:`pka-site-resolution` (ChemDraw colour, then SMARTS).
+It does **not** remove the requirement for ``charge`` and ``multiplicity`` columns in CSV tables.
 
 **CDXML paths inside a CSV batch table**
 
-You can mix XYZ and CDXML inputs in the same submission table. Each row becomes one pKa job. For a **single-molecule**
-``.cdxml`` / ``.cdx`` row, leave ``proton_index`` blank to auto-detect the coloured proton; an explicit value overrides
-the detection (same behaviour as single-file CDXML submit). Non-CDXML rows still require ``proton_index``.
+You can mix XYZ and CDXML inputs in the same submission table. Each row becomes one pKa job. Leave ``proton_index``
+blank to auto-detect the site (coloured atom on CDXML; unique SMARTS match on XYZ and uncoloured CDXML). An explicit
+value overrides detection. With ``--pkb``, a blank or explicit ``proton_index`` is the **basic-atom** index.
 
 .. code:: text
 
@@ -252,7 +307,7 @@ above) to create one job per ChemDraw fragment.
 
 .. note::
 
-   If ``-f`` is a CDXML file (not a CSV table), CHEMSMART routes to coloured-proton batch expansion automatically. For
+   If ``-f`` is a CDXML file (not a CSV table), CHEMSMART routes to per-fragment site detection automatically. For
    general CDXML structure handling outside pKa, see :doc:`chemdraw-organometallic`.
 
 **Proton and reference options for CDXML**
@@ -267,11 +322,13 @@ above) to create one job per ChemDraw fragment.
 
    -  -  ``-pi``
       -  ``--proton-index``
-      -  Optional for CDXML when a uniquely coloured proton is present. Required for XYZ/LOG/COM inputs.
+      -  Optional when a uniquely coloured ChemDraw site or a unique SMARTS match is present. pKa: hydrogen to remove.
+         ``--pkb``: heavy atom to protonate.
 
    -  -  ``-cc``
       -  ``--color-code``
-      -  ChemDraw colour-table index for the target acidic proton (``.cdxml`` / ``.cdx`` only).
+      -  ChemDraw colour-table index for the target site (``.cdxml`` / ``.cdx`` only). pKa: acidic proton. ``--pkb``:
+         basic heavy atom.
 
    -  -  ``-rpi``
       -  ``--reference-proton-index``
@@ -306,7 +363,62 @@ Each pKa job creates gas-phase opt+freq and solvent single-point sub-jobs. Outpu
 
 Gaussian batch jobs use the input stem as the job label (e.g. ``acid1_HA_opt.log``). ORCA batch jobs append ``_pka`` to
 the stem (e.g. ``acid1_pka_HA_opt.out``). The output-analysis autodiscovery convention below is aligned with the
-``{basename}_pka_*`` pattern used by ORCA submission and by typical batch output tables.
+``{basename}_pka_*`` pattern used by ORCA submission and by typical batch output tables. With ``--pkb``, HA is BH⁺ and
+A⁻ is B; file names are unchanged.
+
+.. _pka-pkb:
+
+**************************
+ pKb from pKa (``--pkb``)
+**************************
+
+There is no separate ``pkb`` command. Internally HA is always BH⁺ and A⁻ is always B. ``--pkb`` has two independent
+uses:
+
+**Submit** — the input file is the **free base** B. CHEMSMART protonates the resolved basic site, then runs the existing
+pKa jobs. ``-c`` / ``-m`` remain the charge and multiplicity of the file passed in. After protonation, the HA (BH⁺)
+charge is the input charge plus one; the conjugate-base (B) charge still defaults to the original ``-c``.
+
+Proton-exchange submit still requires a reference acid (``-r``, ``-rpi``, ``-rc``, ``-rm``, …). The experimental value
+is the **pKa** of HRef in that solvent. For amines, HRef should be a similar cationic acid. Direct-cycle submit (``-s
+direct``) is still allowed; pKb conversion does not depend on how pKa was obtained.
+
+**Analyze** — ``--pkb`` and/or ``--pks`` convert a computed pKa after the usual analysis step:
+
+.. math::
+
+   \mathrm{p}K_{\mathrm{b}} = \mathrm{p}K_{\mathrm{s}} - \mathrm{p}K_{\mathrm{a}}
+
+This works on any completed HA / A⁻ outputs, including jobs that were not submitted with ``--pkb``.
+
+**pKs**
+
+``--pks`` is the solvent autoprotolysis constant. If ``--pkb`` is set and ``--pks`` is omitted, ``14.0`` is used. That
+default is the conventional aqueous value (approximately :math:`\mathrm{p}K_{\mathrm{w}}` near 25 °C). It is **not**
+valid for other solvents, which have different autoprotolysis constants. Supplying ``--pks`` without ``--pkb`` on
+analysis also enables pKb reporting.
+
+.. warning::
+
+   Default pKs = 14.0 is for aqueous water only. When that default is applied and ``-si`` / ``--solvent-id`` is not
+   water (or ``h2o``), CHEMSMART warns: pass ``--pks`` for a literature non-aqueous autoprotolysis constant.
+
+.. code:: bash
+
+   # Submit free base; default pKs = 14 (water)
+   chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 pka \
+       --pkb -pi 1 -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+   # Non-aqueous: supply literature pKs (warning if default 14 is used)
+   chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 -si acetonitrile pka \
+       --pkb --pks 33.3 -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
+
+   # Analysis: print pKb from existing HA/A- outputs
+   chemsmart run pka --pkb analyze \
+       -ha acid1_pka_HA_opt.log -hr ref_acid_pka_HRef_opt.log -rp 6.75
+
+   chemsmart run pka --pkb --pks 16.7 analyze \
+       -ha acid1_pka_HA_opt.log -hr ref_acid_pka_HRef_opt.log -rp 6.75
 
 .. _pka-hpc-batch-submission:
 
@@ -434,6 +546,23 @@ default, or pass ``-dG`` to override:
 Only ``-ha`` is strictly required; ``-a``, ``-has``, and ``-as`` are auto-discovered from the target-acid suffix
 convention when omitted.
 
+**pKb conversion**
+
+``--pkb`` (and/or ``--pks``) reports :math:`\mathrm{p}K_{\mathrm{b}} = \mathrm{p}K_{\mathrm{s}} -
+\mathrm{p}K_{\mathrm{a}}` from the same HA / A⁻ files. See :ref:`pka-pkb`.
+
+.. code:: bash
+
+   chemsmart run pka --pkb analyze \
+       -ha acid1_pka_HA_opt.log \
+       -hr ref_acid_pka_HRef_opt.log \
+       -rp 6.75
+
+   chemsmart run pka --pkb --pks 16.7 analyze \
+       -ha acid1_pka_HA_opt.log \
+       -hr ref_acid_pka_HRef_opt.log \
+       -rp 6.75
+
 File autodetection (``analyze``)
 ================================
 
@@ -480,6 +609,15 @@ Specify ``-s direct``. Omit ``-dG`` to use the computed aqueous default:
    chemsmart run pka -s direct batch-analyze \
        -o pka_output_table_direct.csv \
        -O results_direct.dat
+
+**pKb conversion**
+
+Add ``--pkb`` and optionally ``--pks`` on the ``pka`` group. The summary table gains ``pKb`` and ``pKs`` columns.
+
+.. code:: bash
+
+   chemsmart run pka --pkb batch-analyze -o pka_output_table.csv -O results.dat
+   chemsmart run pka --pkb --pks 16.7 batch-analyze -o pka_output_table.csv
 
 The formatted batch summary table is printed to stdout. When ``-O`` / ``--output-results`` is given, the same formatted
 report is written to that file (not a wide CSV of input columns).
@@ -612,11 +750,24 @@ options on ``chemsmart run/sub gaussian ... pka`` and ``chemsmart run/sub orca .
          aqueous default is computed from Kelly, Cramer, and Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) =
          -265.9` kcal/mol.
 
+   -  -
+      -  ``--pkb``
+      -  Also print pKb = pKs − pKa. If ``--pks`` is omitted, 14.0 is used.
+
+   -  -
+      -  ``--pks``
+      -  Solvent autoprotolysis constant. Supplying ``--pks`` also enables pKb reporting.
+
 .. note::
 
    If ``-dG`` is omitted for the direct cycle, :math:`G_{\text{soln}}(\text{H}^{+})` is computed from Kelly, Cramer, and
    Truhlar :math:`\Delta G^{*}_{\text{solv}}(\text{H}^{+}) = -265.9` kcal/mol (aqueous water at the requested
    temperature). Pass ``-dG`` to override.
+
+.. warning::
+
+   Default pKs = 14.0 is for aqueous water only. When ``--pkb`` is used without ``--pks`` and the solvent is not water,
+   CHEMSMART warns and you should pass a literature ``--pks``. See :ref:`pka-pkb`.
 
 *********************
  Output File Options
@@ -773,6 +924,17 @@ When computing pKa from output files, CHEMSMART prints a detailed summary. The f
      *** Computed pKa(HA) = 52.70 ***
    ==============================================================================
 
+When ``--pkb`` or ``--pks`` is set, the summary adds pKs and pKb lines:
+
+.. code:: text
+
+   pKs = 14.00 (default aqueous)
+
+   *** Computed pKa(HA) = 52.70 ***
+   *** Computed pKb(B)  = -38.70 ***
+
+With an explicit ``--pks``, the source reads ``(user-supplied)`` instead of ``(default aqueous)``.
+
 **Direct dissociation**
 
 .. code:: text
@@ -856,7 +1018,7 @@ suffix, depending on backend). Example (values from a test reference acid; not p
    ==============================================================================
 
 For direct dissociation, the header reads ``Batch pKa Results (Direct Dissociation)`` and the column is labeled
-``ΔG_diss (kcal/mol)``.
+``ΔG_diss (kcal/mol)``. With ``--pkb`` or ``--pks``, the table also includes ``pKb`` and ``pKs`` columns.
 
 References
 ==========
