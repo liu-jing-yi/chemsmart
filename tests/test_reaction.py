@@ -700,6 +700,46 @@ class TestReactionStructureDispatch:
 
 
 class TestReactionCLI:
+    def test_gaussian_runner_accepts_reaction_type(self, pbs_server):
+        from types import SimpleNamespace
+
+        from chemsmart.jobs.gaussian.runner import FakeGaussianJobRunner
+        from chemsmart.jobs.runner import JobRunner
+
+        runner = JobRunner.from_job(
+            job=SimpleNamespace(TYPE="g16reaction"),
+            server=pbs_server,
+            scratch=False,
+            fake=True,
+        )
+        assert isinstance(runner, FakeGaussianJobRunner)
+
+    def test_orca_runner_accepts_reaction_type(self, pbs_server):
+        from types import SimpleNamespace
+
+        from chemsmart.jobs.orca.runner import FakeORCAJobRunner
+        from chemsmart.jobs.runner import JobRunner
+
+        runner = JobRunner.from_job(
+            job=SimpleNamespace(TYPE="orcareaction"),
+            server=pbs_server,
+            scratch=False,
+            fake=True,
+        )
+        assert isinstance(runner, FakeORCAJobRunner)
+
+    def test_no_top_level_reaction_analyze_command(self):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.run import run
+        from chemsmart.cli.subcommands import subcommands
+
+        assert "reaction" not in {cmd.name for cmd in subcommands}
+        runner = CliRunner()
+        result = runner.invoke(run, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  reaction" not in result.output
+
     def test_help_lists_reaction_submit_subcommand(self):
         from click.testing import CliRunner
 
