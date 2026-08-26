@@ -1,10 +1,11 @@
 """
-Gaussian QST2/QST3 input construction for reaction path searches.
+Gaussian reaction workflow: optional QST2/QST3 guess, then TS/R/P opt and SP.
 
-Reuses ``GaussianInputWriter`` and ``settings.route_string``. The only
-route change is the optimization keyword (``opt=qst2`` or ``opt=qst3``).
+QST input reuses ``GaussianInputWriter`` and ``settings.route_string``. The
+only route change is the optimization keyword (``opt=qst2`` or ``opt=qst3``).
 The assembled ``.com`` is stored on ``settings.input_string`` and run as
-``GaussianComJob``.
+``GaussianComJob``. Child Opt/TS/SP jobs are stock classes sequenced with
+``ChainMixin``.
 """
 
 import logging
@@ -12,9 +13,13 @@ import re
 from io import StringIO
 
 from chemsmart.io.molecules.structure import Molecule
-from chemsmart.jobs.gaussian.job import GaussianComJob
+from chemsmart.jobs.gaussian.job import GaussianComJob, GaussianJob
+from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianJobSettings
+from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
+from chemsmart.jobs.gaussian.ts import GaussianTSJob
 from chemsmart.jobs.gaussian.writer import GaussianInputWriter
+from chemsmart.jobs.reaction import ReactionChainMixin
 from chemsmart.utils.repattern import (
     gaussian_opt_keywords_pattern,
     multiple_spaces_pattern,
@@ -223,3 +228,90 @@ class _QSTGaussianInputWriter(GaussianInputWriter):
         self._append_custom_solvent_parameters(f)
         self._append_job_specific_info(f)
         self._append_other_additional_info(f)
+
+
+class GaussianReactionJob(ReactionChainMixin, GaussianJob):
+    """Gaussian R/TS/P chain: optional QST guess, then opt+freq and SP.
+
+    Case 1 (no product, or ``no_path_search``): skip Guess. Parent
+    ``molecule`` is the TS. Optional reactants and products are extra
+    minima.
+
+    Case 2 (products given): run QST2 (reactant+product) or QST3 (also a
+    TS guess) as ``GaussianComJob``, then the same case-1 characterization.
+    Parent ``molecule`` is the reactant unless ``reactants`` is also set,
+    in which case parent ``molecule`` is the QST3 guess.
+
+    Attributes:
+        TYPE (str): Job type identifier ('g16reaction').
+        molecule (Molecule): TS (case 1) or reactant (case 2).
+        settings (GaussianJobSettings): Parent settings used as the default
+            child template when opt/ts/sp settings are omitted.
+        label (str): Base job identifier used for file naming.
+        jobrunner (JobRunner): Execution backend that runs the jobs.
+        skip_completed (bool): If True, completed jobs are not rerun.
+        reactants (tuple): Extra reactant minima to optimize.
+        products (tuple): Product minima; presence selects case 2.
+        ts_guess (Molecule): Optional QST3 intermediate when ``-f`` is the
+            reactant.
+        no_path_search (bool): Force case 1 even when products are set.
+        no_sp (bool): Omit solution-phase single-point children.
+    """
+
+    TYPE = "g16reaction"
+    _opt_job_class = GaussianOptJob
+    _ts_job_class = GaussianTSJob
+    _sp_job_class = GaussianSinglePointJob
+
+    def __init__(
+        self,
+        molecule,
+        settings=None,
+        label=None,
+        jobrunner=None,
+        skip_completed=True,
+        reactants=None,
+        products=None,
+        ts_guess=None,
+        no_path_search=False,
+        no_sp=False,
+        opt_settings=None,
+        ts_settings=None,
+        sp_settings=None,
+        **kwargs,
+    ):
+        if not isinstance(settings, GaussianJobSettings):
+            raise ValueError(
+                f"Settings must be instance of GaussianJobSettings for "
+                f"{self.__class__.__name__}, but is {settings} instead!"
+            )
+
+        super().__init__(
+            molecule=molecule,
+            settings=settings,
+            label=label,
+            jobrunner=jobrunner,
+            skip_completed=skip_completed,
+            reactants=reactants,
+            products=products,
+            ts_guess=ts_guess,
+            no_path_search=no_path_search,
+            no_sp=no_sp,
+            opt_settings=opt_settings,
+            ts_settings=ts_settings,
+            sp_settings=sp_settings,
+            **kwargs,
+        )
+
+    def _make_guess_job(self):
+        settings = self._ts_settings_for(self.path_reactant)
+        settings.freq = False
+        return make_qst_com_job(
+            reactant=self.path_reactant,
+            product=self.path_product,
+            settings=settings,
+            ts_guess=self.path_ts_guess,
+            label=f"{self.label}_qst",
+            jobrunner=self.jobrunner,
+            skip_completed=self.skip_completed,
+        )
