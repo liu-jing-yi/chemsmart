@@ -11,6 +11,7 @@ from .nci import nci
 from .opt import opt
 from .pka import pka
 from .qrc import qrc
+from .reaction import reaction
 from .resp import resp
 from .scan import scan
 from .singlepoint import sp
@@ -33,6 +34,7 @@ __all__ = [
     "opt",
     "pka",
     "qrc",
+    "reaction",
     "resp",
     "scan",
     "traj",

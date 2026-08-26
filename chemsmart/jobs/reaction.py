@@ -13,6 +13,7 @@ class ReactionChainMixin(ChainMixin):
     _opt_job_class = None
     _ts_job_class = None
     _sp_job_class = None
+    uses_neb = False
 
     def __init__(
         self,

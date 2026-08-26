@@ -596,3 +596,346 @@ class TestORCAReactionJob:
             no_sp=True,
         )
         assert job.phase_by_name("SP").should_skip()
+
+
+def _write_h2_xyz(path, z_h2=0.74):
+    path.write_text(f"2\nh2\nH 0.0 0.0 0.0\nH 0.0 0.0 {z_h2:.2f}\n")
+    return path
+
+
+def _write_reaction_project(tmp_path, backend):
+    config_root = tmp_path / "chemsmart_cfg"
+    backend_cfg_dir = config_root / backend
+    backend_cfg_dir.mkdir(parents=True)
+    (backend_cfg_dir / "test.yaml").write_text(
+        "gas:\n"
+        "  functional: B3LYP\n"
+        "  basis: def2-SVP\n"
+        "solv:\n"
+        "  functional: B3LYP\n"
+        "  basis: def2-SVP\n"
+        "  freq: false\n"
+        "  solvent_model: smd\n"
+        "  solvent_id: water\n"
+    )
+    return config_root
+
+
+def _setup_sub_reaction(tmp_path, monkeypatch, backend):
+    """Fake server capture for ``chemsmart sub ... reaction`` tests."""
+    monkeypatch.setenv(
+        "CHEMSMART_CONFIG_DIR",
+        str(_write_reaction_project(tmp_path, backend)),
+    )
+    from chemsmart.settings.server import Server
+
+    fake_server = Server(name="dummy")
+    captured = {"submissions": []}
+    fake_server.submit = lambda job, test=False, cli_args=None, **kw: captured[
+        "submissions"
+    ].append((job, test, cli_args))
+    monkeypatch.setattr(
+        "chemsmart.settings.server.Server.from_servername",
+        lambda _name: fake_server,
+    )
+    return captured
+
+
+class TestReactionStructureDispatch:
+    def test_filename_only_is_case1_ts(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        ts = _h2(0.82)
+        result = resolve_reaction_structures(ts)
+        assert result["molecule"] is ts
+        assert result["reactants"] == ()
+        assert result["products"] == ()
+        assert result["ts_guess"] is None
+
+    def test_reactant_without_product_is_case1(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        ts = _h2(0.82)
+        reactant = _h2(0.74)
+        result = resolve_reaction_structures(
+            ts, reactant_molecules=(reactant,)
+        )
+        assert result["molecule"] is ts
+        assert result["reactants"] == (reactant,)
+        assert result["products"] == ()
+
+    def test_product_without_reactant_is_case2_parent_is_reactant(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        reactant = _h2(0.74)
+        product = _h2(0.90)
+        result = resolve_reaction_structures(
+            reactant, product_molecules=(product,)
+        )
+        assert result["molecule"] is reactant
+        assert result["reactants"] == ()
+        assert result["products"] == (product,)
+        assert result["ts_guess"] is None
+
+    def test_reactant_and_product_use_parent_as_guess(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        ts = _h2(0.82)
+        reactant = _h2(0.74)
+        product = _h2(0.90)
+        result = resolve_reaction_structures(
+            ts,
+            reactant_molecules=(reactant,),
+            product_molecules=(product,),
+        )
+        assert result["molecule"] is ts
+        assert result["reactants"] == (reactant,)
+        assert result["products"] == (product,)
+
+    def test_ts_guess_without_product_errors(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        with pytest.raises(ValueError, match="--ts-guess requires a product"):
+            resolve_reaction_structures(_h2(), ts_guess_molecule=_h2(0.82))
+
+
+class TestReactionCLI:
+    def test_help_lists_reaction_submit_subcommand(self):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.run import run
+
+        runner = CliRunner()
+        result = runner.invoke(run, ["gaussian", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  reaction" in result.output
+        result = runner.invoke(run, ["orca", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  reaction" in result.output
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_reaction_help_is_submission_only(
+        self, tmp_path, monkeypatch, backend
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.run import run
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        monkeypatch.setenv(
+            "CHEMSMART_CONFIG_DIR",
+            str(_write_reaction_project(tmp_path, backend)),
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "--no-scratch",
+                "--fake",
+                backend,
+                "-p",
+                "test",
+                "-f",
+                str(ts),
+                "reaction",
+                "--help",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "\n  submit" in result.output
+        assert "\n  batch" in result.output
+        assert "\n  analyze" not in result.output
+        assert "--reactant" in result.output
+        assert "--product" in result.output
+        assert "--ts-guess" in result.output
+        assert "--no-path-search" not in result.output
+        assert "--no-sp" not in result.output
+
+    def test_gaussian_case1_skips_guess(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+        from chemsmart.jobs.gaussian.reaction import GaussianReactionJob
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(ts),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(captured["submissions"]) == 1
+        job = captured["submissions"][0][0]
+        assert isinstance(job, GaussianReactionJob)
+        assert job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is None
+
+    def test_gaussian_product_without_reactant_is_case2(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+        from chemsmart.jobs.gaussian.job import GaussianComJob
+
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--product",
+                str(product),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert not job.phase_by_name("Guess").should_skip()
+        assert isinstance(job.guess_job, GaussianComJob)
+        assert "qst2" in job.guess_job.settings.input_string.lower()
+
+    def test_orca_product_without_reactant_uses_neb(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+        from chemsmart.jobs.orca.neb import ORCANEBJob
+
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "orca")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "orca",
+                "-p",
+                "test",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--product",
+                str(product),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert not job.phase_by_name("Guess").should_skip()
+        assert isinstance(job.guess_job, ORCANEBJob)
+
+    def test_batch_table_groups_by_reaction_id(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            "reaction_id,filepath,role,charge,multiplicity\n"
+            f"sn2,{ts},ts,0,1\n"
+            f"sn2,{reactant},reactant,0,1\n"
+            f"sn2,{product},product,0,1\n"
+        )
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(table),
+                "reaction",
+                "batch",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(captured["submissions"]) == 1
+        job = captured["submissions"][0][0]
+        assert job.label == "sn2"
+        assert not job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is not None
+        cli_args = captured["submissions"][0][2]
+        assert "batch" not in cli_args
+        assert "submit" in cli_args
+        assert "--reactant" in cli_args
+        assert "--product" in cli_args
+
+    def test_replace_reaction_batch_tokens_emits_submit(self):
+        from chemsmart.cli.reaction import replace_reaction_batch_tokens
+
+        rewritten = replace_reaction_batch_tokens(
+            [
+                "gaussian",
+                "-f",
+                "table.csv",
+                "reaction",
+                "batch",
+            ],
+            {
+                "kind": "reaction",
+                "filepath": "ts.xyz",
+                "charge": 0,
+                "multiplicity": 1,
+                "label": "sn2",
+                "reactants": ["r.xyz"],
+                "products": ["p.xyz"],
+                "ts_guess": None,
+            },
+        )
+        assert rewritten[rewritten.index("-f") + 1] == "ts.xyz"
+        assert "batch" not in rewritten
+        assert "submit" in rewritten
+        assert "--reactant" in rewritten
+        assert "--product" in rewritten
+        assert "--no-path-search" not in rewritten
+        assert "--no-sp" not in rewritten
+        assert "--charge" in rewritten
+        assert "--label" in rewritten

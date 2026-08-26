@@ -82,6 +82,7 @@ class ORCAReactionJob(ReactionChainMixin, ORCAJob):
     """
 
     TYPE = "orcareaction"
+    uses_neb = True
     _opt_job_class = ORCAOptJob
     _ts_job_class = ORCATSJob
     _sp_job_class = ORCASinglePointJob

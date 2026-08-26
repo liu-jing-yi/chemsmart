@@ -711,23 +711,6 @@ def require_pka_charge_multiplicity(opt_settings, source_hint=""):
     )
 
 
-def is_pka_batch_invocation(ctx):
-    """Return True when the nested ``pka`` command targets ``batch`` mode."""
-    if getattr(ctx, "invoked_subcommand", None) != "pka":
-        return False
-
-    tokens = []
-    current = ctx
-    while current is not None:
-        if getattr(current, "invoked_subcommand", None) == "pka":
-            tokens.extend(str(token) for token in (current.args or []))
-        current = current.parent
-
-    if "submit" in tokens:
-        return False
-    return "batch" in tokens
-
-
 def resolve_pka_batch_row(filepath, proton_index=None, color_code=None):
     """Resolve proton index and molecule for one pKa submission-table row.
 

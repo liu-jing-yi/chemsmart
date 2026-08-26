@@ -424,6 +424,229 @@ class PKaTableEntry:
         return entries
 
 
+class ReactionTableEntry:
+    """Row abstraction for reaction job-submission tables.
+
+    Columns: reaction_id, filepath, role, charge, multiplicity.
+    """
+
+    ROLES = ("ts", "reactant", "product")
+    _ALIASES = {
+        "reaction_id": ["reaction_id", "reaction", "id", "name"],
+        "filepath": ["filepath", "file_path", "path"],
+        "role": ["role", "type"],
+        "charge": ["charge", "q"],
+        "multiplicity": ["multiplicity", "mult", "m"],
+    }
+    _ROLE_ALIASES = {
+        "ts": "ts",
+        "transition_state": "ts",
+        "ts_guess": "ts",
+        "reactant": "reactant",
+        "reactants": "reactant",
+        "r": "reactant",
+        "product": "product",
+        "products": "product",
+        "p": "product",
+    }
+
+    def __init__(self, data, row_number=None):
+        if not isinstance(data, dict):
+            raise TypeError(
+                "ReactionTableEntry requires a dict of row values."
+            )
+        self.row_number = row_number
+        self.reaction_id = None
+        self.filepath = None
+        self.role = None
+        self.charge = None
+        self.multiplicity = None
+        for key, value in data.items():
+            if key == "row_number":
+                continue
+            self._set_field(key, value)
+
+    def _canonical_key(self, key):
+        nk = PKaTableEntry.normalize_header(key)
+        for canonical, aliases in self._ALIASES.items():
+            if nk == PKaTableEntry.normalize_header(canonical):
+                return canonical
+            for alias in aliases:
+                if nk == PKaTableEntry.normalize_header(alias):
+                    return canonical
+        return None
+
+    def _canonical_role(self, value):
+        if value is None:
+            return None
+        key = PKaTableEntry.normalize_header(value)
+        return self._ROLE_ALIASES.get(key)
+
+    def _set_field(self, key, value):
+        value = normalize_table_cell(value)
+        canonical = self._canonical_key(key)
+        if canonical == "reaction_id":
+            self.reaction_id = str(value) if value is not None else None
+        elif canonical == "filepath":
+            self.filepath = value
+        elif canonical == "role":
+            self.role = self._canonical_role(value)
+            if self.role is None and value is not None:
+                self.role = str(value).strip().lower()
+        elif canonical == "charge":
+            self.charge = value
+        elif canonical == "multiplicity":
+            self.multiplicity = value
+
+    def validate(self, check_file_exists=True):
+        errors = []
+        row_info = f" (row {self.row_number})" if self.row_number else ""
+        if not self.reaction_id:
+            errors.append(f"Missing reaction_id{row_info}")
+        if not self.filepath:
+            errors.append(f"Empty filepath{row_info}")
+        elif check_file_exists and not os.path.exists(str(self.filepath)):
+            errors.append(f"File not found: {self.filepath}{row_info}")
+        if self.role not in self.ROLES:
+            errors.append(
+                f"Invalid role {self.role!r}{row_info}; "
+                f"expected one of {', '.join(self.ROLES)}"
+            )
+        if self.charge is None:
+            errors.append(f"Missing charge{row_info}")
+        else:
+            try:
+                int(self.charge)
+            except (TypeError, ValueError):
+                errors.append(f"Invalid charge: {self.charge!r}{row_info}")
+        if self.multiplicity is None:
+            errors.append(f"Missing multiplicity{row_info}")
+        else:
+            try:
+                multiplicity = int(self.multiplicity)
+                if multiplicity < 1:
+                    errors.append(
+                        f"multiplicity must be >= 1, got {multiplicity}{row_info}"
+                    )
+            except (TypeError, ValueError):
+                errors.append(
+                    f"Invalid multiplicity: {self.multiplicity!r}{row_info}"
+                )
+        if errors:
+            raise ValueError("; ".join(errors))
+
+    @staticmethod
+    def is_submission_table(table_path) -> bool:
+        """Return True when *table_path* has reaction submission-table columns."""
+        from chemsmart.io.datasets import TabularDataset
+
+        if not table_path:
+            return False
+        try:
+            dataset = TabularDataset.parse_table(
+                table_path=table_path,
+                comment="#",
+            )
+            for aliases in ReactionTableEntry._ALIASES.values():
+                TabularDataset.resolve_column(dataset.columns, aliases)
+            return True
+        except (ValueError, FileNotFoundError, OSError):
+            return False
+
+    @staticmethod
+    def parse_reaction_table(table_path: str, delimiter: str = None) -> list:
+        """Parse a reaction submission table into :class:`ReactionTableEntry` rows."""
+        from chemsmart.io.datasets import TabularDataset
+
+        dataset = TabularDataset.parse_table(
+            table_path=table_path,
+            delimiter=delimiter,
+            comment="#",
+        )
+        try:
+            id_col = TabularDataset.resolve_column(
+                dataset.columns,
+                ReactionTableEntry._ALIASES["reaction_id"],
+            )
+            file_col = TabularDataset.resolve_column(
+                dataset.columns,
+                ReactionTableEntry._ALIASES["filepath"],
+            )
+            role_col = TabularDataset.resolve_column(
+                dataset.columns,
+                ReactionTableEntry._ALIASES["role"],
+            )
+            charge_col = TabularDataset.resolve_column(
+                dataset.columns,
+                ReactionTableEntry._ALIASES["charge"],
+            )
+            mult_col = TabularDataset.resolve_column(
+                dataset.columns,
+                ReactionTableEntry._ALIASES["multiplicity"],
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "Invalid table format: expected columns "
+                "(reaction_id, filepath, role, charge, multiplicity)."
+            ) from exc
+
+        canonical_df = dataset.dataframe.rename(
+            columns={
+                id_col: "reaction_id",
+                file_col: "filepath",
+                role_col: "role",
+                charge_col: "charge",
+                mult_col: "multiplicity",
+            }
+        )[
+            [
+                "reaction_id",
+                "filepath",
+                "role",
+                "charge",
+                "multiplicity",
+            ]
+        ]
+        canonical_dataset = TabularDataset(
+            canonical_df, source_path=table_path
+        )
+        entries = canonical_dataset.to_entries(
+            entry_cls=ReactionTableEntry, row_offset=2
+        )
+        for entry in entries:
+            line_num = entry.row_number if entry.row_number is not None else 0
+            if entry.charge is not None:
+                try:
+                    entry.charge = int(entry.charge)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Invalid charge at line {line_num}: "
+                        f"{entry.charge!r} is not an integer"
+                    )
+            if entry.multiplicity is not None:
+                try:
+                    entry.multiplicity = int(entry.multiplicity)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Invalid multiplicity at line {line_num}: "
+                        f"{entry.multiplicity!r} is not an integer"
+                    )
+            entry.validate(check_file_exists=True)
+        if not entries:
+            raise ValueError(
+                f"No valid entries found in reaction table: {table_path}"
+            )
+        return entries
+
+    @staticmethod
+    def group_by_reaction_id(entries):
+        """Return an ordered mapping of reaction_id → row list."""
+        grouped = {}
+        for entry in entries:
+            grouped.setdefault(entry.reaction_id, []).append(entry)
+        return grouped
+
+
 class PKaOutputTableEntry:
     """Row abstraction for a pKa output table.
 
