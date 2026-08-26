@@ -347,7 +347,9 @@ Transition State Search
    -  -  Subcommand
       -  Description
    -  -  ``ts``
-      -  Transition state optimization
+      -  Transition state optimization (single structure)
+   -  -  ``reaction``
+      -  R/TS/P workflow (optional QST, then opt and SP); see :doc:`gaussian-reaction-calculations`
    -  -  ``modred``
       -  Modified redundant coordinate optimization
    -  -  ``irc``
@@ -403,6 +405,7 @@ For detailed information on each job type:
 
 -  :doc:`gaussian-structure-optimization`
 -  :doc:`gaussian-transition-state`
+-  :doc:`gaussian-reaction-calculations`
 -  :doc:`gaussian-conformational-sampling`
 -  :doc:`gaussian-qrc`
 -  :doc:`gaussian-electronic-structure`

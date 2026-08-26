@@ -177,6 +177,15 @@
    :undoc-members:
    :show-inheritance:
 
+****************************************
+ chemsmart.cli.gaussian.reaction module
+****************************************
+
+.. automodule:: chemsmart.cli.gaussian.reaction
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 *****************
  Module contents
 *****************

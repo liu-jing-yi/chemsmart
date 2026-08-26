@@ -102,6 +102,12 @@ computational chemistry software.
 
 .. toctree::
    :maxdepth: 2
+   :caption: Reaction Workflow
+
+   reaction
+
+.. toctree::
+   :maxdepth: 2
    :caption: Thermochemistry
 
    thermochemistry-analysis

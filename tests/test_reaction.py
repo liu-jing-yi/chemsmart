@@ -287,6 +287,8 @@ class TestGaussianReactionJob:
         assert [phase.name for phase in job.phases] == ["Guess", "Opt", "SP"]
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
+        assert job.phase_by_name("Guess").require_complete is True
+        assert job.phase_by_name("Guess").stop_on_incomplete is True
         assert isinstance(job.ts_opt_job, GaussianTSJob)
         assert job.ts_opt_job.label == "sn2_TS_opt"
         assert job.ts_opt_job.settings.jobtype == "ts"
@@ -338,6 +340,8 @@ class TestGaussianReactionJob:
             sp_settings=_sp_settings(),
         )
         assert not job.phase_by_name("Guess").should_skip()
+        assert job.phase_by_name("Guess").require_complete is True
+        assert job.phase_by_name("Guess").stop_on_incomplete is True
         assert isinstance(job.guess_job, GaussianComJob)
         assert job.guess_job.TYPE == "g16com"
         assert job.guess_job.label == "sn2_qst"
@@ -506,6 +510,8 @@ class TestORCAReactionJob:
             neb_settings=_orca_settings("neb"),
         )
         assert not job.phase_by_name("Guess").should_skip()
+        assert job.phase_by_name("Guess").require_complete is True
+        assert job.phase_by_name("Guess").stop_on_incomplete is True
         assert isinstance(job.guess_job, ORCANEBJob)
         assert job.guess_job.label == "sn2_neb"
         assert job.guess_job.settings.joboption == "NEB-TS"
@@ -699,7 +705,79 @@ class TestReactionStructureDispatch:
             resolve_reaction_structures(_h2(), ts_guess_molecule=_h2(0.82))
 
 
+class TestReactionTableEntry:
+    def test_parse_groups_by_reaction_id(self, tmp_path):
+        from chemsmart.utils.datasets import ReactionTableEntry
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            "reaction_id,filepath,role,charge,multiplicity\n"
+            f"sn2,{ts},ts,0,1\n"
+            f"sn2,{reactant},reactant,-1,1\n"
+            f"sn2,{product},product,-1,1\n"
+            f"ene,{ts},ts,0,1\n"
+        )
+        entries = ReactionTableEntry.parse_reaction_table(str(table))
+        grouped = ReactionTableEntry.group_by_reaction_id(entries)
+        assert list(grouped) == ["sn2", "ene"]
+        assert [entry.role for entry in grouped["sn2"]] == [
+            "ts",
+            "reactant",
+            "product",
+        ]
+        assert grouped["sn2"][1].charge == -1
+
+    def test_role_aliases_and_invalid_role(self, tmp_path):
+        from chemsmart.utils.datasets import ReactionTableEntry
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            "id,path,type,q,m\n"
+            f"sn2,{ts},transition_state,0,1\n"
+            f"sn2,{reactant},r,-1,1\n"
+        )
+        entries = ReactionTableEntry.parse_reaction_table(str(table))
+        assert [entry.role for entry in entries] == ["ts", "reactant"]
+
+        bad = tmp_path / "bad.csv"
+        bad.write_text(
+            "reaction_id,filepath,role,charge,multiplicity\n"
+            f"sn2,{ts},solvent,0,1\n"
+        )
+        with pytest.raises(ValueError, match="Invalid role"):
+            ReactionTableEntry.parse_reaction_table(str(bad))
+
+    def test_is_submission_table(self, tmp_path):
+        from chemsmart.utils.datasets import ReactionTableEntry
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            f"reaction_id,filepath,role,charge,multiplicity\nsn2,{ts},ts,0,1\n"
+        )
+        xyz = tmp_path / "mol.xyz"
+        _write_h2_xyz(xyz)
+        assert ReactionTableEntry.is_submission_table(str(table))
+        assert not ReactionTableEntry.is_submission_table(str(xyz))
+        assert not ReactionTableEntry.is_submission_table(None)
+
+
 class TestReactionCLI:
+    def test_gaussian_jobtypes_includes_reaction(self):
+        from chemsmart.jobs.gaussian.runner import GaussianJobRunner
+
+        assert "g16reaction" in GaussianJobRunner.JOBTYPES
+
+    def test_orca_jobtypes_includes_reaction(self):
+        from chemsmart.jobs.orca.runner import ORCAJobRunner
+
+        assert "orcareaction" in ORCAJobRunner.JOBTYPES
+
     def test_gaussian_runner_accepts_reaction_type(self, pbs_server):
         from types import SimpleNamespace
 
@@ -865,6 +943,159 @@ class TestReactionCLI:
         assert isinstance(job.guess_job, GaussianComJob)
         assert "qst2" in job.guess_job.settings.input_string.lower()
 
+    def test_gaussian_ts_guess_with_product_is_qst3(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+        from chemsmart.jobs.gaussian.job import GaussianComJob
+
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        ts_guess = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--product",
+                str(product),
+                "--ts-guess",
+                str(ts_guess),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert isinstance(job.guess_job, GaussianComJob)
+        qst_text = job.guess_job.settings.input_string.lower()
+        assert "qst3" in qst_text
+        assert "qst2" not in qst_text
+
+    def test_gaussian_reactant_and_product_use_parent_as_qst3(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(ts),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--reactant",
+                str(reactant),
+                "--product",
+                str(product),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert not job.phase_by_name("Guess").should_skip()
+        assert "qst3" in job.guess_job.settings.input_string.lower()
+
+    def test_ts_guess_without_product_is_usage_error(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        guess = _write_h2_xyz(tmp_path / "guess.xyz", 0.80)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(ts),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--ts-guess",
+                str(guess),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--ts-guess requires a product" in result.output
+        assert captured["submissions"] == []
+
+    def test_orca_case1_skips_guess(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+        from chemsmart.jobs.orca.reaction import ORCAReactionJob
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "orca")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "orca",
+                "-p",
+                "test",
+                "-f",
+                str(ts),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert isinstance(job, ORCAReactionJob)
+        assert job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is None
+
     def test_orca_product_without_reactant_uses_neb(
         self, tmp_path, monkeypatch
     ):
@@ -947,6 +1178,42 @@ class TestReactionCLI:
         assert "submit" in cli_args
         assert "--reactant" in cli_args
         assert "--product" in cli_args
+
+    def test_batch_ts_only_is_case1(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            f"reaction_id,filepath,role,charge,multiplicity\nsn2,{ts},ts,0,1\n"
+        )
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(table),
+                "reaction",
+                "batch",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert job.label == "sn2"
+        assert job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is None
+        assert job.reactant_opt_jobs == []
+        assert job.product_opt_jobs == []
 
     def test_replace_reaction_batch_tokens_emits_submit(self):
         from chemsmart.cli.reaction import replace_reaction_batch_tokens
