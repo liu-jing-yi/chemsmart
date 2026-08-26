@@ -1,6 +1,16 @@
 """Shared Guess → Opt → SP chain for Gaussian and ORCA reaction jobs."""
 
+import logging
+
 from chemsmart.jobs.chain import ChainMixin, JobPhase
+
+logger = logging.getLogger(__name__)
+
+PATH_SEARCH_SINGLE_STRUCTURE = (
+    "Path search requires a single reactant geometry and a single product "
+    "geometry. Combine fragments into one structure, or provide a TS guess "
+    "with extra fragments to optimize without path search."
+)
 
 
 class ReactionChainMixin(ChainMixin):
@@ -8,6 +18,9 @@ class ReactionChainMixin(ChainMixin):
 
     Subclasses set ``_opt_job_class``, ``_ts_job_class``, and
     ``_sp_job_class``, and implement ``_make_guess_job``.
+
+    Path search (QST/NEB) runs only for exactly one reactant geometry and
+    one product geometry. Extra fragments with a TS parent skip Guess.
     """
 
     _opt_job_class = None
@@ -39,6 +52,7 @@ class ReactionChainMixin(ChainMixin):
         self.ts_settings = ts_settings
         self.sp_settings = sp_settings
         self.neb_settings = neb_settings
+        self._configure_path_search()
 
         self.guess_job = (
             self._make_guess_job() if self.uses_path_search else None
@@ -49,6 +63,24 @@ class ReactionChainMixin(ChainMixin):
         self.sp_jobs = None
         self._create_opt_jobs()
         self.phases = self._build_reaction_phases()
+
+    def _configure_path_search(self):
+        """Skip or reject Guess when fragment counts are not a single R/P pair."""
+        if self.no_path_search or not self.products:
+            return
+        n_reactants = len(self.reactants) if self.reactants else 1
+        n_products = len(self.products)
+        if n_reactants == 1 and n_products == 1:
+            return
+        if self.reactants:
+            logger.info(
+                "Skipping path search for %s: extra fragments with a TS "
+                "geometry are optimized, not used as QST/NEB endpoints.",
+                self.label,
+            )
+            self.no_path_search = True
+            return
+        raise ValueError(PATH_SEARCH_SINGLE_STRUCTURE)
 
     @property
     def uses_path_search(self):
@@ -159,17 +191,17 @@ class ReactionChainMixin(ChainMixin):
         self.product_opt_jobs = self._opt_jobs_for_role(self.products, "P")
         self._set_opt_jobs()
 
-    def _refresh_ts_opt_job(self):
-        if not self.uses_path_search:
-            return
-        ts_molecule = self._ts_molecule()
-        self.ts_opt_job = self._child_job(
-            self._ts_job_class,
-            ts_molecule,
-            self._ts_settings_for(ts_molecule),
-            f"{self.label}_TS_opt",
-        )
-        self._set_opt_jobs()
+    def _opt_jobs_for_phase(self):
+        if self.uses_path_search:
+            ts_molecule = self._ts_molecule()
+            self.ts_opt_job = self._child_job(
+                self._ts_job_class,
+                ts_molecule,
+                self._ts_settings_for(ts_molecule),
+                f"{self.label}_TS_opt",
+            )
+            self._set_opt_jobs()
+        return self.opt_jobs
 
     def _make_sp_job(self, opt_job):
         molecule = self._output_molecule(opt_job, opt_job.molecule)
@@ -211,8 +243,7 @@ class ReactionChainMixin(ChainMixin):
             ),
             JobPhase(
                 name="Opt",
-                jobs_factory=lambda: self.opt_jobs,
-                before_run=self._refresh_ts_opt_job,
+                jobs_factory=self._opt_jobs_for_phase,
                 require_complete=True,
                 stop_on_incomplete=True,
                 stop_message="Opt jobs incomplete, halting serial execution.",

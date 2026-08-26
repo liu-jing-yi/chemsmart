@@ -5,7 +5,6 @@ from chemsmart.jobs.gaussian.job import GaussianComJob, GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.reaction import (
     GaussianReactionJob,
-    build_qst_input_string,
     make_qst_com_job,
 )
 from chemsmart.jobs.gaussian.settings import GaussianJobSettings
@@ -57,11 +56,15 @@ def _qst_settings(**kwargs):
     return GaussianJobSettings(**values)
 
 
+def _qst_text(**kwargs):
+    return make_qst_com_job(**kwargs).settings.input_string
+
+
 class TestGaussianQSTInput:
     def test_qst2_builds_two_coordinate_blocks(
         self, gaussian_jobrunner_no_scratch
     ):
-        text = build_qst_input_string(
+        text = _qst_text(
             reactant=_h2(0.74),
             product=_h2(0.90),
             settings=_qst_settings(),
@@ -86,7 +89,7 @@ class TestGaussianQSTInput:
     def test_qst3_builds_three_coordinate_blocks(
         self, gaussian_jobrunner_no_scratch
     ):
-        text = build_qst_input_string(
+        text = _qst_text(
             reactant=_h2(0.74),
             product=_h2(0.90),
             settings=_qst_settings(),
@@ -107,7 +110,7 @@ class TestGaussianQSTInput:
 
     def test_atom_count_mismatch_errors(self):
         with pytest.raises(ValueError, match="same number of atoms"):
-            build_qst_input_string(
+            _qst_text(
                 reactant=_h2(),
                 product=_water(),
                 settings=_qst_settings(),
@@ -115,7 +118,7 @@ class TestGaussianQSTInput:
 
     def test_ts_guess_atom_count_mismatch_errors(self):
         with pytest.raises(ValueError, match="same number of atoms"):
-            build_qst_input_string(
+            _qst_text(
                 reactant=_h2(),
                 product=_h2(0.90),
                 settings=_qst_settings(),
@@ -136,7 +139,7 @@ class TestGaussianQSTInput:
             multiplicity=1,
         )
         with pytest.raises(ValueError, match="same atom order"):
-            build_qst_input_string(
+            _qst_text(
                 reactant=reactant,
                 product=swapped,
                 settings=_qst_settings(),
@@ -152,7 +155,7 @@ class TestGaussianQSTInput:
         )
         original = settings.route_string.lower()
         assert "opt=(ts,calcfc,noeigentest)" in original
-        text = build_qst_input_string(
+        text = _qst_text(
             reactant=_h2(),
             product=_h2(0.90),
             settings=settings,
@@ -166,7 +169,7 @@ class TestGaussianQSTInput:
     def test_additional_opt_options_go_in_qst_opt_keyword(
         self, gaussian_jobrunner_no_scratch
     ):
-        text = build_qst_input_string(
+        text = _qst_text(
             reactant=_h2(),
             product=_h2(0.90),
             settings=_qst_settings(
@@ -416,6 +419,38 @@ class TestGaussianReactionJob:
             "sn2_R1_opt",
             "sn2_R2_opt",
         ]
+
+    def test_multiple_reactants_with_product_and_ts_skips_guess(
+        self, gaussian_jobrunner_no_scratch
+    ):
+        job = GaussianReactionJob(
+            molecule=_h2(0.82),
+            settings=_ts_settings(),
+            label="sn2",
+            jobrunner=gaussian_jobrunner_no_scratch,
+            reactants=[_h2(0.74, charge=-1), _h2(0.80)],
+            products=[_h2(0.90, charge=-1)],
+        )
+        assert job.no_path_search is True
+        assert job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is None
+        assert [child.label for child in job.reactant_opt_jobs] == [
+            "sn2_R1_opt",
+            "sn2_R2_opt",
+        ]
+        assert job.product_opt_jobs[0].label == "sn2_P_opt"
+
+    def test_multiple_products_without_ts_errors(
+        self, gaussian_jobrunner_no_scratch
+    ):
+        with pytest.raises(ValueError, match="single reactant geometry"):
+            GaussianReactionJob(
+                molecule=_h2(0.74),
+                settings=_ts_settings(),
+                label="sn2",
+                jobrunner=gaussian_jobrunner_no_scratch,
+                products=[_h2(0.90), _h2(0.92)],
+            )
 
     def test_sp_uses_solv_theory_and_opt_labels(
         self, gaussian_jobrunner_no_scratch
@@ -703,6 +738,27 @@ class TestReactionStructureDispatch:
 
         with pytest.raises(ValueError, match="--ts-guess requires a product"):
             resolve_reaction_structures(_h2(), ts_guess_molecule=_h2(0.82))
+
+    def test_extra_fragments_with_ts_skip_path_search(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        ts = _h2(0.82)
+        result = resolve_reaction_structures(
+            ts,
+            reactant_molecules=(_h2(0.74), _h2(0.80)),
+            product_molecules=(_h2(0.90),),
+        )
+        assert result["no_path_search"] is True
+        assert result["molecule"] is ts
+
+    def test_multiple_products_without_reactant_errors(self):
+        from chemsmart.cli.reaction import resolve_reaction_structures
+
+        with pytest.raises(ValueError, match="single reactant geometry"):
+            resolve_reaction_structures(
+                _h2(0.74),
+                product_molecules=(_h2(0.90), _h2(0.92)),
+            )
 
 
 class TestReactionTableEntry:
@@ -1062,6 +1118,85 @@ class TestReactionCLI:
         assert "--ts-guess requires a product" in result.output
         assert captured["submissions"] == []
 
+    def test_product_atom_count_mismatch_is_usage_error(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        product = tmp_path / "p.xyz"
+        product.write_text(
+            "3\nwater\nO 0.0 0.0 0.0\nH 0.96 0.0 0.0\nH -0.24 0.93 0.0\n"
+        )
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--product",
+                str(product),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "same number of atoms" in result.output
+        assert "Traceback" not in result.output
+        assert captured["submissions"] == []
+
+    def test_multiple_products_without_reactant_is_usage_error(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
+        p1 = _write_h2_xyz(tmp_path / "p1.xyz", 0.90)
+        p2 = _write_h2_xyz(tmp_path / "p2.xyz", 0.92)
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--product",
+                str(p1),
+                "--product",
+                str(p2),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "single reactant geometry" in result.output
+        assert captured["submissions"] == []
+
     def test_orca_case1_skips_guess(self, tmp_path, monkeypatch):
         from click.testing import CliRunner
 
@@ -1178,6 +1313,91 @@ class TestReactionCLI:
         assert "submit" in cli_args
         assert "--reactant" in cli_args
         assert "--product" in cli_args
+
+    def test_batch_two_reactants_with_ts_skips_guess(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
+        r1 = _write_h2_xyz(tmp_path / "r1.xyz", 0.74)
+        r2 = _write_h2_xyz(tmp_path / "r2.xyz", 0.80)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            "reaction_id,filepath,role,charge,multiplicity\n"
+            f"sn2,{ts},ts,0,1\n"
+            f"sn2,{r1},reactant,-1,1\n"
+            f"sn2,{r2},reactant,0,1\n"
+            f"sn2,{product},product,-1,1\n"
+        )
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(table),
+                "reaction",
+                "batch",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        job = captured["submissions"][0][0]
+        assert job.phase_by_name("Guess").should_skip()
+        assert job.guess_job is None
+        assert [child.label for child in job.reactant_opt_jobs] == [
+            "sn2_R1_opt",
+            "sn2_R2_opt",
+        ]
+
+    def test_batch_two_reactants_without_ts_errors(
+        self, tmp_path, monkeypatch
+    ):
+        from click.testing import CliRunner
+
+        from chemsmart.cli.sub import sub
+
+        r1 = _write_h2_xyz(tmp_path / "r1.xyz", 0.74)
+        r2 = _write_h2_xyz(tmp_path / "r2.xyz", 0.80)
+        product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
+        table = tmp_path / "reactions.csv"
+        table.write_text(
+            "reaction_id,filepath,role,charge,multiplicity\n"
+            f"sn2,{r1},reactant,0,1\n"
+            f"sn2,{r2},reactant,0,1\n"
+            f"sn2,{product},product,0,1\n"
+        )
+        captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
+        runner = CliRunner()
+        result = runner.invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "--no-scratch",
+                "gaussian",
+                "-p",
+                "test",
+                "-f",
+                str(table),
+                "reaction",
+                "batch",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "single reactant geometry" in result.output
+        assert captured["submissions"] == []
 
     def test_batch_ts_only_is_case1(self, tmp_path, monkeypatch):
         from click.testing import CliRunner

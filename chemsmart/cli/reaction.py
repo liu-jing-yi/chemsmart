@@ -11,6 +11,7 @@ import click
 
 from chemsmart.cli.job import click_job_options
 from chemsmart.io.molecules.structure import Molecule
+from chemsmart.jobs.reaction import PATH_SEARCH_SINGLE_STRUCTURE
 from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.datasets import ReactionTableEntry
 from chemsmart.utils.utils import check_charge_and_multiplicity
@@ -33,7 +34,7 @@ def click_reaction_shared_options(f):
         type=click.Path(exists=True, dir_okay=False),
         help=(
             "Product geometry file. Repeatable for extra fragments. "
-            "Presence selects path search (case 2)."
+            "A single product without extra reactants selects path search."
         ),
     )(f)
     f = click.option(
@@ -50,13 +51,6 @@ def click_reaction_shared_options(f):
     return f
 
 
-def is_reaction_table_input(ctx, filename):
-    """Return True when the reaction subcommand is given a submission table."""
-    if ctx.invoked_subcommand != "reaction":
-        return False
-    return ReactionTableEntry.is_submission_table(filename)
-
-
 def merge_reaction_options(
     ctx,
     reactants=(),
@@ -71,20 +65,13 @@ def merge_reaction_options(
     return reactants, products, ts_guess
 
 
-def store_reaction_shared(
-    ctx,
-    reactants,
-    products,
-    ts_guess,
-    skip_completed,
-):
-    """Record group-level reaction options for submit/batch."""
+def store_reaction_shared(ctx, reactants, products, ts_guess):
+    """Record group-level reaction options for submit."""
     ctx.ensure_object(dict)
     ctx.obj["reaction_shared"] = dict(
         reactants=reactants or (),
         products=products or (),
         ts_guess=ts_guess,
-        skip_completed=skip_completed,
     )
 
 
@@ -126,6 +113,7 @@ def resolve_reaction_structures(
     - ``-f`` only, or ``-f`` plus reactants without products: case 1, ``-f`` is TS
     - ``-f`` plus products without reactants: case 2, ``-f`` is reactant
     - reactants and products: case 2; ``-f`` is the QST3/NEB intermediate
+    - extra fragments with a TS parent skip path search
     """
     reactant_molecules = tuple(reactant_molecules or ())
     product_molecules = tuple(product_molecules or ())
@@ -133,37 +121,29 @@ def resolve_reaction_structures(
         raise ValueError(
             "--ts-guess requires a product structure for path search."
         )
-
-    if not product_molecules:
-        return dict(
-            molecule=parent_molecule,
-            reactants=reactant_molecules,
-            products=product_molecules,
-            ts_guess=None,
-        )
-
-    if reactant_molecules:
-        return dict(
-            molecule=parent_molecule,
-            reactants=reactant_molecules,
-            products=product_molecules,
-            ts_guess=ts_guess_molecule,
-        )
-
-    return dict(
+    kwargs = dict(
         molecule=parent_molecule,
-        reactants=(),
+        reactants=reactant_molecules,
         products=product_molecules,
-        ts_guess=ts_guess_molecule,
+        ts_guess=ts_guess_molecule if product_molecules else None,
     )
+    if not product_molecules:
+        return kwargs
+    if not reactant_molecules and len(product_molecules) > 1:
+        raise ValueError(PATH_SEARCH_SINGLE_STRUCTURE)
+    if reactant_molecules and (
+        len(reactant_molecules) > 1 or len(product_molecules) > 1
+    ):
+        kwargs["no_path_search"] = True
+    return kwargs
 
 
 def resolve_reaction_group_from_entries(entries):
     """Map one reaction_id group of table rows onto job constructor kwargs.
 
-    A group with both reactant and product roles is case 2. A ts row
-    without a reactant is case 1 (``-f`` is the TS); products in that
-    case are extra minima.
+    A group with both reactant and product roles is case 2 when each role
+    has a single geometry. Extra fragments with a ``ts`` row skip Guess.
+    Multiple reactant or product rows without a ``ts`` row are an error.
     """
     ts_entries = [entry for entry in entries if entry.role == "ts"]
     reactant_entries = [entry for entry in entries if entry.role == "reactant"]
@@ -187,7 +167,15 @@ def resolve_reaction_group_from_entries(entries):
     ts_molecule = (
         molecule_from_reaction_entry(ts_entries[0]) if ts_entries else None
     )
-    uses_path_search = bool(reactant_molecules) and bool(product_molecules)
+    multi_fragment = len(reactant_molecules) > 1 or len(product_molecules) > 1
+    uses_path_search = (
+        bool(reactant_molecules)
+        and bool(product_molecules)
+        and not multi_fragment
+    )
+
+    if multi_fragment and ts_molecule is None:
+        raise ValueError(PATH_SEARCH_SINGLE_STRUCTURE)
 
     if not uses_path_search:
         parent = (
@@ -205,7 +193,6 @@ def resolve_reaction_group_from_entries(entries):
             ts_guess=None,
         )
         if product_molecules:
-            # Products without a reactant role are extra minima.
             job_kwargs["no_path_search"] = True
         return job_kwargs, {
             "filepath": (
@@ -312,20 +299,19 @@ def build_reaction_job(
             product_molecules=product_mols,
             ts_guess_molecule=ts_guess_mol,
         )
+        label = ctx.obj["label"]
+        logger.info("Creating %s job %s", job_cls.__name__, label)
+        return job_cls(
+            settings=parent_settings,
+            label=label,
+            jobrunner=ctx.obj["jobrunner"],
+            skip_completed=skip_completed,
+            **child_settings,
+            **job_kwargs,
+            **kwargs,
+        )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
-
-    label = ctx.obj["label"]
-    logger.info("Creating %s job %s", job_cls.__name__, label)
-    return job_cls(
-        settings=parent_settings,
-        label=label,
-        jobrunner=ctx.obj["jobrunner"],
-        skip_completed=skip_completed,
-        **child_settings,
-        **job_kwargs,
-        **kwargs,
-    )
 
 
 def build_reaction_batch_jobs(
@@ -356,17 +342,17 @@ def build_reaction_batch_jobs(
     ).items():
         try:
             job_kwargs, batch_meta = resolve_reaction_group_from_entries(group)
+            job = job_cls(
+                settings=parent_settings,
+                label=str(reaction_id),
+                jobrunner=jobrunner,
+                skip_completed=skip_completed,
+                **child_settings,
+                **job_kwargs,
+                **kwargs,
+            )
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
-        job = job_cls(
-            settings=parent_settings,
-            label=str(reaction_id),
-            jobrunner=jobrunner,
-            skip_completed=skip_completed,
-            **child_settings,
-            **job_kwargs,
-            **kwargs,
-        )
         parent_path = str(batch_meta["filepath"])
         job._batch_entry = {
             "kind": "reaction",
@@ -497,7 +483,6 @@ def register_reaction_cli(parent_group, job_cls):
             reactants=reactants,
             products=products,
             ts_guess=ts_guess,
-            skip_completed=skip_completed,
         )
         if ctx.invoked_subcommand is None:
             if ReactionTableEntry.is_submission_table(ctx.obj.get("filename")):
@@ -539,16 +524,8 @@ def register_reaction_cli(parent_group, job_cls):
 
     @reaction.command("batch", cls=MyCommand)
     @click_job_options
-    @click_reaction_shared_options
     @click.pass_context
-    def batch(
-        ctx,
-        skip_completed,
-        reactants,
-        products,
-        ts_guess,
-        **kwargs,
-    ):
+    def batch(ctx, skip_completed, **kwargs):
         """Batch reaction submission from a CSV table grouped by reaction_id."""
         return build_reaction_batch_jobs(
             ctx,

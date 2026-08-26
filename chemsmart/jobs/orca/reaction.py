@@ -53,33 +53,7 @@ def _settings_as(settings, cls, drop_keys):
 
 
 class ORCAReactionJob(ReactionChainMixin, ORCAJob):
-    """ORCA R/TS/P chain: optional NEB-TS guess, then opt+freq and SP.
-
-    Case 1 (no product, or ``no_path_search``): skip Guess. Parent
-    ``molecule`` is the TS. Optional reactants and products are extra
-    minima.
-
-    Case 2 (products given): run ``ORCANEBJob`` (reactant start, product
-    ``ending_xyzfile``, optional TS guess ``intermediate_xyzfile``), then
-    the same case-1 characterization. Parent ``molecule`` is the reactant
-    unless ``reactants`` is also set, in which case parent ``molecule`` is
-    the NEB intermediate.
-
-    Attributes:
-        TYPE (str): Job type identifier ('orcareaction').
-        molecule (Molecule): TS (case 1) or reactant (case 2).
-        settings (ORCAJobSettings): Parent settings used as the default
-            child template when opt/ts/sp/neb settings are omitted.
-        label (str): Base job identifier used for file naming.
-        jobrunner (JobRunner): Execution backend that runs the jobs.
-        skip_completed (bool): If True, completed jobs are not rerun.
-        reactants (tuple): Extra reactant minima to optimize.
-        products (tuple): Product minima; presence selects case 2.
-        ts_guess (Molecule): Optional NEB intermediate when ``-f`` is the
-            reactant.
-        no_path_search (bool): Force case 1 even when products are set.
-        no_sp (bool): Omit solution-phase single-point children.
-    """
+    """ORCA R/TS/P chain: optional NEB-TS guess, then opt+freq and SP."""
 
     TYPE = "orcareaction"
     uses_neb = True
@@ -87,47 +61,13 @@ class ORCAReactionJob(ReactionChainMixin, ORCAJob):
     _ts_job_class = ORCATSJob
     _sp_job_class = ORCASinglePointJob
 
-    def __init__(
-        self,
-        molecule,
-        settings=None,
-        label=None,
-        jobrunner=None,
-        skip_completed=True,
-        reactants=None,
-        products=None,
-        ts_guess=None,
-        no_path_search=False,
-        no_sp=False,
-        opt_settings=None,
-        ts_settings=None,
-        sp_settings=None,
-        neb_settings=None,
-        **kwargs,
-    ):
+    def __init__(self, molecule, settings=None, **kwargs):
         if not isinstance(settings, ORCAJobSettings):
             raise ValueError(
                 f"Settings must be instance of ORCAJobSettings for "
                 f"{self.__class__.__name__}, but is {settings} instead!"
             )
-
-        super().__init__(
-            molecule=molecule,
-            settings=settings,
-            label=label,
-            jobrunner=jobrunner,
-            skip_completed=skip_completed,
-            reactants=reactants,
-            products=products,
-            ts_guess=ts_guess,
-            no_path_search=no_path_search,
-            no_sp=no_sp,
-            opt_settings=opt_settings,
-            ts_settings=ts_settings,
-            sp_settings=sp_settings,
-            neb_settings=neb_settings,
-            **kwargs,
-        )
+        super().__init__(molecule=molecule, settings=settings, **kwargs)
 
     def _ts_settings_for(self, molecule):
         settings = super()._ts_settings_for(molecule)
