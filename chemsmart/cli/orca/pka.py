@@ -23,11 +23,13 @@ import click
 from chemsmart.cli.job import click_job_options
 from chemsmart.cli.orca.orca import orca
 from chemsmart.cli.pka import (
-    apply_pka_molecule_charge_multiplicity,
     batch_pka_jobs_from_cdxml,
     click_pka_proton_options,
     click_pka_shared_options,
     is_pka_cdxml_input,
+    pka_submit_site_mode,
+    prepare_pka_submit_molecules,
+    prepare_pka_submit_structure,
     require_pka_charge_multiplicity,
     resolve_pka_batch_row,
     resolve_pka_submit_proton_options,
@@ -178,9 +180,15 @@ def submit(ctx, skip_completed, proton_index, color_code, **kwargs):
         ctx, proton_index=proton_index, color_code=color_code
     )
 
-    proton_index, pka_molecules = resolve_proton_index(
-        filename, proton_index, color_code
-    )
+    try:
+        proton_index, pka_molecules = resolve_proton_index(
+            filename,
+            proton_index,
+            color_code,
+            mode=pka_submit_site_mode(shared.get("pkb", False)),
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     if pka_molecules is not None:
         return _create_orca_pka_jobs_from_molecules(
@@ -198,10 +206,15 @@ def submit(ctx, skip_completed, proton_index, color_code, **kwargs):
     opt_settings = opt_settings.merge(job_settings, keywords=keywords)
 
     molecules = ctx.obj["molecules"]
-    if molecules:
-        opt_settings = apply_pka_molecule_charge_multiplicity(
-            opt_settings, molecules[-1]
+    try:
+        molecules, proton_index, opt_settings = prepare_pka_submit_molecules(
+            molecules,
+            proton_index,
+            opt_settings,
+            pkb=shared.get("pkb", False),
         )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     pka_settings = ORCApKaJobSettings.build_orca_pka_settings(
         proton_index, shared, opt_settings
@@ -346,15 +359,29 @@ def batch(ctx, skip_completed, proton_index, color_code, **kwargs):
                 filepath,
                 proton_index=entry.proton_index,
                 color_code=color_code,
+                pkb=shared.get("pkb", False),
             )
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
         label = Path(filepath).stem
         base_label = label if label.endswith("_pka") else f"{label}_pka"
+        input_proton_index = row_proton_index
+        input_charge = int(entry.charge)
 
         row_opt_settings = copy.copy(opt_settings)
-        row_opt_settings.charge = int(entry.charge)
+        row_opt_settings.charge = input_charge
         row_opt_settings.multiplicity = int(entry.multiplicity)
+        try:
+            molecule, row_proton_index, row_opt_settings = (
+                prepare_pka_submit_structure(
+                    molecule,
+                    row_proton_index,
+                    row_opt_settings,
+                    pkb=shared.get("pkb", False),
+                )
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
 
         row_shared = copy.copy(shared)
         row_shared["scheme"] = (
@@ -392,8 +419,8 @@ def batch(ctx, skip_completed, proton_index, color_code, **kwargs):
         # one-entry commands instead of replaying the full table.
         job._batch_entry = {
             "filepath": str(filepath),
-            "proton_index": row_proton_index,
-            "charge": int(entry.charge),
+            "proton_index": input_proton_index,
+            "charge": input_charge,
             "multiplicity": int(entry.multiplicity),
             "scheme": row_shared["scheme"],
             "label": base_label,
@@ -425,24 +452,32 @@ def _create_orca_pka_jobs_from_molecules(
     jobs = []
     for idx, pka_mol in enumerate(pka_molecules, start=1):
         mol_label = f"{base_name}_frag{idx}_pka"
-        row_opt_settings = apply_pka_molecule_charge_multiplicity(
-            opt_settings, pka_mol
-        )
+        try:
+            molecule, proton_index, row_opt_settings = (
+                prepare_pka_submit_structure(
+                    pka_mol,
+                    pka_mol.proton_index,
+                    opt_settings,
+                    pkb=shared.get("pkb", False),
+                )
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
         require_pka_charge_multiplicity(
             row_opt_settings,
             source_hint=f"CDXML fragment {idx} in {filename}",
         )
         pka_settings = ORCApKaJobSettings.build_orca_pka_settings(
-            pka_mol.proton_index, shared, row_opt_settings
+            proton_index, shared, row_opt_settings
         )
 
         logger.info(
             f"Creating ORCA pKa job for fragment {idx}: "
-            f"proton_index={pka_mol.proton_index}, label={mol_label}"
+            f"proton_index={proton_index}, label={mol_label}"
         )
 
         job = ORCApKaJob(
-            molecule=pka_mol,
+            molecule=molecule,
             settings=pka_settings,
             label=mol_label,
             jobrunner=jobrunner,

@@ -635,8 +635,9 @@ def click_pka_pkb_options(f):
         is_flag=True,
         default=False,
         help=(
-            "Enable pKb reporting (pKb = pKs - pKa). If --pks is omitted, "
-            "14.0 is used."
+            "Submit: protonate the input free base (B → BH+) then run pKa "
+            "jobs. Analysis: also print pKb = pKs - pKa. If --pks is "
+            "omitted, 14.0 is used."
         ),
     )(f)
     return f
@@ -900,31 +901,61 @@ def resolve_ionizable_site(molecule, mode="acid"):
     return next(iter(sites)) + 1
 
 
-def resolve_proton_index(filename, proton_index, color_code=None):
-    """Resolve the proton index for deprotonation, optionally via CDXML.
+def pka_submit_site_mode(pkb=False):
+    """Return ``"base"`` when submitting with ``--pkb``, else ``"acid"``."""
+    return "base" if pkb else "acid"
 
-    If a proton index is provided, it is returned directly. For CDX/CDXML
-    inputs, the proton can be auto-detected from a color code; a
+
+def _cdxml_has_no_colour_markup(exc):
+    """Return True when CDXML colour detection failed for lack of markup."""
+    return "share the same colour" in str(exc)
+
+
+def _resolve_site_from_molecule_file(filename, mode):
+    from chemsmart.io.molecules.structure import Molecule
+
+    molecule = Molecule.from_filepath(filename)
+    if molecule is None:
+        raise ValueError(
+            f"Could not read a molecule from {filename}. "
+            "Specify -pi/--proton-index or -cc/--color-code."
+        )
+    return resolve_ionizable_site(molecule, mode=mode), None
+
+
+def resolve_proton_index(filename, proton_index, color_code=None, mode="acid"):
+    """Resolve the ionizable site for pKa or ``--pkb`` submission.
+
+    Site precedence is ``-pi``, then ChemDraw colour, then a unique SMARTS
+    match. If a proton index is provided, it is returned directly. For
+    CDX/CDXML inputs, a uniquely coloured site is auto-detected; a
     multi-fragment file yields a list of per-fragment molecules, which is
     returned as the second tuple element while the proton index is set to
-    ``None`` so callers can branch to per-molecule job creation. For other
-    structure files, a unique acidic hydrogen is resolved from SMARTS.
+    ``None`` so callers can branch to per-molecule job creation. When the
+    CDXML file has no colour markup, SMARTS is used. For other structure
+    files, a unique site is resolved from acid or base SMARTS.
 
     Args:
         filename: Input structure file path, used to detect CDX/CDXML inputs.
-        proton_index: 1-based proton index supplied by the user, if any.
+        proton_index: 1-based index supplied by the user, if any. Acid mode:
+            hydrogen to remove. Base mode (``--pkb``): heavy atom to
+            protonate.
         color_code: CDXML color-table index used for auto-detection.
+        mode: ``"acid"`` (default) or ``"base"``.
 
     Returns:
         tuple[int | None, list | None]:
-            - Proton index when a single molecule is resolved.
+            - Site index when a single molecule is resolved.
             - ``None`` for the index with a list of per-fragment molecules
               when multiple molecules are detected in CDX/CDXML.
 
     Raises:
         ValueError: If required inputs are missing or inconsistent with the
-            file type.
+            file type, or SMARTS finds 0 or more than one site.
     """
+    if mode not in _IONIZABLE_SITE_SMARTS:
+        raise ValueError(f"mode must be 'acid' or 'base', got {mode!r}")
+
     if proton_index is not None:
         return proton_index, None
 
@@ -932,7 +963,12 @@ def resolve_proton_index(filename, proton_index, color_code=None):
     if is_pka_cdxml_input(filename):
         from chemsmart.io.file import PKaCDXFile
 
-        return PKaCDXFile(filename)._resolve_proton_from_cdxml(color_code)
+        try:
+            return PKaCDXFile(filename)._resolve_proton_from_cdxml(color_code)
+        except ValueError as exc:
+            if color_code is not None or not _cdxml_has_no_colour_markup(exc):
+                raise
+            return _resolve_site_from_molecule_file(filename, mode)
 
     if color_code is not None:
         raise ValueError(
@@ -948,15 +984,79 @@ def resolve_proton_index(filename, proton_index, color_code=None):
             "'pka -s direct batch' (proton_index is read from the table)."
         )
 
-    from chemsmart.io.molecules.structure import Molecule
+    return _resolve_site_from_molecule_file(filename, mode)
 
-    molecule = Molecule.from_filepath(filename)
-    if molecule is None:
-        raise ValueError(
-            f"Could not read a molecule from {filename}. "
-            "Specify -pi/--proton-index or -cc/--color-code."
+
+def prepare_pkb_submit_molecule(molecule, site_index, opt_settings):
+    """Protonate the free base and increment settings charge by 1.
+
+    *site_index* is the 1-based heavy atom to protonate. *opt_settings.charge*
+    is the charge of the input free base when set. The returned molecule is
+    BH+ and the returned index is the added hydrogen, which existing pKa
+    jobs remove to recover B.
+    """
+    import copy
+
+    from chemsmart.io.molecules.structure import PKaMolecule
+
+    updated = copy.copy(opt_settings)
+    if updated.multiplicity is None and molecule.multiplicity is not None:
+        updated.multiplicity = int(molecule.multiplicity)
+    if updated.charge is None and molecule.charge is not None:
+        updated.charge = int(molecule.charge)
+
+    try:
+        protonated = PKaMolecule.add_proton_at_atom(molecule, site_index)
+    except ValueError as exc:
+        if "hydrogen" in str(exc).lower():
+            raise ValueError(
+                "-pi/--proton-index with --pkb must be the heavy atom to "
+                "protonate, not a hydrogen. Colour the basic atom, or drop "
+                "--pkb and run pKa."
+            ) from exc
+        raise
+
+    if updated.charge is not None:
+        updated.charge = int(updated.charge) + 1
+    elif protonated.charge is not None:
+        updated.charge = int(protonated.charge)
+    return protonated, protonated.proton_index, updated
+
+
+def prepare_pka_submit_structure(
+    molecule, proton_index, opt_settings, pkb=False
+):
+    """Return ``(molecule, proton_index, opt_settings)`` for a pKa job.
+
+    When *pkb* is false, charge/multiplicity are taken from *molecule* when
+    unset. When *pkb* is true, the free base is protonated and settings
+    charge becomes the input charge plus one.
+    """
+    if pkb:
+        return prepare_pkb_submit_molecule(
+            molecule, proton_index, opt_settings
         )
-    return resolve_ionizable_site(molecule, mode="acid"), None
+    opt_settings = apply_pka_molecule_charge_multiplicity(
+        opt_settings, molecule
+    )
+    return molecule, proton_index, opt_settings
+
+
+def prepare_pka_submit_molecules(
+    molecules, proton_index, opt_settings, pkb=False
+):
+    """Apply :func:`prepare_pka_submit_structure` to each input molecule."""
+    if not molecules:
+        return molecules, proton_index, opt_settings
+    prepared = []
+    new_index = proton_index
+    updated = opt_settings
+    for mol in molecules:
+        mol, new_index, updated = prepare_pka_submit_structure(
+            mol, proton_index, opt_settings, pkb=pkb
+        )
+        prepared.append(mol)
+    return prepared, new_index, updated
 
 
 def apply_pka_molecule_charge_multiplicity(opt_settings, molecule):
@@ -1008,31 +1108,40 @@ def is_pka_batch_invocation(ctx):
     return "batch" in tokens
 
 
-def resolve_pka_batch_row(filepath, proton_index=None, color_code=None):
-    """Resolve proton index and molecule for one pKa submission-table row.
+def resolve_pka_batch_row(
+    filepath, proton_index=None, color_code=None, pkb=False
+):
+    """Resolve site index and molecule for one pKa submission-table row.
 
-    Each table row maps to a single job. When ``proton_index`` is omitted for a
-    single-molecule ``.cdxml`` / ``.cdx`` filepath, the coloured proton is
-    auto-detected. An explicit ``proton_index`` always takes precedence. Multi-
-    molecule CDXML files are rejected here; pass them directly as ``-f`` with
-    ``pka batch`` instead.
+    Each table row maps to a single job. An explicit ``proton_index`` always
+    takes precedence (acidic H, or with ``pkb`` the heavy atom to protonate).
+    When omitted, a unique SMARTS site is used for non-CDXML files; for a
+    single-molecule ``.cdxml`` / ``.cdx`` filepath the coloured site is
+    auto-detected, falling through to SMARTS when there is no colour markup.
+    Multi-molecule CDXML files are rejected here; pass them directly as ``-f``
+    with ``pka batch`` instead.
 
     Returns:
-        tuple[int, Molecule | PKaMolecule]: Resolved proton index and structure.
+        tuple[int, Molecule | PKaMolecule]: Resolved site index and structure.
     """
     from chemsmart.io.file import PKaCDXFile
     from chemsmart.io.molecules.structure import Molecule
 
     filepath = str(filepath)
+    mode = pka_submit_site_mode(pkb)
     if proton_index is not None:
         return int(proton_index), Molecule.from_filepath(filepath)
 
     if not is_pka_cdxml_input(filepath):
-        raise ValueError(
-            f"Missing proton_index for {filepath}. "
-            "Provide proton_index in the table, or use a single-molecule "
-            ".cdxml/.cdx file with a coloured proton and leave proton_index blank."
-        )
+        molecule = Molecule.from_filepath(filepath)
+        if molecule is None:
+            raise ValueError(
+                f"Could not read a molecule from {filepath}. "
+                "Provide proton_index in the table, or use a single-molecule "
+                ".cdxml/.cdx file with a coloured site and leave proton_index "
+                "blank."
+            )
+        return resolve_ionizable_site(molecule, mode=mode), molecule
 
     cdx_file = PKaCDXFile(filepath)
     try:
@@ -1042,10 +1151,17 @@ def resolve_pka_batch_row(filepath, proton_index=None, color_code=None):
             return_list=True,
         )
     except ValueError as exc:
-        raise ValueError(
-            f"Could not auto-detect proton from CDXML colour for {filepath}: "
-            f"{exc}"
-        ) from exc
+        if not _cdxml_has_no_colour_markup(exc):
+            raise ValueError(
+                f"Could not auto-detect proton from CDXML colour for {filepath}: "
+                f"{exc}"
+            ) from exc
+        molecule = Molecule.from_filepath(filepath)
+        if molecule is None:
+            raise ValueError(
+                f"Could not read a molecule from {filepath}."
+            ) from exc
+        return resolve_ionizable_site(molecule, mode=mode), molecule
 
     if len(pka_molecules) != 1:
         raise ValueError(
@@ -1071,7 +1187,10 @@ def batch_pka_jobs_from_cdxml(
     proton_index, color_code = resolve_pka_submit_proton_options(ctx)
     try:
         proton_index, pka_molecules = resolve_proton_index(
-            filename, proton_index, color_code
+            filename,
+            proton_index,
+            color_code,
+            mode=pka_submit_site_mode(shared.get("pkb", False)),
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1128,8 +1247,9 @@ def click_pka_proton_options(f):
         type=int,
         required=False,
         help=(
-            "1-based index of the proton to remove for deprotonation. "
-            "Required unless a .cdxml file with a coloured proton is used."
+            "1-based index of the proton to remove, or with --pkb the heavy "
+            "atom to protonate. If omitted, a uniquely coloured ChemDraw "
+            "site or a unique SMARTS match is used."
         ),
     )
     @click.option(

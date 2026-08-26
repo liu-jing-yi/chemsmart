@@ -179,6 +179,41 @@ def _setup_sub_pka_batch_test(tmp_path, monkeypatch, backend):
     return table, captured
 
 
+def _capture_sub_pka_jobs(tmp_path, monkeypatch, backend, extra_sub_args):
+    """Run ``chemsmart sub ... pka`` in test mode and return created jobs."""
+    _require_backend_pka_subcommand(sub, backend)
+    config_root = _write_test_backend_project(tmp_path, backend)
+    monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_root))
+
+    from chemsmart.settings.server import Server
+
+    fake_server = Server(name="dummy")
+    captured = {"jobs": []}
+    fake_server.submit = lambda job, test=False, cli_args=None, **kw: captured[
+        "jobs"
+    ].append(job)
+    monkeypatch.setattr(
+        "chemsmart.settings.server.Server.from_servername",
+        lambda _name: fake_server,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        sub,
+        [
+            "--test",
+            "--server",
+            "dummy",
+            "--no-scratch",
+            backend,
+            "-p",
+            "test",
+            *extra_sub_args,
+        ],
+    )
+    return result, captured["jobs"]
+
+
 def _build_pka_batch_table(tmp_path):
     acid1 = tmp_path / "acid1.xyz"
     acid1.write_text("2\nacid1\nC 0.0 0.0 0.0\nH 0.0 0.0 1.0\n")
@@ -1797,6 +1832,61 @@ class TestPKa:
         assert mol.chemical_symbols[proton_index - 1] == "H"
         assert proton_index == resolve_ionizable_site(mol, mode="acid")
 
+    def test_resolve_proton_index_uses_base_smarts_without_pi(self, tmp_path):
+        from chemsmart.cli.pka import (
+            resolve_ionizable_site,
+            resolve_proton_index,
+        )
+
+        mol = _molecule_from_smiles("c1ccncc1")
+        path = tmp_path / "pyridine.xyz"
+        mol.write(str(path), format="xyz")
+
+        site, molecules = resolve_proton_index(
+            str(path), None, None, mode="base"
+        )
+        assert molecules is None
+        assert mol.chemical_symbols[site - 1] == "N"
+        assert site == resolve_ionizable_site(mol, mode="base")
+
+    def test_prepare_pkb_submit_molecule_protonates_and_increments_charge(
+        self,
+    ):
+        from chemsmart.cli.pka import prepare_pkb_submit_molecule
+
+        mol = _molecule_from_smiles("N")
+        n_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "N"
+        )
+        mol.charge = 0
+        mol.multiplicity = 1
+        settings = type("Settings", (), {"charge": 0, "multiplicity": 1})()
+
+        protonated, proton_index, updated = prepare_pkb_submit_molecule(
+            mol, n_index, settings
+        )
+        assert protonated.num_atoms == mol.num_atoms + 1
+        assert protonated.chemical_symbols[proton_index - 1] == "H"
+        assert proton_index == protonated.num_atoms
+        assert protonated.charge == 1
+        assert updated.charge == 1
+        assert updated.multiplicity == 1
+
+    def test_prepare_pkb_submit_molecule_rejects_hydrogen(self):
+        from chemsmart.cli.pka import prepare_pkb_submit_molecule
+
+        mol = _molecule_from_smiles("N")
+        h_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "H"
+        )
+        settings = type("Settings", (), {"charge": 0, "multiplicity": 1})()
+        with pytest.raises(ValueError, match="heavy atom"):
+            prepare_pkb_submit_molecule(mol, h_index, settings)
+
     def test_resolve_pka_batch_row_auto_detects_coloured_proton(
         self, colored_proton_cdxml_file
     ):
@@ -1832,13 +1922,152 @@ class TestPKa:
                 colored_proton_two_molecule_cdxml_file, proton_index=None
             )
 
-    def test_resolve_pka_batch_row_requires_proton_index_for_xyz(
+    def test_resolve_pka_batch_row_uses_smarts_for_xyz_without_pi(
+        self, tmp_path
+    ):
+        from chemsmart.cli.pka import (
+            resolve_ionizable_site,
+            resolve_pka_batch_row,
+        )
+
+        mol = _molecule_from_smiles("c1ccccc1O")
+        path = tmp_path / "phenol.xyz"
+        mol.write(str(path), format="xyz")
+
+        proton_index, molecule = resolve_pka_batch_row(
+            str(path), proton_index=None
+        )
+        assert molecule.chemical_symbols[proton_index - 1] == "H"
+        assert proton_index == resolve_ionizable_site(mol, mode="acid")
+
+    def test_resolve_pka_batch_row_smarts_errors_without_unique_xyz_site(
         self, single_molecule_xyz_file
     ):
         from chemsmart.cli.pka import resolve_pka_batch_row
 
-        with pytest.raises(ValueError, match="Missing proton_index"):
+        with pytest.raises(ValueError, match="SMARTS matches"):
             resolve_pka_batch_row(single_molecule_xyz_file, proton_index=None)
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pka_xyz_without_pi_uses_smarts(
+        self, tmp_path, monkeypatch, backend
+    ):
+        mol = _molecule_from_smiles("c1ccccc1O")
+        path = tmp_path / "phenol.xyz"
+        mol.write(str(path), format="xyz")
+        from chemsmart.cli.pka import resolve_ionizable_site
+
+        expected = resolve_ionizable_site(mol, mode="acid")
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                str(path),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "-s",
+                "direct",
+                "submit",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 1
+        assert jobs[0].settings.proton_index == expected
+        assert jobs[0].settings.charge == 0
+        assert jobs[0].molecule.num_atoms == mol.num_atoms
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pkb_xyz_with_pi_protonates_before_job(
+        self, tmp_path, monkeypatch, backend
+    ):
+        mol = _molecule_from_smiles("N")
+        path = tmp_path / "ammonia.xyz"
+        mol.write(str(path), format="xyz")
+        n_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "N"
+        )
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                str(path),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "--pkb",
+                "-s",
+                "direct",
+                "-pi",
+                str(n_index),
+                "submit",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.settings.pkb is True
+        assert job.settings.charge == 1
+        assert job.molecule.num_atoms == mol.num_atoms + 1
+        assert job.settings.proton_index == job.molecule.num_atoms
+        assert job.molecule.chemical_symbols[
+            job.settings.proton_index - 1
+        ] == ("H")
+        assert job.molecule.charge == 1
+        assert job.protonated_job.settings.charge == 1
+        assert job.conjugate_base_job.settings.charge == 0
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sub_pkb_batch_table_uses_basic_atom_index(
+        self, tmp_path, monkeypatch, backend
+    ):
+        mol = _molecule_from_smiles("N")
+        path = tmp_path / "ammonia.xyz"
+        mol.write(str(path), format="xyz")
+        n_index = next(
+            i + 1
+            for i, symbol in enumerate(mol.chemical_symbols)
+            if symbol == "N"
+        )
+        table = tmp_path / "pkb.csv"
+        table.write_text(
+            "filepath,proton_index,charge,multiplicity\n"
+            f"{path},{n_index},0,1\n"
+        )
+        result, jobs = _capture_sub_pka_jobs(
+            tmp_path,
+            monkeypatch,
+            backend,
+            [
+                "-f",
+                str(table),
+                "pka",
+                "--pkb",
+                "-s",
+                "direct",
+                "batch",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.settings.charge == 1
+        assert job.settings.proton_index == mol.num_atoms + 1
+        assert job.molecule.chemical_symbols[
+            job.settings.proton_index - 1
+        ] == ("H")
+        assert job._batch_entry["proton_index"] == n_index
+        assert job._batch_entry["charge"] == 0
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_sub_pka_csv_table_cdxml_blank_proton_index_auto_detects(
