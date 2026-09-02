@@ -2,7 +2,7 @@
  Grouping Strategies
 #####################
 
-This page provides detailed documentation for each molecular structure grouping strategy available in chemsmart.
+This page provides detailed documentation for each molecular structure grouping strategy available in CHEMSMART.
 
 ***************************************
  Matrix-based vs non-matrix strategies
