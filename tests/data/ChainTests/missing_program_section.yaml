@@ -1,0 +1,6 @@
+crest: crest_project1
+xtb: xtb_project1
+
+steps:
+  - program: crest
+    job: conformers
