@@ -19,6 +19,7 @@ from chemsmart.cli.job import (
     click_filename_options,
     click_pubchem_options,
 )
+from chemsmart.cli.utils import resolve_program_project
 from chemsmart.database.utils import is_chemsmart_database
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.utils.cli import MyGroup
@@ -501,6 +502,7 @@ def orca(
     from chemsmart.settings.orca import ORCAProjectSettings
 
     # get project settings
+    project = resolve_program_project(ctx, "orca", project)
     project_settings = ORCAProjectSettings.from_project(project)
     logger.debug(f"Loaded project settings: {project_settings}")
 

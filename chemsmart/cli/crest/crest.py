@@ -10,6 +10,7 @@ from chemsmart.cli.job import (
     click_filename_options,
     click_pubchem_options,
 )
+from chemsmart.cli.utils import resolve_program_project
 from chemsmart.database.utils import is_chemsmart_database
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.utils.cli import MyGroup
@@ -226,6 +227,7 @@ def crest(
     from chemsmart.jobs.crest.settings import CRESTJobSettings
     from chemsmart.settings.crest import CRESTProjectSettings
 
+    project = resolve_program_project(ctx, "crest", project)
     project_settings = CRESTProjectSettings.from_project(project)
 
     # Obtain CREST settings from filename when possible.
