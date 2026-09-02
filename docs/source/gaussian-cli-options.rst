@@ -356,6 +356,8 @@ Transition State Search
       -  Intrinsic reaction coordinate calculations
    -  -  ``scan``
       -  Potential energy surface scanning
+   -  -  ``qrc``
+      -  Quick reaction coordinate calculations
 
 Electronic Structure Properties
 ===============================
@@ -397,6 +399,12 @@ Other Jobs
    -  -  ``userjob``
       -  Custom user-defined jobs
 
+QM/MM
+=====
+
+``qmmm`` is nested under a parent job type. Use ``<JOBTYPE> qmmm`` where ``<JOBTYPE>`` is ``opt``, ``ts``, ``sp``,
+``scan``, ``modred``, or ``qrc``. There is no standalone ``qmmm`` command. See :doc:`gaussian-qmmm-jobs`.
+
 ************
  Next Steps
 ************
@@ -410,3 +418,4 @@ For detailed information on each job type:
 -  :doc:`gaussian-qrc`
 -  :doc:`gaussian-electronic-structure`
 -  :doc:`gaussian-other-jobs`
+-  :doc:`gaussian-qmmm-jobs`
