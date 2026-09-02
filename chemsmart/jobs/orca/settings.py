@@ -779,6 +779,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             and A- before DFT. Default is False.
         num_conformers (int): Number of CREST conformers to retain per target
             species. Must be >= 1. Default is 1.
+        crest_project (str): Optional CREST project YAML name (the same ``-p``
+            name used for ORCA). Used when sampling is enabled.
     """
 
     def __init__(
@@ -807,6 +809,7 @@ class ORCApKaJobSettings(ORCAJobSettings):
         pks=None,
         sampling=False,
         num_conformers=1,
+        crest_project=None,
         **kwargs,
     ):
         if "thermodynamic_cycle" in kwargs:
@@ -862,6 +865,7 @@ class ORCApKaJobSettings(ORCAJobSettings):
         if num_conformers < 1:
             raise ValueError("num_conformers must be >= 1.")
         self.num_conformers = int(num_conformers)
+        self.crest_project = crest_project
         from chemsmart.cli.pka import (
             resolve_pkb_reporting,
             warn_if_default_pks_non_aqueous,
@@ -921,6 +925,7 @@ class ORCApKaJobSettings(ORCAJobSettings):
             pks=shared.get("pks"),
             sampling=shared.get("sampling", False),
             num_conformers=shared.get("num_conformers", 1),
+            crest_project=shared.get("crest_project"),
             charge=opt_settings.charge,
             multiplicity=opt_settings.multiplicity,
             functional=opt_settings.functional,

@@ -1018,6 +1018,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             and A- before DFT. Default is False.
         num_conformers (int): Number of CREST conformers to retain per target
             species. Must be >= 1. Default is 1.
+        crest_project (str): Optional CREST project YAML name (the same ``-p``
+            name used for Gaussian). Used when sampling is enabled.
 
     References:
         Kelly CP, Cramer CJ, Truhlar DG (2006) Aqueous solvation free
@@ -1084,6 +1086,7 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         pks=None,
         sampling=False,
         num_conformers=1,
+        crest_project=None,
         **kwargs,
     ):
         """
@@ -1139,6 +1142,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
                 before DFT. Default is False.
             num_conformers (int): Number of CREST conformers to retain per
                 target species. Must be >= 1. Default is 1.
+            crest_project (str, optional): CREST project YAML name (the same
+                ``-p`` name used for Gaussian). Default is None (CREST defaults).
             **kwargs: Additional keyword arguments passed to GaussianJobSettings,
                 including charge and multiplicity for the protonated form,
                 and functional/basis for both gas and solution phases.
@@ -1199,6 +1204,7 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         if num_conformers < 1:
             raise ValueError("num_conformers must be >= 1.")
         self.num_conformers = int(num_conformers)
+        self.crest_project = crest_project
         from chemsmart.cli.pka import (
             resolve_pkb_reporting,
             warn_if_default_pks_non_aqueous,
