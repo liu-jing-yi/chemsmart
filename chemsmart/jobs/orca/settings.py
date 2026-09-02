@@ -775,6 +775,10 @@ class ORCApKaJobSettings(ORCAJobSettings):
         delta_G_proton (float): G_soln(H+) in kcal/mol for the direct cycle.
             None unless supplied; omitted values are computed as aqueous
             G_soln(H+) at the job temperature.
+        sampling (bool): Whether to run CREST conformational sampling of HA
+            and A- before DFT. Default is False.
+        num_conformers (int): Number of CREST conformers to retain per target
+            species. Must be >= 1. Default is 1.
     """
 
     def __init__(
@@ -801,6 +805,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
         energy_units="hartree",
         pkb=False,
         pks=None,
+        sampling=False,
+        num_conformers=1,
         **kwargs,
     ):
         if "thermodynamic_cycle" in kwargs:
@@ -850,6 +856,12 @@ class ORCApKaJobSettings(ORCAJobSettings):
         self.delta_G_proton = delta_G_proton
         self.pkb = bool(pkb)
         self.pks = pks
+        self.sampling = bool(sampling)
+        if num_conformers is None:
+            num_conformers = 1
+        if num_conformers < 1:
+            raise ValueError("num_conformers must be >= 1.")
+        self.num_conformers = int(num_conformers)
         from chemsmart.cli.pka import (
             resolve_pkb_reporting,
             warn_if_default_pks_non_aqueous,
@@ -907,6 +919,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             cutoff_enthalpy=shared["cutoff_enthalpy"],
             pkb=shared.get("pkb", False),
             pks=shared.get("pks"),
+            sampling=shared.get("sampling", False),
+            num_conformers=shared.get("num_conformers", 1),
             charge=opt_settings.charge,
             multiplicity=opt_settings.multiplicity,
             functional=opt_settings.functional,

@@ -1341,6 +1341,65 @@ class TestPKa:
         ):
             resolve_pka_sampling_options(False, 3)
 
+    def test_pka_settings_sampling_defaults_and_builders(self):
+        from chemsmart.jobs.gaussian.settings import (
+            GaussianJobSettings,
+            GaussianpKaJobSettings,
+        )
+        from chemsmart.jobs.orca.settings import (
+            ORCAJobSettings,
+            ORCApKaJobSettings,
+        )
+
+        gaussian_defaults = GaussianpKaJobSettings(proton_index=10)
+        assert gaussian_defaults.sampling is False
+        assert gaussian_defaults.num_conformers == 1
+
+        orca_defaults = ORCApKaJobSettings(proton_index=10)
+        assert orca_defaults.sampling is False
+        assert orca_defaults.num_conformers == 1
+
+        shared = {
+            "scheme": "direct",
+            "reference": None,
+            "reference_proton_index": None,
+            "reference_charge": None,
+            "reference_multiplicity": None,
+            "reference_conjugate_base_charge": None,
+            "reference_conjugate_base_multiplicity": None,
+            "delta_g_proton": None,
+            "conjugate_base_charge": None,
+            "conjugate_base_multiplicity": None,
+            "solvent_model": None,
+            "solvent_id": None,
+            "sampling": True,
+            "num_conformers": 3,
+            "temperature": 298.15,
+            "concentration": 1.0,
+            "pressure": 1.0,
+            "cutoff_entropy_grimme": 100.0,
+            "cutoff_enthalpy": 100.0,
+            "skip_completed": True,
+            "reference_color_code": 4,
+        }
+        gaussian = GaussianpKaJobSettings.build_gaussian_pka_settings(
+            10,
+            shared,
+            GaussianJobSettings(functional="B3LYP", basis="6-31G*"),
+        )
+        orca = ORCApKaJobSettings.build_orca_pka_settings(
+            10,
+            shared,
+            ORCAJobSettings(functional="B3LYP", basis="def2-SVP"),
+        )
+        for settings in (gaussian, orca):
+            assert settings.sampling is True
+            assert settings.num_conformers == 3
+            assert settings.proton_index == 10
+
+        with pytest.raises(ValueError, match="num_conformers must be >= 1"):
+            ORCApKaJobSettings(proton_index=10, num_conformers=0)
+
     def test_validate_reference_options_requires_reference_for_proton_exchange(
         self, tmp_path
     ):

@@ -1081,6 +1081,44 @@ class TestGaussianpKaJobSettings:
         assert settings.conjugate_base_multiplicity == 1
         assert settings.functional == "B3LYP"
         assert settings.basis == "6-311+G(d,p)"
+        assert settings.sampling is False
+        assert settings.num_conformers == 1
+
+    def test_sampling_fields(self):
+        """Test CREST sampling fields on Gaussian pKa settings."""
+        settings = GaussianpKaJobSettings(
+            proton_index=10,
+            sampling=True,
+            num_conformers=3,
+        )
+        assert settings.sampling is True
+        assert settings.num_conformers == 3
+
+        with pytest.raises(ValueError, match="num_conformers must be >= 1"):
+            GaussianpKaJobSettings(proton_index=10, num_conformers=0)
+
+    def test_build_gaussian_pka_settings_threads_sampling(self):
+        """Builder copies sampling and num_conformers from shared."""
+        opt_settings = GaussianJobSettings(functional="B3LYP", basis="6-31G*")
+        settings = GaussianpKaJobSettings.build_gaussian_pka_settings(
+            10,
+            {
+                "scheme": "direct",
+                "sampling": True,
+                "num_conformers": 3,
+                "skip_completed": True,
+                "reference_color_code": 4,
+                "entropy_method": "grimme",
+            },
+            opt_settings,
+        )
+        assert settings.proton_index == 10
+        assert settings.sampling is True
+        assert settings.num_conformers == 3
+        assert settings.functional == "B3LYP"
+        assert settings.basis == "6-31G*"
+        assert "skip_completed" not in vars(settings)
+        assert "entropy_method" not in vars(settings)
 
     def test_direct_cycle_no_reference(self):
         """Test that direct cycle does not require reference acid."""

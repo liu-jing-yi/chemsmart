@@ -1014,6 +1014,10 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         multiplicity (int): Multiplicity of the protonated form (inherited from parent).
         conjugate_base_charge (int): Charge of the conjugate base (typically charge - 1).
         conjugate_base_multiplicity (int): Multiplicity of the conjugate base.
+        sampling (bool): Whether to run CREST conformational sampling of HA
+            and A- before DFT. Default is False.
+        num_conformers (int): Number of CREST conformers to retain per target
+            species. Must be >= 1. Default is 1.
 
     References:
         Kelly CP, Cramer CJ, Truhlar DG (2006) Aqueous solvation free
@@ -1078,6 +1082,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         energy_units="hartree",
         pkb=False,
         pks=None,
+        sampling=False,
+        num_conformers=1,
         **kwargs,
     ):
         """
@@ -1129,6 +1135,10 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             cutoff_enthalpy (float): Cutoff frequency for enthalpy in cm^-1
                 using Head-Gordon's quasi-RRHO method. Default is 100.0 cm^-1.
             energy_units (str): Energy units for output. Default is 'hartree'.
+            sampling (bool): Enable CREST conformational sampling of HA and A-
+                before DFT. Default is False.
+            num_conformers (int): Number of CREST conformers to retain per
+                target species. Must be >= 1. Default is 1.
             **kwargs: Additional keyword arguments passed to GaussianJobSettings,
                 including charge and multiplicity for the protonated form,
                 and functional/basis for both gas and solution phases.
@@ -1183,6 +1193,12 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         self.delta_G_proton = delta_G_proton
         self.pkb = bool(pkb)
         self.pks = pks
+        self.sampling = bool(sampling)
+        if num_conformers is None:
+            num_conformers = 1
+        if num_conformers < 1:
+            raise ValueError("num_conformers must be >= 1.")
+        self.num_conformers = int(num_conformers)
         from chemsmart.cli.pka import (
             resolve_pkb_reporting,
             warn_if_default_pks_non_aqueous,
