@@ -1280,6 +1280,9 @@ class TestPKa:
         assert "\n  analyze" not in result.output
         assert "\n  thermo" not in result.output
         assert "\n  batch-analyze" not in result.output
+        assert "--sampling" in result.output
+        assert "--no-sampling" in result.output
+        assert "--num-conformers" in result.output
 
     def test_run_orca_pka_help_is_submission_only(
         self, tmp_path, monkeypatch, single_molecule_xyz_file
@@ -1309,6 +1312,9 @@ class TestPKa:
         assert "\n  analyze" not in result.output
         assert "\n  thermo" not in result.output
         assert "\n  batch-analyze" not in result.output
+        assert "--sampling" in result.output
+        assert "--no-sampling" in result.output
+        assert "--num-conformers" in result.output
 
     def test_run_pka_help_keeps_output_analysis_commands(self):
         runner = CliRunner()
@@ -1321,6 +1327,19 @@ class TestPKa:
         assert "batch-analyze" in result.output
         assert "--pkb" in result.output
         assert "--pks" in result.output
+        assert "--sampling" not in result.output
+        assert "--num-conformers" not in result.output
+
+    def test_resolve_pka_sampling_options_rejects_n_without_sampling(self):
+        from chemsmart.cli.pka import resolve_pka_sampling_options
+
+        assert resolve_pka_sampling_options(False, 1) == (False, 1)
+        assert resolve_pka_sampling_options(True, 3) == (True, 3)
+
+        with pytest.raises(
+            click.UsageError, match="-n/--num-conformers requires --sampling"
+        ):
+            resolve_pka_sampling_options(False, 3)
 
     def test_validate_reference_options_requires_reference_for_proton_exchange(
         self, tmp_path

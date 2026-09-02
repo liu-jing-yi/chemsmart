@@ -63,6 +63,8 @@ def pka(
     conjugate_base_multiplicity,
     solvent_model,
     solvent_id,
+    sampling,
+    num_conformers,
     pkb,
     pks,
     temperature,
@@ -81,10 +83,16 @@ def pka(
       chemsmart run pka analyze ...
       chemsmart run pka batch-analyze ...
     """
-    from chemsmart.cli.pka import resolve_pka_entropy_cutoff
+    from chemsmart.cli.pka import (
+        resolve_pka_entropy_cutoff,
+        resolve_pka_sampling_options,
+    )
 
     s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
         cutoff_entropy_grimme, cutoff_entropy_truhlar
+    )
+    sampling, num_conformers = resolve_pka_sampling_options(
+        sampling, num_conformers
     )
     shared = dict(
         scheme=scheme,
@@ -100,6 +108,8 @@ def pka(
         conjugate_base_multiplicity=conjugate_base_multiplicity,
         solvent_model=solvent_model,
         solvent_id=solvent_id,
+        sampling=sampling,
+        num_conformers=num_conformers,
         pkb=pkb,
         pks=pks,
         temperature=temperature,

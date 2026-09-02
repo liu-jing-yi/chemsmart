@@ -659,6 +659,21 @@ def click_pka_thermochemistry_options(f):
     )
 
 
+def resolve_pka_sampling_options(sampling=False, num_conformers=1):
+    """Return ``(sampling, num_conformers)`` for pKa submission.
+
+    ``-n/--num-conformers`` greater than 1 requires ``--sampling``.
+    """
+    sampling = bool(sampling)
+    if num_conformers is None:
+        num_conformers = 1
+    if num_conformers > 1 and not sampling:
+        raise click.UsageError(
+            "-n/--num-conformers requires --sampling when greater than 1."
+        )
+    return sampling, num_conformers
+
+
 def click_pka_shared_options(f):
     f = click_pka_thermochemistry_options(f)
     f = click_pka_pkb_options(f)
@@ -768,6 +783,28 @@ def click_pka_shared_options(f):
         type=str,
         default=None,
         help="Solvent ID for solution phase SP (default: project setting or water).",
+    )
+    @click.option(
+        "--sampling/--no-sampling",
+        default=False,
+        type=bool,
+        help=(
+            "Enable CREST conformational sampling of the target acid (HA) "
+            "and conjugate base (A-) before DFT. Off by default."
+        ),
+    )
+    @click.option(
+        "-n",
+        "--num-conformers",
+        type=click.IntRange(min=1),
+        default=1,
+        show_default=True,
+        help=(
+            "Number of CREST conformers to retain per target species. "
+            "Place -n after pka so it is not interpreted as "
+            "run/sub -n/--num-cores. Values greater than 1 require "
+            "--sampling."
+        ),
     )
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
