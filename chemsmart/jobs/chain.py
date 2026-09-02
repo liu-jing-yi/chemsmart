@@ -11,10 +11,19 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
 
 from chemsmart.io.molecules.structure import Molecule
+from chemsmart.jobs.chain_runner import ChainJobRunner, FakeChainJobRunner
 from chemsmart.jobs.job import Job
 from chemsmart.jobs.runner import decide_phase_transition, run_phase_jobs
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "JobPhase",
+    "ChainMixin",
+    "ChainJob",
+    "ChainJobRunner",
+    "FakeChainJobRunner",
+]
 
 
 @dataclass
