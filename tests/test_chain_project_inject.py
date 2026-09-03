@@ -27,7 +27,6 @@ def _ctx(obj):
 def _chain_settings(**aliases):
     return ChainProjectSettings(
         aliases=aliases,
-        steps=(),
         project_name="combined",
     )
 

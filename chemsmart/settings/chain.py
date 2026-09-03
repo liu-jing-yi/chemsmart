@@ -1,5 +1,4 @@
 import os
-from dataclasses import dataclass
 
 import yaml
 
@@ -8,31 +7,19 @@ from chemsmart.settings.user import CHEMSMARTUserSettings
 user_settings = CHEMSMARTUserSettings()
 
 
-@dataclass(frozen=True)
-class ChainStep:
-    program: str
-    job: str
-
-
 class ChainProjectSettings:
-    """YAML chain-project aliases and optional pipeline steps.
+    """YAML chain-project aliases for per-program project names.
 
     Top-level keys ``crest``, ``xtb``, ``gaussian``, and ``orca`` are aliases
-    to existing per-program project names. ``steps`` is an optional list of
-    ``{program, job}`` mappings. Aliases-only files are valid.
+    to existing per-program project names.
     """
 
     PROGRAMS = ("crest", "xtb", "gaussian", "orca")
     PROJECT_NAME = "chain"
 
-    def __init__(self, aliases, steps, project_name):
+    def __init__(self, aliases, project_name):
         self._aliases = dict(aliases)
-        self._steps = tuple(steps)
         self.PROJECT_NAME = project_name
-
-    @property
-    def steps(self):
-        return self._steps
 
     def project_for(self, program):
         """Return the per-program project alias for ``program``.
@@ -100,18 +87,21 @@ class ChainProjectSettings:
 
     @classmethod
     def _from_config(cls, config, project_name):
-        allowed_keys = set(cls.PROGRAMS) | {"steps"}
-        unknown_keys = sorted(set(config) - allowed_keys)
+        if "steps" in config:
+            raise ValueError(
+                "Chain project YAML no longer supports 'steps'; "
+                "specify the pipeline with -s/--steps."
+            )
+        unknown_keys = sorted(set(config) - set(cls.PROGRAMS))
         if unknown_keys:
-            allowed = ", ".join(sorted(allowed_keys))
+            allowed = ", ".join(cls.PROGRAMS)
             unknown = ", ".join(unknown_keys)
             raise ValueError(
                 f"Unknown chain project keys: {unknown}. "
                 f"Allowed keys: {allowed}."
             )
         aliases = cls._parse_aliases(config)
-        steps = cls._parse_steps(config, aliases)
-        return cls(aliases=aliases, steps=steps, project_name=project_name)
+        return cls(aliases=aliases, project_name=project_name)
 
     @classmethod
     def _parse_aliases(cls, config):
@@ -129,47 +119,6 @@ class ChainProjectSettings:
                 )
             aliases[program] = value.strip()
         return aliases
-
-    @classmethod
-    def _parse_steps(cls, config, aliases):
-        if "steps" not in config or config["steps"] is None:
-            return ()
-        raw_steps = config["steps"]
-        if not isinstance(raw_steps, list):
-            raise ValueError("Chain project 'steps' must be a list.")
-        steps = []
-        allowed_step_keys = {"program", "job"}
-        for index, raw_step in enumerate(raw_steps):
-            if not isinstance(raw_step, dict):
-                raise ValueError(
-                    f"Chain project step {index} must be a mapping."
-                )
-            unknown_keys = sorted(set(raw_step) - allowed_step_keys)
-            if unknown_keys:
-                unknown = ", ".join(unknown_keys)
-                raise ValueError(f"Unknown chain step keys: {unknown}.")
-            program = raw_step.get("program")
-            job = raw_step.get("job")
-            if not isinstance(program, str) or not program.strip():
-                raise ValueError(
-                    "Each chain step requires a 'program' string."
-                )
-            if not isinstance(job, str) or not job.strip():
-                raise ValueError("Each chain step requires a 'job' string.")
-            program = program.strip()
-            job = job.strip()
-            if program not in cls.PROGRAMS:
-                allowed = ", ".join(cls.PROGRAMS)
-                raise ValueError(
-                    f"Unknown chain step program {program!r}. "
-                    f"Allowed programs: {allowed}."
-                )
-            if program not in aliases:
-                raise ValueError(
-                    f"Chain step program {program!r} has no project alias."
-                )
-            steps.append(ChainStep(program=program, job=job))
-        return tuple(steps)
 
     @classmethod
     def _from_user_project_name(cls, project_name):

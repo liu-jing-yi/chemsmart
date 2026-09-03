@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from chemsmart.settings.chain import ChainProjectSettings, ChainStep
+from chemsmart.settings.chain import ChainProjectSettings
 from chemsmart.settings.gaussian import GaussianProjectSettings
 from chemsmart.settings.user import CHEMSMARTUserSettings
 
@@ -55,26 +55,25 @@ class TestCHEMSMARTUserChainSettings:
 
 
 class TestChainProjectSettings:
-    def test_aliases_and_steps_from_yaml(self, chain1_yaml_stem):
+    def test_aliases_from_yaml(self, chain1_yaml_stem):
         settings = ChainProjectSettings.from_project(chain1_yaml_stem)
         assert settings.PROJECT_NAME == "chain1"
         assert settings.project_for("crest") == "crest_project1"
         assert settings.project_for("xtb") == "xtb_project1"
         assert settings.project_for("gaussian") == "gaussian_project2"
         assert settings.project_for("orca") == "orca_project3"
-        assert settings.steps == (
-            ChainStep(program="crest", job="conformers"),
-            ChainStep(program="xtb", job="opt"),
-            ChainStep(program="gaussian", job="opt"),
-            ChainStep(program="orca", job="sp"),
-        )
 
-    def test_aliases_only_has_empty_steps(self, chain_tests_directory):
+    def test_aliases_only_yaml(self, chain_tests_directory):
         settings = ChainProjectSettings.from_project(
             os.path.join(chain_tests_directory, "aliases_only")
         )
         assert settings.project_for("gaussian") == "gaussian_project2"
-        assert settings.steps == ()
+
+    def test_steps_key_errors_with_cli_redirect(self, chain_tests_directory):
+        with pytest.raises(ValueError, match="-s/--steps"):
+            ChainProjectSettings.from_project(
+                os.path.join(chain_tests_directory, "missing_step_alias")
+            )
 
     def test_unknown_top_level_keys_error(self, chain_tests_directory):
         with pytest.raises(
@@ -94,15 +93,6 @@ class TestChainProjectSettings:
             match="has no gaussian section",
         ):
             settings.project_for("gaussian")
-
-    def test_step_program_requires_present_alias(self, chain_tests_directory):
-        with pytest.raises(
-            ValueError,
-            match="Chain step program 'gaussian' has no project alias",
-        ):
-            ChainProjectSettings.from_project(
-                os.path.join(chain_tests_directory, "missing_step_alias")
-            )
 
     def test_missing_target_project_yaml_uses_program_from_project(
         self, chain_tests_directory, isolated_config_dir
@@ -125,16 +115,13 @@ class TestChainProjectSettings:
         assert settings.project_for("xtb") == "test"
         assert settings.project_for("gaussian") == "test"
         assert settings.project_for("orca") == "test"
-        assert settings.steps[0] == ChainStep(
-            program="crest", job="conformers"
-        )
-        assert settings.steps[-1] == ChainStep(program="orca", job="sp")
 
     def test_from_project_uses_packaged_test(self, isolated_config_dir):
         settings = ChainProjectSettings.from_project("test")
         assert settings.PROJECT_NAME == "test"
         assert settings.project_for("gaussian") == "test"
-        assert settings.steps[-1] == ChainStep(program="orca", job="sp")
+        with pytest.raises(ValueError, match="has no crest section"):
+            settings.project_for("crest")
 
     def test_from_project_user_dir_overrides_packaged(
         self, isolated_config_dir
@@ -144,7 +131,6 @@ class TestChainProjectSettings:
         (chain_dir / "chain1.yaml").write_text("gaussian: user_gaussian\n")
         settings = ChainProjectSettings.from_project("chain1")
         assert settings.project_for("gaussian") == "user_gaussian"
-        assert settings.steps == ()
         with pytest.raises(ValueError, match="has no crest section"):
             settings.project_for("crest")
 
@@ -155,7 +141,6 @@ class TestChainProjectSettings:
         settings = ChainProjectSettings.from_project("test")
         assert settings.PROJECT_NAME == "test"
         assert settings.project_for("gaussian") == "user_gaussian"
-        assert settings.steps == ()
 
     def test_from_project_missing_chain_file(self, isolated_config_dir):
         with pytest.raises(
