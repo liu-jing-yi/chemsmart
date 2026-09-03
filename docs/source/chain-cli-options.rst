@@ -9,11 +9,11 @@ list, including nested ``gaussian``, ``orca``, ``xtb``, and ``crest`` subcommand
  Basic Command Structure
 *************************
 
-**YAML pipeline** (no nested subcommand):
+**CLI pipeline** (no nested subcommand):
 
 .. code:: bash
 
-   chemsmart sub [OPTIONS] chain [CHAIN_OPTIONS] -f FILE
+   chemsmart sub [OPTIONS] chain [CHAIN_OPTIONS] -f FILE -s PROGRAM:JOB [-s ...]
 
 **Nested program slice**:
 
@@ -44,7 +44,12 @@ Project and File Options
 
    -  -  ``-f, --filename``
       -  string
-      -  Input structure file (required for the YAML pipeline; nested programs also accept ``-f``)
+      -  Input structure file (required for the CLI pipeline; nested programs also accept ``-f``)
+
+   -  -  ``-s, --steps``
+      -  string (repeatable)
+      -  One pipeline step as ``PROGRAM:JOB`` (e.g. ``gaussian:opt``). Required for the CLI pipeline; repeat for each
+         phase. Not the same as ``run``/``sub`` ``-s/--server``.
 
    -  -  ``-l, --label``
       -  string
@@ -69,8 +74,13 @@ Project and File Options
 .. note::
 
    -  ``-p`` uses the chain project name without the ``.yaml`` extension.
-   -  For the YAML pipeline, ``-f`` is required. Aliases-only chain files (no ``steps``) require a nested program
-      command instead.
+
+   -  For the CLI pipeline, ``-f`` and at least one ``-s/--steps`` are required. An aliases-only chain file without a
+      nested program command is valid only when you invoke a nested ``gaussian``, ``orca``, ``xtb``, or ``crest``
+      subcommand.
+
+   -  Combining ``-s/--steps`` with a nested program command is a usage error.
+
    -  ``-l`` and ``-a`` are mutually exclusive.
 
 Execution Control
@@ -101,13 +111,20 @@ Full pipeline on HPC:
 
 .. code:: bash
 
-   chemsmart sub -s mycluster chain -p combined -f ligand.xyz -c 0 -m 1
+   chemsmart sub -s mycluster chain -p combined -f ligand.xyz -c 0 -m 1 \
+     -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
 
 Gaussian pKa slice using the chain file's Gaussian alias:
 
 .. code:: bash
 
    chemsmart sub chain -p combined gaussian -f ligand.xyz -c 0 -m 1 pka submit
+
+Chain-level structure and charge/multiplicity forwarded to a nested Gaussian opt:
+
+.. code:: bash
+
+   chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 gaussian opt
 
 Override the Gaussian project while keeping other chain aliases for other nested commands:
 
@@ -119,5 +136,5 @@ Override the Gaussian project while keeping other chain aliases for other nested
  Next Steps
 ************
 
--  :doc:`chain-jobs` — chain YAML schema, supported pipeline steps, geometry handoff, and HPC submission
+-  :doc:`chain-jobs` — chain YAML aliases, ``-s/--steps`` pipeline, geometry handoff, and HPC submission
 -  :doc:`configuration-project-settings` — chain project file location and alias rules

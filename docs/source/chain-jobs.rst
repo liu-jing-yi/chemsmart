@@ -4,10 +4,11 @@
  Chain Workflows
 #################
 
-Chain projects tie together CREST, xTB, Gaussian, and ORCA calculations in a single YAML file. Use them in two ways:
+Chain projects tie together CREST, xTB, Gaussian, and ORCA calculations. A chain YAML file holds **project aliases**
+only; pipeline order comes from repeatable ``-s/--steps`` on the CLI. Use chains in two ways:
 
-#. **Pipeline** — ``chemsmart run/sub chain -p NAME -f mol.xyz`` runs the ``steps`` list in order, passing optimized
-   geometries from each phase to the next.
+#. **Pipeline** — ``chemsmart run/sub chain -p NAME -f mol.xyz -s crest:conformers -s xtb:opt ...`` runs each step in
+   order, passing optimized geometries from each phase to the next.
 #. **Nested slice** — ``chemsmart run/sub chain -p NAME gaussian pka ...`` (or ``orca``, ``xtb``, ``crest``) runs one
    program's CLI with project aliases from the chain file, without loading other programs.
 
@@ -31,34 +32,21 @@ Example (``~/.chemsmart/chain/combined.yaml``):
    gaussian: gaussian_project2
    orca: orca_project3
 
-   steps:
-     - program: crest
-       job: conformers
-     - program: xtb
-       job: opt
-     - program: gaussian
-       job: opt
-     - program: orca
-       job: sp
-
 Top-level keys ``crest``, ``xtb``, ``gaussian``, and ``orca`` are aliases to existing per-program project names (the
-YAML stems under ``~/.chemsmart/crest/``, ``xtb/``, ``gaussian/``, and ``orca/``). Unknown top-level keys other than
-``steps`` are rejected.
+YAML stems under ``~/.chemsmart/crest/``, ``xtb/``, ``gaussian/``, and ``orca/``). Any other top-level key is rejected.
+A legacy ``steps`` key in the file is also rejected — specify the pipeline with ``-s/--steps`` instead.
 
-``steps`` is optional. An aliases-only file is valid for nested slices. Running ``chain -p NAME`` with no nested command
-and no ``steps`` is a usage error.
-
-Each step's ``program`` must have a corresponding alias in the file. The target per-program YAML must exist; otherwise
-CHEMSMART raises the same ``from_project`` error as for a missing Gaussian or ORCA project.
+Each pipeline step's program must have a corresponding alias in the file. The target per-program YAML must exist;
+otherwise CHEMSMART raises the same ``from_project`` error as for a missing Gaussian or ORCA project.
 
 Packaged templates are copied to ``~/.chemsmart/chain/`` by ``chemsmart config`` and ``chemsmart update projects``. See
 :doc:`configuration-project-settings` for the full schema.
 
-*********************
- YAML Pipeline Steps
-*********************
+********************
+ CLI Pipeline Steps
+********************
 
-The following ``(program, job)`` pairs are supported in ``steps``:
+Repeat ``-s PROGRAM:JOB`` on the chain command for each phase. The following ``(program, job)`` pairs are supported:
 
 .. list-table::
    :header-rows: 1
@@ -88,16 +76,12 @@ The following ``(program, job)`` pairs are supported in ``steps``:
       -  ``opt``, ``ts``, ``sp``
       -  Gaussian optimization, transition state, or single point
 
-   -  -  ``gaussian``
-      -  ``modred``, ``irc``, ``scan``, ``nci``, ``wbi``, ``td``, ``resp``, ``fukui``, ``qrc``
-      -  Other Gaussian job types with standard project settings
-
    -  -  ``orca``
-      -  ``opt``, ``ts``, ``sp``, ``modred``, ``irc``, ``scan``, ``fukui``, ``qrc``
-      -  ORCA equivalents of the Gaussian rows above
+      -  ``opt``, ``ts``, ``sp``
+      -  ORCA optimization, transition state, or single point
 
-Jobs that need large option surfaces or extra input structures — **pKa**, **reaction**, **QM/MM**, and similar — are
-**not** YAML steps. Run them as nested commands, e.g. ``chain -p combined gaussian pka submit``.
+Jobs that need large option surfaces or extra input structures — **pKa**, **reaction**, **QM/MM**, IRC, scan, Fukui, and
+similar — are **not** pipeline steps. Run them as nested commands, e.g. ``chain -p combined gaussian pka submit``.
 
 Geometry handoff between phases:
 
@@ -106,8 +90,9 @@ Geometry handoff between phases:
 -  If the previous phase is incomplete, the chain stops so HPC resubmission with ``--skip-completed`` can continue
    later.
 
-Child job labels follow ``{chain_label}_{program}_{job}`` (e.g. ``mol_gaussian_opt``). Charge and multiplicity from
-``-c`` / ``-m`` on the chain command are merged into each child.
+Child job labels follow ``{chain_label}_{index:02d}_{program}_{job}`` (e.g. ``mol_00_gaussian_opt``,
+``mol_01_gaussian_opt`` for two Gaussian optimization steps). Charge and multiplicity from ``-c`` / ``-m`` on the chain
+command are merged into each child.
 
 ********************
  Running a Pipeline
@@ -115,7 +100,8 @@ Child job labels follow ``{chain_label}_{program}_{job}`` (e.g. ``mol_gaussian_o
 
 .. code:: bash
 
-   chemsmart sub chain -p combined -f molecule.xyz -c 0 -m 1
+   chemsmart sub chain -p combined -f molecule.xyz -c 0 -m 1 \
+     -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
 
 The whole pipeline is **one** job submission: a single ``ChainJob`` orchestrates all phases. Use ``chemsmart sub`` on
 HPC clusters the same way as for Gaussian pKa or other multi-phase workflows — one scheduler script runs the full chain.
@@ -124,8 +110,10 @@ Local preparation and dry runs:
 
 .. code:: bash
 
-   chemsmart run chain -p combined -f molecule.xyz -c 0 -m 1
-   chemsmart run --fake chain -p combined -f molecule.xyz -c 0 -m 1
+   chemsmart run chain -p combined -f molecule.xyz -c 0 -m 1 \
+     -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
+   chemsmart run --fake chain -p combined -f molecule.xyz -c 0 -m 1 \
+     -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
 
 ``--fake`` uses the chain fake runner for the parent; each phase child receives the appropriate program fake runner when
 its job type differs from the parent.
@@ -142,6 +130,10 @@ Nested commands reuse the full Gaussian, ORCA, xTB, and CREST CLI groups:
    chemsmart sub chain -p combined orca -f mol.xyz opt
    chemsmart sub chain -p combined xtb -f mol.xyz opt
    chemsmart sub chain -p combined crest -f mol.xyz conformers
+
+For nested commands, ``-f``, ``-c``, and ``-m`` may be given on the chain group instead of the nested program group —
+e.g. ``chain -p combined -f mol.xyz -c 0 -m 1 gaussian opt``. Program-level options still override chain-level values
+when both are set.
 
 Project resolution for nested commands:
 

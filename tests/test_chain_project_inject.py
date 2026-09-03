@@ -336,15 +336,21 @@ class TestProgramCLIProjectInject:
     ):
         settings = _chain_settings(gaussian="gas_solv")
         args = ["opt"]
-        with patch(
-            "chemsmart.settings.gaussian.GaussianProjectSettings."
-            "from_project",
-            wraps=GaussianProjectSettings.from_project,
-        ) as gaussian_from_project:
-            result = _invoke(
+        with (
+            patch(
+                "chemsmart.settings.gaussian.GaussianProjectSettings."
+                "from_project",
+                wraps=GaussianProjectSettings.from_project,
+            ) as gaussian_from_project,
+            patch(
+                "chemsmart.jobs.gaussian.opt.GaussianOptJob",
+                return_value=MagicMock(),
+            ) as mock_job,
+        ):
+            result = CliRunner().invoke(
                 gaussian,
                 args,
-                {
+                obj={
                     "jobrunner": MagicMock(),
                     CHAIN_PROJECT_SETTINGS_KEY: settings,
                     CHAIN_CLI_DEFAULTS_KEY: {
@@ -356,7 +362,11 @@ class TestProgramCLIProjectInject:
                         "multiplicity": 1,
                     },
                 },
-                "chemsmart.jobs.gaussian.opt.GaussianOptJob",
+                catch_exceptions=False,
             )
         assert result.exit_code == 0, result.output
         gaussian_from_project.assert_called_once_with("gas_solv")
+        assert mock_job.called
+        call_kwargs = mock_job.call_args.kwargs
+        assert call_kwargs["settings"].charge == 0
+        assert call_kwargs["settings"].multiplicity == 1
