@@ -177,6 +177,7 @@ These options are only available with ``chemsmart sub``:
 -  ``orca``: Run or submit ORCA jobs
 -  ``xtb``: Run or submit xTB jobs
 -  ``crest``: Run or submit CREST conformational search jobs
+-  ``chain``: Run multi-program YAML pipelines or nested program slices from a chain project file
 -  ``mol``: Run PyMOL visualization and analysis jobs
 -  ``thermochemistry``: Run thermochemistry analysis jobs
 -  ``grouper``: Run structure grouping jobs
@@ -192,6 +193,8 @@ For specific job types, see the detailed tutorials:
 -  :doc:`orca-cli-options`
 -  :doc:`xtb-cli-options`
 -  :doc:`crest-cli-options`
+-  :doc:`chain-cli-options`
+-  :doc:`chain-jobs`
 -  :doc:`pymol-cli-options`
 -  :doc:`thermochemistry-analysis`
 -  :doc:`grouper-cli-options`

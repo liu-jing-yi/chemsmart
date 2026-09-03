@@ -79,6 +79,13 @@ computational chemistry software.
    crest-cli-options
    crest-conformational-search
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Chain Workflows
+
+   chain-jobs
+   chain-cli-options
+
 ..
    .. toctree::
 

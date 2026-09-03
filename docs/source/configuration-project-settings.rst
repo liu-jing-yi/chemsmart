@@ -2,7 +2,7 @@
  Project Settings
 ##################
 
-Configure project-specific settings for Gaussian, ORCA, xTB, and CREST calculations.
+Configure project-specific settings for Gaussian, ORCA, xTB, CREST, and chain workflows.
 
 ****************************
  Updating Project Templates
@@ -552,6 +552,48 @@ Common keys:
 
 A packaged template is available as ``template_crest_simple.yaml`` under the CHEMSMART settings templates directory.
 Copy it into ``~/.chemsmart/crest/`` and rename it for your project.
+
+************************
+ Chain Project Settings
+************************
+
+The ``~/.chemsmart/chain/`` directory contains chain project files that alias per-program projects and optionally define
+a multi-program pipeline. Chain files are used by ``chemsmart run/sub chain``; see :doc:`chain-jobs`.
+
+Example (``~/.chemsmart/chain/combined.yaml``):
+
+.. code:: yaml
+
+   crest: crest_project1
+   xtb: xtb_project1
+   gaussian: gaussian_project2
+   orca: orca_project3
+
+   steps:
+     - program: crest
+       job: conformers
+     - program: xtb
+       job: opt
+     - program: gaussian
+       job: opt
+     - program: orca
+       job: sp
+
+Schema rules:
+
+-  Top-level keys ``crest``, ``xtb``, ``gaussian``, and ``orca`` map to existing project name stems (e.g. ``gaussian:
+   gaussian_project2`` → ``~/.chemsmart/gaussian/gaussian_project2.yaml``). Unknown top-level keys other than ``steps``
+   are rejected.
+
+-  ``steps`` is optional. Aliases-only files are valid for nested program slices (e.g. ``chain -p combined gaussian
+   pka``).
+
+-  Each step requires ``program`` and ``job``. The ``program`` must have a corresponding alias in the same file.
+
+-  Missing target per-program YAML files fail with the usual ``from_project`` error for that program.
+
+Packaged templates (``chain1.yaml``, ``test.yaml``) are installed under ``~/.chemsmart/chain/`` by ``chemsmart config``
+and ``chemsmart update projects``.
 
 *******************
  Scratch Directory
