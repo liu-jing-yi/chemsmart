@@ -5,6 +5,26 @@ import click
 logger = logging.getLogger(__name__)
 
 CHAIN_PROJECT_SETTINGS_KEY = "chain_project_settings"
+CHAIN_CLI_DEFAULTS_KEY = "chain_cli_defaults"
+
+
+def resolve_chain_cli_defaults(ctx, **options):
+    """Fill omitted program options from chain-level CLI flags on ``ctx.obj``.
+
+    Only keys present in ``options`` are considered. A program value of
+    ``None`` is replaced by the chain default when one was set on the parent
+    ``chain`` group.
+    """
+    if ctx.obj is None:
+        return options
+    defaults = ctx.obj.get(CHAIN_CLI_DEFAULTS_KEY)
+    if defaults is None:
+        return options
+    resolved = dict(options)
+    for key, value in options.items():
+        if value is None and key in defaults:
+            resolved[key] = defaults[key]
+    return resolved
 
 
 def resolve_program_project(ctx, program, project):

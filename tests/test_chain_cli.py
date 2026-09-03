@@ -291,6 +291,45 @@ class TestChainNestedSlice:
         crest_from_project.assert_not_called()
         assert mock_job.called
 
+    def test_nested_gaussian_uses_chain_level_file_charge_multiplicity(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "gaussian: gas_solv\n",
+        )
+        args = [
+            "-p",
+            "combined",
+            "-f",
+            single_molecule_xyz_file,
+            "-c",
+            "0",
+            "-m",
+            "1",
+            "gaussian",
+            "opt",
+        ]
+        with patch(
+            "chemsmart.jobs.gaussian.opt.GaussianOptJob",
+            return_value=MagicMock(),
+        ) as mock_job:
+            result = _invoke_chain(args)
+        assert result.exit_code == 0, result.output
+        assert mock_job.called
+        call_kwargs = mock_job.call_args.kwargs
+        assert call_kwargs["settings"].charge == 0
+        assert call_kwargs["settings"].multiplicity == 1
+
+    def test_missing_chain_project_is_usage_error(self, isolated_config_dir):
+        result = CliRunner().invoke(
+            chain,
+            ["-p", "missing", "gaussian", "opt"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+
     def test_run_gaussian_without_chain_uses_own_project(
         self, single_molecule_xyz_file
     ):

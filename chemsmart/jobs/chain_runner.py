@@ -17,7 +17,7 @@ class ChainJobRunner(JobRunner):
     JOBTYPES = ["chain"]
     PROGRAM = "chain"
     FAKE = False
-    SCRATCH = False
+    SCRATCH = None
 
     def __init__(
         self, server, scratch=None, fake=False, scratch_dir=None, **kwargs

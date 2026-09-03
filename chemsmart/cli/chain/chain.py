@@ -14,7 +14,10 @@ from chemsmart.cli.job import (
     click_job_options,
 )
 from chemsmart.cli.orca import orca
-from chemsmart.cli.utils import CHAIN_PROJECT_SETTINGS_KEY
+from chemsmart.cli.utils import (
+    CHAIN_CLI_DEFAULTS_KEY,
+    CHAIN_PROJECT_SETTINGS_KEY,
+)
 from chemsmart.cli.xtb import xtb
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.chain_steps import build_chain_job, parse_chain_step
@@ -156,6 +159,14 @@ def chain(
             raise click.UsageError(
                 "Cannot combine -s/--steps with a nested program command."
             )
+        ctx.obj[CHAIN_CLI_DEFAULTS_KEY] = {
+            "filename": filename,
+            "label": label,
+            "append_label": append_label,
+            "index": index,
+            "charge": charge,
+            "multiplicity": multiplicity,
+        }
         return None
 
     if not steps:

@@ -231,13 +231,30 @@ class TestPropagateRunnerRetype:
 
         assert isinstance(result, GaussianJobRunner)
 
-    def test_chain_parent_retypes_gaussian_child(self, pbs_server):
-        parent = ChainJobRunner(server=pbs_server, scratch=False)
+    def test_chain_parent_retypes_gaussian_child(self, tmp_path):
+        yaml_path = _write_server_yaml(
+            tmp_path / "g16_on.yaml",
+            gaussian_scratch=True,
+            orca_scratch=False,
+        )
+        server = Server.from_yaml(str(yaml_path))
+        scratch_dir = tmp_path / "scratch"
+        scratch_dir.mkdir()
+        parent = ChainJobRunner(server=server, scratch_dir=str(scratch_dir))
         child = SimpleNamespace(TYPE="g16opt", jobrunner=None)
         result = Job._propagate_runner(parent, child)
 
         assert isinstance(result, GaussianJobRunner)
         assert child.jobrunner is result
+        assert result.scratch is True
+
+    def test_chain_parent_no_scratch_forces_child_off(self, pbs_server):
+        parent = ChainJobRunner(server=pbs_server, scratch=False)
+        child = SimpleNamespace(TYPE="g16opt", jobrunner=None)
+        result = Job._propagate_runner(parent, child)
+
+        assert isinstance(result, GaussianJobRunner)
+        assert result.scratch is False
 
     def test_none_runner_returns_none(self):
         child = SimpleNamespace(TYPE="g16opt", jobrunner="unchanged")
@@ -271,7 +288,7 @@ class TestChainJobRunnerSelection:
             job=job, server=pbs_server, scratch=None, fake=False
         )
         assert isinstance(runner, ChainJobRunner)
-        assert runner.scratch is False
+        assert runner.scratch is None
 
 
 class TestScratchCLI:

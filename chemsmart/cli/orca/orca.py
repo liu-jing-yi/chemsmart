@@ -19,7 +19,10 @@ from chemsmart.cli.job import (
     click_filename_options,
     click_pubchem_options,
 )
-from chemsmart.cli.utils import resolve_program_project
+from chemsmart.cli.utils import (
+    resolve_chain_cli_defaults,
+    resolve_program_project,
+)
 from chemsmart.database.utils import is_chemsmart_database
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.utils.cli import MyGroup
@@ -467,6 +470,21 @@ def orca(
     job settings, loads molecular structures, and prepares the context for
     subcommands.
     """
+    chain_defaults = resolve_chain_cli_defaults(
+        ctx,
+        filename=filename,
+        label=label,
+        append_label=append_label,
+        index=index,
+        charge=charge,
+        multiplicity=multiplicity,
+    )
+    filename = chain_defaults["filename"]
+    label = chain_defaults["label"]
+    append_label = chain_defaults["append_label"]
+    index = chain_defaults["index"]
+    charge = chain_defaults["charge"]
+    multiplicity = chain_defaults["multiplicity"]
     # --mid is not supported for job submission
     if molecule_id is not None:
         raise click.UsageError(

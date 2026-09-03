@@ -9,7 +9,9 @@ from chemsmart.cli.crest.crest import crest
 from chemsmart.cli.gaussian.gaussian import gaussian
 from chemsmart.cli.orca.orca import orca
 from chemsmart.cli.utils import (
+    CHAIN_CLI_DEFAULTS_KEY,
     CHAIN_PROJECT_SETTINGS_KEY,
+    resolve_chain_cli_defaults,
     resolve_program_project,
 )
 from chemsmart.cli.xtb.xtb import xtb
@@ -61,6 +63,66 @@ class TestResolveProgramProject:
         ctx = _ctx(None)
         assert resolve_program_project(ctx, "gaussian", None) is None
         assert resolve_program_project(ctx, "gaussian", "test") == "test"
+
+
+class TestResolveChainCliDefaults:
+    def test_fills_omitted_program_options_from_chain_defaults(self):
+        ctx = _ctx(
+            {
+                CHAIN_CLI_DEFAULTS_KEY: {
+                    "filename": "mol.xyz",
+                    "charge": 0,
+                    "multiplicity": 1,
+                    "label": "job",
+                    "append_label": None,
+                    "index": 2,
+                }
+            }
+        )
+        resolved = resolve_chain_cli_defaults(
+            ctx,
+            filename=None,
+            charge=None,
+            multiplicity=None,
+            label=None,
+            append_label=None,
+            index=None,
+        )
+        assert resolved == {
+            "filename": "mol.xyz",
+            "charge": 0,
+            "multiplicity": 1,
+            "label": "job",
+            "append_label": None,
+            "index": 2,
+        }
+
+    def test_program_values_override_chain_defaults(self):
+        ctx = _ctx(
+            {
+                CHAIN_CLI_DEFAULTS_KEY: {
+                    "filename": "chain.xyz",
+                    "charge": 0,
+                    "multiplicity": 1,
+                }
+            }
+        )
+        resolved = resolve_chain_cli_defaults(
+            ctx,
+            filename="other.xyz",
+            charge=-1,
+            multiplicity=2,
+        )
+        assert resolved == {
+            "filename": "other.xyz",
+            "charge": -1,
+            "multiplicity": 2,
+        }
+
+    def test_without_chain_defaults_returns_options_unchanged(self):
+        ctx = _ctx({})
+        options = {"filename": None, "charge": 1}
+        assert resolve_chain_cli_defaults(ctx, **options) == options
 
 
 def _cli_obj(chain_settings=None):
@@ -268,3 +330,33 @@ class TestProgramCLIProjectInject:
             )
         assert result.exit_code == 0, result.output
         crest_from_project.assert_called_once_with("test")
+
+    def test_chain_level_file_charge_multiplicity_forward_to_gaussian(
+        self, single_molecule_xyz_file
+    ):
+        settings = _chain_settings(gaussian="gas_solv")
+        args = ["opt"]
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings."
+            "from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = _invoke(
+                gaussian,
+                args,
+                {
+                    "jobrunner": MagicMock(),
+                    CHAIN_PROJECT_SETTINGS_KEY: settings,
+                    CHAIN_CLI_DEFAULTS_KEY: {
+                        "filename": single_molecule_xyz_file,
+                        "label": None,
+                        "append_label": None,
+                        "index": None,
+                        "charge": 0,
+                        "multiplicity": 1,
+                    },
+                },
+                "chemsmart.jobs.gaussian.opt.GaussianOptJob",
+            )
+        assert result.exit_code == 0, result.output
+        gaussian_from_project.assert_called_once_with("gas_solv")
