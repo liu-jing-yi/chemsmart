@@ -1,0 +1,349 @@
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from chemsmart.io.molecules.structure import Molecule
+from chemsmart.jobs.chain_steps import (
+    CHAIN_NESTED_ONLY_JOBS,
+    CHAIN_STEP_SPECS,
+    build_chain_job,
+    get_chain_step_spec,
+    molecule_from_completed_job,
+)
+from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
+from chemsmart.jobs.crest.job import CRESTJob
+from chemsmart.jobs.crest.settings import CRESTJobSettings
+from chemsmart.jobs.gaussian.fukui import GaussianFukuiJob
+from chemsmart.jobs.gaussian.irc import GaussianIRCJob
+from chemsmart.jobs.gaussian.modred import GaussianModredJob
+from chemsmart.jobs.gaussian.nci import GaussianNCIJob
+from chemsmart.jobs.gaussian.opt import GaussianOptJob
+from chemsmart.jobs.gaussian.qrc import GaussianQRCJob
+from chemsmart.jobs.gaussian.resp import GaussianRESPJob
+from chemsmart.jobs.gaussian.scan import GaussianScanJob
+from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
+from chemsmart.jobs.gaussian.tddft import GaussianTDDFTJob
+from chemsmart.jobs.gaussian.ts import GaussianTSJob
+from chemsmart.jobs.gaussian.wbi import GaussianWBIJob
+from chemsmart.jobs.job import Job
+from chemsmart.jobs.orca.fukui import ORCAFukuiJob
+from chemsmart.jobs.orca.irc import ORCAIRCJob
+from chemsmart.jobs.orca.modred import ORCAModredJob
+from chemsmart.jobs.orca.opt import ORCAOptJob
+from chemsmart.jobs.orca.qrc import ORCAQRCJob
+from chemsmart.jobs.orca.scan import ORCAScanJob
+from chemsmart.jobs.orca.singlepoint import ORCASinglePointJob
+from chemsmart.jobs.orca.ts import ORCATSJob
+from chemsmart.jobs.xtb.hess import XTBHessJob
+from chemsmart.jobs.xtb.opt import XTBOptJob
+from chemsmart.jobs.xtb.singlepoint import XTBSinglePointJob
+from chemsmart.settings.chain import ChainProjectSettings, ChainStep
+from chemsmart.settings.user import CHEMSMARTUserSettings
+
+
+@pytest.fixture()
+def isolated_config_dir(tmp_path, monkeypatch):
+    config_dir = tmp_path / "chemsmart_config"
+    config_dir.mkdir()
+    monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(
+        CHEMSMARTUserSettings,
+        "USER_CONFIG_DIR",
+        str(config_dir),
+    )
+    return config_dir
+
+
+def _h2(z=0.74, charge=0, multiplicity=1):
+    return Molecule(
+        symbols=["H", "H"],
+        positions=[[0.0, 0.0, 0.0], [0.0, 0.0, z]],
+        charge=charge,
+        multiplicity=multiplicity,
+    )
+
+
+def _chain_settings(steps, **aliases):
+    return ChainProjectSettings(
+        aliases=aliases,
+        steps=tuple(steps),
+        project_name="combined",
+    )
+
+
+class DummyHandoffJob(Job):
+    TYPE = "dummy"
+
+    def __init__(self, label, molecule, complete=False):
+        super().__init__(molecule=molecule, label=label, jobrunner=None)
+        self._complete = complete
+        self._handoff = molecule
+
+    def is_complete(self):
+        return self._complete
+
+    def optimized_structure(self):
+        if not self._complete:
+            return None
+        return self._handoff
+
+    def _run(self, **kwargs):
+        self._complete = True
+
+
+class DummySPJob(Job):
+    TYPE = "dummy-sp"
+
+    def __init__(self, label, molecule, output_molecule, complete=True):
+        super().__init__(molecule=molecule, label=label, jobrunner=None)
+        self._complete = complete
+        self._output_molecule = output_molecule
+
+    def is_complete(self):
+        return self._complete
+
+    def optimized_structure(self):
+        return None
+
+    def _output(self):
+        return SimpleNamespace(molecule=self._output_molecule)
+
+    def _run(self, **kwargs):
+        self._complete = True
+
+
+class DummyCRESTJob(CRESTJob):
+    def __init__(self, molecule, best, complete=True):
+        settings = CRESTJobSettings.default()
+        settings.charge = 0
+        settings.multiplicity = 1
+        super().__init__(
+            molecule=molecule,
+            settings=settings,
+            label="crest_dummy",
+        )
+        self._complete = complete
+        self._best = best
+
+    def is_complete(self):
+        return self._complete
+
+    def _output(self):
+        return SimpleNamespace(best_conformer=self._best)
+
+
+_EXPECTED_SPECS = {
+    "crest": {"conformers": CRESTConformerSearchJob},
+    "xtb": {
+        "opt": XTBOptJob,
+        "sp": XTBSinglePointJob,
+        "hess": XTBHessJob,
+    },
+    "gaussian": {
+        "opt": GaussianOptJob,
+        "ts": GaussianTSJob,
+        "sp": GaussianSinglePointJob,
+        "modred": GaussianModredJob,
+        "irc": GaussianIRCJob,
+        "scan": GaussianScanJob,
+        "nci": GaussianNCIJob,
+        "wbi": GaussianWBIJob,
+        "td": GaussianTDDFTJob,
+        "resp": GaussianRESPJob,
+        "fukui": GaussianFukuiJob,
+        "qrc": GaussianQRCJob,
+    },
+    "orca": {
+        "opt": ORCAOptJob,
+        "ts": ORCATSJob,
+        "sp": ORCASinglePointJob,
+        "modred": ORCAModredJob,
+        "irc": ORCAIRCJob,
+        "scan": ORCAScanJob,
+        "fukui": ORCAFukuiJob,
+        "qrc": ORCAQRCJob,
+    },
+}
+
+
+class TestChainStepRegistry:
+    def test_supported_pairs_map_to_job_classes(self):
+        assert CHAIN_STEP_SPECS == _EXPECTED_SPECS
+        for program, jobs in _EXPECTED_SPECS.items():
+            for job, job_class in jobs.items():
+                spec = get_chain_step_spec(program, job)
+                assert spec.job_class is job_class
+
+    def test_nested_only_pka_errors(self):
+        with pytest.raises(
+            ValueError,
+            match="do not support gaussian 'pka'",
+        ):
+            get_chain_step_spec("gaussian", "pka")
+        assert "pka" in CHAIN_NESTED_ONLY_JOBS["gaussian"]
+        assert "pka" in CHAIN_NESTED_ONLY_JOBS["orca"]
+
+    def test_unknown_job_lists_supported_jobs(self):
+        with pytest.raises(
+            ValueError,
+            match="Unsupported chain step job 'foo' for program 'gaussian'",
+        ):
+            get_chain_step_spec("gaussian", "foo")
+
+    def test_unsupported_program_errors(self):
+        with pytest.raises(
+            ValueError, match="Unsupported chain step program 'foo'"
+        ):
+            get_chain_step_spec("foo", "opt")
+
+
+class TestMoleculeFromCompletedJob:
+    def test_returns_none_when_incomplete(self):
+        mol = _h2()
+        job = DummyHandoffJob("opt", mol, complete=False)
+        assert molecule_from_completed_job(job) is None
+
+    def test_opt_uses_optimized_structure(self):
+        mol = _h2(z=0.90)
+        job = DummyHandoffJob("opt", mol, complete=True)
+        assert molecule_from_completed_job(job) is mol
+
+    def test_sp_falls_back_to_output_molecule(self):
+        input_mol = _h2(z=0.74)
+        output_mol = _h2(z=0.90)
+        job = DummySPJob("sp", input_mol, output_mol, complete=True)
+        assert molecule_from_completed_job(job) is output_mol
+
+    def test_crest_uses_best_conformer(self, temporary_working_dir):
+        input_mol = _h2(z=0.74)
+        best = _h2(z=0.82)
+        job = DummyCRESTJob(input_mol, best, complete=True)
+        assert molecule_from_completed_job(job) is best
+
+
+class TestBuildChainJob:
+    def test_empty_steps_error(self):
+        settings = _chain_settings((), gaussian="gas_solv")
+        with pytest.raises(ValueError, match="has no steps"):
+            build_chain_job(settings, molecule=_h2(), label="mol")
+
+    def test_nested_only_pka_step_errors(self, isolated_config_dir):
+        settings = _chain_settings(
+            (ChainStep(program="gaussian", job="pka"),),
+            gaussian="gas_solv",
+        )
+        with pytest.raises(
+            ValueError,
+            match="do not support gaussian 'pka'",
+        ):
+            build_chain_job(settings, molecule=_h2(), label="mol")
+
+    def test_supported_pairs_build_typed_children(
+        self, isolated_config_dir, temporary_working_dir
+    ):
+        aliases = {
+            "crest": "test",
+            "xtb": "test",
+            "gaussian": "gas_solv",
+            "orca": "gas_solv",
+        }
+        cases = [
+            (program, job, job_class)
+            for program, jobs in _EXPECTED_SPECS.items()
+            for job, job_class in jobs.items()
+            if job != "qrc"
+        ]
+        mol = _h2()
+        for program, job, job_class in cases:
+            settings = _chain_settings(
+                (ChainStep(program=program, job=job),),
+                **{program: aliases[program]},
+            )
+            chain = build_chain_job(settings, molecule=mol, label="mol")
+            assert chain.label == "mol"
+            assert len(chain.phases) == 1
+            assert chain.phases[0].name == f"{program}_{job}"
+            children = chain.phases[0].resolve_jobs()
+            assert len(children) == 1
+            child = children[0]
+            assert isinstance(child, job_class)
+            assert child.label == f"mol_{program}_{job}"
+            assert child.settings.charge == 0
+            assert child.settings.multiplicity == 1
+
+    def test_cli_charge_multiplicity_override_molecule(
+        self, isolated_config_dir, temporary_working_dir
+    ):
+        settings = _chain_settings(
+            (ChainStep(program="gaussian", job="opt"),),
+            gaussian="gas_solv",
+        )
+        chain = build_chain_job(
+            settings,
+            molecule=_h2(charge=0, multiplicity=1),
+            label="mol",
+            charge=1,
+            multiplicity=2,
+        )
+        child = chain.phases[0].resolve_jobs()[0]
+        assert child.settings.charge == 1
+        assert child.settings.multiplicity == 2
+
+    def test_incomplete_previous_phase_factory_returns_no_jobs(
+        self, isolated_config_dir, temporary_working_dir
+    ):
+        settings = _chain_settings(
+            (
+                ChainStep(program="xtb", job="opt"),
+                ChainStep(program="gaussian", job="opt"),
+            ),
+            xtb="test",
+            gaussian="gas_solv",
+        )
+        chain = build_chain_job(settings, molecule=_h2(), label="mol")
+        first = DummyHandoffJob("xtb", _h2(z=0.90), complete=False)
+        chain.phases[0]._resolved_jobs = [first]
+        assert chain.phases[1].resolve_jobs() == []
+
+    def test_geometry_handoff_from_completed_dummy_child(
+        self, isolated_config_dir, temporary_working_dir
+    ):
+        settings = _chain_settings(
+            (
+                ChainStep(program="xtb", job="opt"),
+                ChainStep(program="gaussian", job="opt"),
+            ),
+            xtb="test",
+            gaussian="gas_solv",
+        )
+        chain = build_chain_job(settings, molecule=_h2(), label="mol")
+        handed_off = _h2(z=0.91)
+        dummy = DummyHandoffJob("xtb", handed_off, complete=True)
+        chain.phases[0]._resolved_jobs = [dummy]
+        children = chain.phases[1].resolve_jobs()
+        assert len(children) == 1
+        child = children[0]
+        assert isinstance(child, GaussianOptJob)
+        assert child.label == "mol_gaussian_opt"
+        assert np.allclose(child.molecule.positions, handed_off.positions)
+
+    def test_geometry_handoff_from_completed_dummy_crest(
+        self, isolated_config_dir, temporary_working_dir
+    ):
+        settings = _chain_settings(
+            (
+                ChainStep(program="crest", job="conformers"),
+                ChainStep(program="xtb", job="opt"),
+            ),
+            crest="test",
+            xtb="test",
+        )
+        chain = build_chain_job(settings, molecule=_h2(), label="mol")
+        best = _h2(z=0.85)
+        dummy = DummyCRESTJob(_h2(), best, complete=True)
+        chain.phases[0]._resolved_jobs = [dummy]
+        children = chain.phases[1].resolve_jobs()
+        assert len(children) == 1
+        assert isinstance(children[0], XTBOptJob)
+        assert np.allclose(children[0].molecule.positions, best.positions)
