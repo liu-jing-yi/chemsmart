@@ -347,7 +347,7 @@ def build_chain_job(
         return factory
 
     for index, (step, _spec) in enumerate(prepared):
-        phase_name = f"{step.program}_{step.job}"
+        phase_name = f"{index:02d}_{step.program}_{step.job}"
         phases.append(
             JobPhase(
                 name=phase_name,

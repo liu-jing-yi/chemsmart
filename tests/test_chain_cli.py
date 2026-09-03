@@ -123,10 +123,10 @@ orca: gas_solv
         assert isinstance(job, ChainJob)
         assert job.label == "crest_best"
         assert [phase.name for phase in job.phases] == [
-            "crest_conformers",
-            "xtb_opt",
-            "gaussian_opt",
-            "orca_sp",
+            "00_crest_conformers",
+            "01_xtb_opt",
+            "02_gaussian_opt",
+            "03_orca_sp",
         ]
         children = job.phases[0].resolve_jobs()
         assert len(children) == 1

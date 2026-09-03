@@ -263,7 +263,7 @@ class TestBuildChainJob:
             )
             assert chain.label == "mol"
             assert len(chain.phases) == 1
-            assert chain.phases[0].name == f"{program}_{job}"
+            assert chain.phases[0].name == f"00_{program}_{job}"
             children = chain.phases[0].resolve_jobs()
             assert len(children) == 1
             child = children[0]
@@ -284,6 +284,8 @@ class TestBuildChainJob:
             settings, steps=steps, molecule=_h2(), label="mol"
         )
         assert len(chain.phases) == 2
+        assert chain.phases[0].name == "00_gaussian_opt"
+        assert chain.phases[1].name == "01_gaussian_opt"
         first = chain.phases[0].resolve_jobs()[0]
         assert first.label == "mol_00_gaussian_opt"
         dummy = DummyHandoffJob("opt", _h2(z=0.90), complete=True)
