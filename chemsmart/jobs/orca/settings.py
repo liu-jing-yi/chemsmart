@@ -498,6 +498,8 @@ class ORCAJobSettings(MolecularJobSettings):
             route_string = self._get_route_string_from_user_input()
         else:
             route_string = self._get_route_string_from_jobtype()
+        if self.additional_route_parameters:
+            route_string += f" {self.additional_route_parameters}"
         logger.debug(f"Route for settings {self}: {route_string}")
         return route_string
 

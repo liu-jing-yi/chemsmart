@@ -11,7 +11,7 @@ Post-processing is backend-independent via ``chemsmart run fukui``
 import logging
 
 from chemsmart.analysis.fukui import (
-    FUKUI_MODES,
+    ORCA_FUKUI_MODES,
     radical_ion_charge_and_multiplicity,
 )
 from chemsmart.jobs.chain import ChainMixin, JobPhase
@@ -68,10 +68,10 @@ class ORCAFukuiJob(ChainMixin, ORCAJob):
             )
 
         mode = mode.lower()
-        if mode not in FUKUI_MODES:
+        if mode not in ORCA_FUKUI_MODES:
             raise ValueError(
-                f"Unknown Fukui mode {mode}. Supported modes are: "
-                f"{', '.join(FUKUI_MODES)}."
+                f"Unknown Fukui mode {mode}. Supported ORCA modes are: "
+                f"{', '.join(ORCA_FUKUI_MODES)}."
             )
 
         super().__init__(
@@ -115,9 +115,7 @@ class ORCAFukuiJob(ChainMixin, ORCAJob):
         self._create_charge_jobs(self.molecule)
 
     def _population_route_extra(self):
-        if self.mode == "nbo":
-            return "NBO"
-        if self.mode in ("hirshfeld", "cm5"):
+        if self.mode == "hirshfeld":
             return "Hirshfeld"
         return None
 

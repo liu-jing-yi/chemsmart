@@ -11,7 +11,7 @@ import logging
 
 import click
 
-from chemsmart.analysis.fukui import FUKUI_MODES
+from chemsmart.analysis.fukui import ORCA_FUKUI_MODES
 from chemsmart.cli.job import click_job_options
 from chemsmart.cli.orca.orca import orca
 from chemsmart.utils.cli import MyCommand
@@ -23,11 +23,10 @@ logger = logging.getLogger(__name__)
 @orca.command("fukui", cls=MyCommand)
 @click_job_options
 @click.option(
-    "-m",
     "--mode",
     default="mulliken",
     show_default=True,
-    type=click.Choice(list(FUKUI_MODES), case_sensitive=False),
+    type=click.Choice(list(ORCA_FUKUI_MODES), case_sensitive=False),
     help="Charges to be used for Fukui Indices calculations.",
 )
 @click.option(
@@ -92,10 +91,7 @@ def fukui(
     job_settings = ctx.obj["job_settings"]
     keywords = ctx.obj["keywords"]
 
-    if mode.lower() == "nbo":
-        pop_settings = project_settings.wbi_settings()
-    else:
-        pop_settings = project_settings.sp_settings()
+    pop_settings = project_settings.sp_settings()
     pop_settings = pop_settings.merge(job_settings, keywords=keywords)
     check_charge_and_multiplicity(pop_settings)
 

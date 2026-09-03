@@ -315,7 +315,7 @@ Fukui Submission Options
       -  Type
       -  Description
 
-   -  -  ``-m, --mode``
+   -  -  ``--mode``
       -  string
       -  Population setup for later analysis: ``mulliken`` (default), ``nbo``, ``hirshfeld``, or ``cm5``
 
@@ -342,7 +342,7 @@ The neutral structure comes from the parent Gaussian ``-f`` option. Neutral char
 
    chemsmart sub gaussian -p project -f molecule.log -c 0 -m 1 fukui
 
-   chemsmart sub gaussian -p project -f molecule.xyz -c 0 -m 1 fukui -m nbo
+   chemsmart sub gaussian -p project -f molecule.xyz -c 0 -m 1 fukui --mode nbo
 
    chemsmart sub gaussian -p project -f molecule.log -c 0 -m 1 fukui \\
      -rcc 1 -rcm 2
@@ -353,7 +353,8 @@ Analysis (``chemsmart run fukui``)
 ==================================
 
 Post-processing is program-agnostic (Gaussian ``.log`` or ORCA ``.out``) and matches the historical ``fukui.py`` script
-options:
+options. Analysis is available only under ``chemsmart run``; use ``chemsmart sub gaussian … fukui`` or ``chemsmart sub
+orca … fukui`` to submit charge-state jobs.
 
 .. list-table::
    :header-rows: 1
@@ -377,7 +378,8 @@ options:
 
    -  -  ``-m, --mode``
       -  string
-      -  Charge partitioning: ``mulliken`` (default), ``nbo``, ``hirshfeld``, or ``cm5``
+      -  Charge partitioning: ``mulliken`` (default), ``nbo``, ``hirshfeld``, or ``cm5``. ``nbo`` and ``cm5`` require
+         Gaussian outputs
 
    -  -  ``-o, --output``
       -  string

@@ -1,3 +1,4 @@
+import pytest
 from click.testing import CliRunner
 
 from chemsmart.analysis.fukui import (
@@ -7,6 +8,7 @@ from chemsmart.analysis.fukui import (
 )
 from chemsmart.cli.fukui import fukui as fukui_analyze
 from chemsmart.cli.run import run
+from chemsmart.cli.sub import sub
 from chemsmart.jobs.gaussian.fukui import GaussianFukuiJob
 from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.runner import FakeGaussianJobRunner
@@ -71,6 +73,21 @@ class TestAnalyzeFukuiOutput:
         assert "Fukui Minus (f-)" in text
         assert "C1" in text
         assert "Ionization energy" not in caplog.text
+
+    def test_nbo_rejects_orca_outputs(self, monkeypatch):
+        def fake_load(filename):
+            return DummyFukuiOutput(-100.0, {"C1": 0.10}), "orca"
+
+        monkeypatch.setattr("chemsmart.analysis.fukui._load_output", fake_load)
+        with pytest.raises(
+            ValueError, match="NBO charges are only available for Gaussian"
+        ):
+            analyze_fukui(
+                neutral_filename="n.out",
+                radical_cation_filename="c.out",
+                radical_anion_filename="a.out",
+                mode="nbo",
+            )
 
     def test_cli_passes_output(self, tmp_path, mocker, caplog):
         import logging
@@ -248,8 +265,9 @@ class TestORCAFukuiJob:
         assert (
             job.neutral_job.settings.additional_route_parameters == "Hirshfeld"
         )
+        assert "Hirshfeld" in job.neutral_job.settings.route_string
 
-    def test_nbo_mode_adds_route_keyword(
+    def test_nbo_and_cm5_modes_are_rejected(
         self, single_molecule_xyz_file, orca_jobrunner_no_scratch
     ):
         from chemsmart.io.molecules.structure import Molecule
@@ -263,15 +281,15 @@ class TestORCAFukuiJob:
             charge=0,
             multiplicity=1,
         )
-        job = ORCAFukuiJob(
-            molecule=mol,
-            settings=settings,
-            label="phenol_fukui",
-            jobrunner=orca_jobrunner_no_scratch,
-            mode="nbo",
-        )
-
-        assert job.neutral_job.settings.additional_route_parameters == "NBO"
+        for mode in ("nbo", "cm5"):
+            with pytest.raises(ValueError, match="Supported ORCA modes"):
+                ORCAFukuiJob(
+                    molecule=mol,
+                    settings=settings,
+                    label="phenol_fukui",
+                    jobrunner=orca_jobrunner_no_scratch,
+                    mode=mode,
+                )
 
     def test_user_overrides_ion_charge_and_multiplicity(
         self, single_molecule_xyz_file, orca_jobrunner_no_scratch
@@ -344,6 +362,12 @@ class TestFukuiCLI:
         assert result.exit_code == 0, result.output
         assert "\n  fukui" in result.output
 
+    def test_sub_help_does_not_list_analysis_fukui(self):
+        runner = CliRunner()
+        result = runner.invoke(sub, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  fukui" not in result.output
+
     def test_submit_help_via_run(self, single_molecule_xyz_file):
         runner = CliRunner()
         result = runner.invoke(
@@ -360,7 +384,8 @@ class TestFukuiCLI:
             ],
         )
         assert result.exit_code == 0, result.output
-        assert "-m, --mode" in result.output
+        assert "--mode" in result.output
+        assert "-m, --mode" not in result.output
 
     def test_submit_help_options(self):
         from chemsmart.cli.gaussian.fukui import fukui as gaussian_fukui_submit
@@ -369,7 +394,8 @@ class TestFukuiCLI:
         runner = CliRunner()
         result = runner.invoke(gaussian_fukui_submit, ["--help"])
         assert result.exit_code == 0, result.output
-        assert "-m, --mode" in result.output
+        assert "--mode" in result.output
+        assert "-m, --mode" not in result.output
         assert "--radical-cation-charge" in result.output
         assert "--radical-anion-multiplicity" in result.output
         assert "-c, --radical-cation" not in result.output
@@ -377,7 +403,8 @@ class TestFukuiCLI:
 
         result = runner.invoke(orca_fukui_submit, ["--help"])
         assert result.exit_code == 0, result.output
-        assert "-m, --mode" in result.output
+        assert "--mode" in result.output
+        assert "-m, --mode" not in result.output
         assert "--radical-cation-charge" in result.output
         assert "--radical-anion-multiplicity" in result.output
 

@@ -488,12 +488,16 @@ Structure Optimization
 
    -  -  Subcommand
       -  Description
+
    -  -  ``opt``
       -  Geometry optimization
+
    -  -  ``sp``
       -  Single point calculation
+
    -  -  ``fukui``
-      -  Fukui charge-state calculations (N / N±1); analyze with ``chemsmart run fukui``
+      -  Fukui charge-state calculations (N / N±1). ORCA modes are ``mulliken`` (default) and ``hirshfeld``. Analyze
+         with ``chemsmart run fukui``
 
 Transition State Search
 =======================
@@ -505,7 +509,7 @@ Transition State Search
    -  -  Subcommand
       -  Description
    -  -  ``ts``
-      -  Transition state optimization (single structure)
+      -  Transition state optimization
    -  -  ``reaction``
       -  R/TS/P workflow (optional NEB-TS, then opt and SP); see :doc:`orca-reaction-calculations`
    -  -  ``modred``

@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 @gaussian.command("fukui", cls=MyCommand)
 @click_job_options
 @click.option(
-    "-m",
     "--mode",
     default="mulliken",
     show_default=True,

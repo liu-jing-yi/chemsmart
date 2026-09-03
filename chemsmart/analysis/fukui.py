@@ -18,6 +18,7 @@ from chemsmart.utils.io import get_program_type_from_file
 logger = logging.getLogger(__name__)
 
 FUKUI_MODES = ("mulliken", "nbo", "hirshfeld", "cm5")
+ORCA_FUKUI_MODES = ("mulliken", "hirshfeld")
 
 _FUKUI_OUTPUT_EXTENSIONS = (".log", ".out", ".LOG", ".OUT")
 
@@ -77,6 +78,10 @@ def _charges_for_mode(output, mode, program):
     if mode == "mulliken":
         return output.mulliken_atomic_charges
     if mode == "nbo":
+        if program != "gaussian":
+            raise ValueError(
+                "NBO charges are only available for Gaussian outputs."
+            )
         return output.natural_charges
     if mode == "hirshfeld":
         return output.hirshfeld_charges
