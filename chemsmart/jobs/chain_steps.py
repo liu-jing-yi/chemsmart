@@ -1,29 +1,14 @@
-"""YAML chain-step registry and ChainJob builder."""
+"""Chain-step registry and ChainJob builder."""
 
 from dataclasses import dataclass
 
 from chemsmart.jobs.chain import ChainJob, JobPhase
 from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
 from chemsmart.jobs.crest.job import CRESTJob
-from chemsmart.jobs.gaussian.fukui import GaussianFukuiJob
-from chemsmart.jobs.gaussian.irc import GaussianIRCJob
-from chemsmart.jobs.gaussian.modred import GaussianModredJob
-from chemsmart.jobs.gaussian.nci import GaussianNCIJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
-from chemsmart.jobs.gaussian.qrc import GaussianQRCJob
-from chemsmart.jobs.gaussian.resp import GaussianRESPJob
-from chemsmart.jobs.gaussian.scan import GaussianScanJob
-from chemsmart.jobs.gaussian.settings import GaussianTDDFTJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
-from chemsmart.jobs.gaussian.tddft import GaussianTDDFTJob
 from chemsmart.jobs.gaussian.ts import GaussianTSJob
-from chemsmart.jobs.gaussian.wbi import GaussianWBIJob
-from chemsmart.jobs.orca.fukui import ORCAFukuiJob
-from chemsmart.jobs.orca.irc import ORCAIRCJob
-from chemsmart.jobs.orca.modred import ORCAModredJob
 from chemsmart.jobs.orca.opt import ORCAOptJob
-from chemsmart.jobs.orca.qrc import ORCAQRCJob
-from chemsmart.jobs.orca.scan import ORCAScanJob
 from chemsmart.jobs.orca.singlepoint import ORCASinglePointJob
 from chemsmart.jobs.orca.ts import ORCATSJob
 from chemsmart.jobs.xtb.hess import XTBHessJob
@@ -36,18 +21,16 @@ from chemsmart.settings.orca import ORCAProjectSettings
 from chemsmart.settings.xtb import XTBProjectSettings
 
 __all__ = [
+    "ChainStep",
     "ChainStepSpec",
     "CHAIN_PROGRAM_SETTINGS",
     "CHAIN_STEP_SPECS",
     "CHAIN_NESTED_ONLY_JOBS",
     "get_chain_step_spec",
+    "parse_chain_step",
     "molecule_from_completed_job",
     "build_chain_job",
 ]
-
-_RESP_ROUTE = (
-    "HF/6-31+G(d) SCF=Tight Pop=MK IOp(6/33=2,6/41=10,6/42=17,6/50=1)"
-)
 
 # CLI jobs that need extra structures or option surfaces. Run them as
 # nested program commands, e.g. ``chain -p NAME gaussian pka ...``.
@@ -62,29 +45,46 @@ CHAIN_NESTED_ONLY_JOBS = {
         "traj",
         "dias",
         "crest",
+        "nci",
+        "wbi",
+        "td",
+        "resp",
+        "irc",
+        "scan",
+        "modred",
+        "qrc",
+        "fukui",
     ),
-    "orca": ("pka", "reaction", "qmmm", "inp", "neb"),
+    "orca": (
+        "pka",
+        "reaction",
+        "qmmm",
+        "inp",
+        "neb",
+        "irc",
+        "scan",
+        "modred",
+        "qrc",
+        "fukui",
+    ),
 }
 
 
 @dataclass(frozen=True)
+class ChainStep:
+    """One pipeline step: program name and job type."""
+
+    program: str
+    job: str
+
+
+@dataclass(frozen=True)
 class ChainStepSpec:
-    """Resolved YAML chain step: job class and project-settings class."""
+    """Resolved chain step: job class and project-settings class."""
 
     job_class: type
     project_settings_class: type
 
-
-_GAUSSIAN_ORCA_JOBS = (
-    ("opt", GaussianOptJob, ORCAOptJob),
-    ("ts", GaussianTSJob, ORCATSJob),
-    ("sp", GaussianSinglePointJob, ORCASinglePointJob),
-    ("modred", GaussianModredJob, ORCAModredJob),
-    ("irc", GaussianIRCJob, ORCAIRCJob),
-    ("scan", GaussianScanJob, ORCAScanJob),
-    ("fukui", GaussianFukuiJob, ORCAFukuiJob),
-    ("qrc", GaussianQRCJob, ORCAQRCJob),
-)
 
 _CHAIN_PROGRAMS = {
     "crest": (
@@ -102,18 +102,18 @@ _CHAIN_PROGRAMS = {
     "gaussian": (
         GaussianProjectSettings,
         {
-            **{
-                name: gaussian for name, gaussian, _orca in _GAUSSIAN_ORCA_JOBS
-            },
-            "nci": GaussianNCIJob,
-            "wbi": GaussianWBIJob,
-            "td": GaussianTDDFTJob,
-            "resp": GaussianRESPJob,
+            "opt": GaussianOptJob,
+            "ts": GaussianTSJob,
+            "sp": GaussianSinglePointJob,
         },
     ),
     "orca": (
         ORCAProjectSettings,
-        {name: orca for name, _gaussian, orca in _GAUSSIAN_ORCA_JOBS},
+        {
+            "opt": ORCAOptJob,
+            "ts": ORCATSJob,
+            "sp": ORCASinglePointJob,
+        },
     ),
 }
 
@@ -126,48 +126,45 @@ CHAIN_STEP_SPECS = {
     for program, (_settings_class, jobs) in _CHAIN_PROGRAMS.items()
 }
 
-
-def _gaussian_td_settings(project_settings):
-    settings = project_settings.td_settings()
-    if settings is None:
-        settings = project_settings.sp_settings()
-    if isinstance(settings, GaussianTDDFTJobSettings):
-        return settings
-    return GaussianTDDFTJobSettings(**settings.__dict__)
-
-
-def _gaussian_resp_settings(project_settings):
-    settings = project_settings.sp_settings().copy()
-    settings.route_to_be_written = _RESP_ROUTE
-    return settings
-
-
-_JOB_SETTINGS_ALIASES = {"fukui": "sp", "qrc": "opt"}
 _JOB_SETTINGS = {
     "conformers": lambda settings: settings.conformer_settings(),
     "opt": lambda settings: settings.opt_settings(),
     "ts": lambda settings: settings.ts_settings(),
     "sp": lambda settings: settings.sp_settings(),
     "hess": lambda settings: settings.hess_settings(),
-    "modred": lambda settings: settings.modred_settings(),
-    "irc": lambda settings: settings.irc_settings(),
-    "scan": lambda settings: settings.scan_settings(),
-    "nci": lambda settings: settings.nci_settings(),
-    "wbi": lambda settings: settings.wbi_settings(),
 }
-_GAUSSIAN_JOB_SETTINGS = {
-    "td": _gaussian_td_settings,
-    "resp": _gaussian_resp_settings,
-}
+
+
+def parse_chain_step(token):
+    """Parse a CLI ``PROGRAM:JOB`` token into a :class:`ChainStep`.
+
+    Args:
+        token (str): One ``-s/--steps`` value.
+
+    Returns:
+        ChainStep: Parsed program and job names.
+
+    Raises:
+        ValueError: If the token is missing ``:``, has empty parts, or is
+            otherwise malformed.
+    """
+    token = token.strip()
+    if ":" not in token:
+        raise ValueError(
+            f"Invalid chain step {token!r}; expected PROGRAM:JOB."
+        )
+    program, job = token.split(":", 1)
+    program = program.strip()
+    job = job.strip()
+    if not program or not job:
+        raise ValueError(
+            f"Invalid chain step {token!r}; expected PROGRAM:JOB."
+        )
+    return ChainStep(program=program, job=job)
 
 
 def _settings_for_chain_step(program, job, project_settings):
-    if program == "gaussian":
-        gaussian_settings = _GAUSSIAN_JOB_SETTINGS.get(job)
-        if gaussian_settings is not None:
-            return gaussian_settings(project_settings)
-    name = _JOB_SETTINGS_ALIASES.get(job, job)
-    settings_for = _JOB_SETTINGS.get(name)
+    settings_for = _JOB_SETTINGS.get(job)
     if settings_for is None:
         raise ValueError(
             f"No project settings method for chain step {program} {job!r}."
@@ -176,18 +173,18 @@ def _settings_for_chain_step(program, job, project_settings):
 
 
 def get_chain_step_spec(program, job):
-    """Return the registry entry for a YAML ``(program, job)`` pair.
+    """Return the registry entry for a ``(program, job)`` pair.
 
     Args:
         program (str): Chain program name (``crest``, ``xtb``,
             ``gaussian``, or ``orca``).
-        job (str): YAML job name (e.g. ``opt``, ``irc``, ``fukui``).
+        job (str): Job name (e.g. ``opt``, ``sp``).
 
     Returns:
         ChainStepSpec: Job class and project-settings class for the pair.
 
     Raises:
-        ValueError: If the pair is not a YAML chain step. Jobs that need
+        ValueError: If the pair is not a pipeline step. Jobs that need
             extra structures or option surfaces (pKa, reaction, QM/MM)
             must be run as nested program commands.
     """
@@ -201,7 +198,7 @@ def get_chain_step_spec(program, job):
     nested_jobs = CHAIN_NESTED_ONLY_JOBS.get(program, ())
     if job in nested_jobs:
         raise ValueError(
-            f"Chain YAML steps do not support {program} {job!r}; "
+            f"Chain pipeline steps do not support {program} {job!r}; "
             f"run it as a nested command "
             f"(chain -p NAME {program} {job} ...)."
         )
@@ -270,6 +267,7 @@ def _molecule_for_step(index, phases, initial_molecule):
 
 def build_chain_job(
     chain_settings,
+    steps,
     molecule,
     label,
     charge=None,
@@ -278,7 +276,7 @@ def build_chain_job(
     skip_completed=True,
     **kwargs,
 ):
-    """Build a ``ChainJob`` from YAML pipeline steps.
+    """Build a ``ChainJob`` from explicit pipeline steps.
 
     Each step becomes a ``JobPhase`` whose factory reads geometry from the
     previous completed child. Charge and multiplicity from ``charge`` /
@@ -286,10 +284,11 @@ def build_chain_job(
     each child with keywords ``("charge", "multiplicity")``.
 
     Args:
-        chain_settings: Loaded chain project settings with ``steps``.
+        chain_settings: Loaded chain project settings with program aliases.
+        steps: Sequence of :class:`ChainStep` values.
         molecule: Input structure for the first step.
         label (str): Chain label; children are
-            ``{label}_{program}_{job}``.
+            ``{label}_{index:02d}_{program}_{job}``.
         charge (int, optional): Chain-level charge override.
         multiplicity (int, optional): Chain-level multiplicity override.
         jobrunner: Runner assigned to the parent ``ChainJob``.
@@ -300,18 +299,16 @@ def build_chain_job(
 
     Raises:
         ValueError: If there are no steps, ``molecule`` is missing, or a
-            step's ``(program, job)`` pair is not a YAML chain step.
+            step's ``(program, job)`` pair is not a pipeline step.
     """
-    if not chain_settings.steps:
-        raise ValueError(
-            f"Chain project {chain_settings.PROJECT_NAME!r} has no steps."
-        )
+    if not steps:
+        raise ValueError("Chain pipeline requires at least one step.")
     if molecule is None:
         raise ValueError("Chain pipeline requires a molecule.")
 
     prepared = []
     project_settings_by_program = {}
-    for step in chain_settings.steps:
+    for step in steps:
         spec = get_chain_step_spec(step.program, step.job)
         if step.program not in project_settings_by_program:
             project_name = chain_settings.project_for(step.program)
@@ -336,7 +333,7 @@ def build_chain_job(
             )
             if overrides:
                 settings = settings.merge(overrides, keywords=tuple(overrides))
-            child_label = f"{label}_{step.program}_{step.job}"
+            child_label = f"{label}_{index:02d}_{step.program}_{step.job}"
             return [
                 spec.job_class(
                     molecule=mol,

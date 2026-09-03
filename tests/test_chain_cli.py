@@ -95,16 +95,6 @@ crest: test
 xtb: test
 gaussian: gas_solv
 orca: gas_solv
-
-steps:
-  - program: crest
-    job: conformers
-  - program: xtb
-    job: opt
-  - program: gaussian
-    job: opt
-  - program: orca
-    job: sp
 """,
         )
         result = _invoke_chain(
@@ -117,6 +107,14 @@ steps:
                 "0",
                 "-m",
                 "1",
+                "-s",
+                "crest:conformers",
+                "-s",
+                "xtb:opt",
+                "-s",
+                "gaussian:opt",
+                "-s",
+                "orca:sp",
             ],
             standalone_mode=False,
         )
@@ -133,7 +131,7 @@ steps:
         children = job.phases[0].resolve_jobs()
         assert len(children) == 1
         assert isinstance(children[0], CRESTConformerSearchJob)
-        assert children[0].label == "crest_best_crest_conformers"
+        assert children[0].label == "crest_best_00_crest_conformers"
 
     def test_pipeline_without_steps_is_usage_error(
         self, isolated_config_dir, single_molecule_xyz_file
@@ -154,7 +152,7 @@ steps:
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
-        assert "has no steps" in result.output
+        assert "requires at least one -s/--steps" in result.output
 
     def test_pipeline_without_filename_is_usage_error(
         self, isolated_config_dir
@@ -162,20 +160,86 @@ steps:
         _write_chain_yaml(
             isolated_config_dir,
             "combined",
-            """
-gaussian: gas_solv
-steps:
-  - program: gaussian
-    job: opt
-""",
+            "gaussian: gas_solv\n",
         )
         result = CliRunner().invoke(
             chain,
-            ["-p", "combined"],
+            ["-p", "combined", "-s", "gaussian:opt"],
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
         assert "requires a structure file" in result.output
+
+    def test_steps_with_nested_command_is_usage_error(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "gaussian: gas_solv\n",
+        )
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-s",
+                "gaussian:opt",
+                "gaussian",
+                "opt",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "Cannot combine -s/--steps" in result.output
+
+    def test_invalid_step_token_is_usage_error(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "gaussian: gas_solv\n",
+        )
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-s",
+                "gaussian",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "expected PROGRAM:JOB" in result.output
+
+    def test_nested_only_step_is_usage_error(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "gaussian: gas_solv\n",
+        )
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-s",
+                "gaussian:pka",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "do not support gaussian 'pka'" in result.output
 
 
 class TestChainNestedSlice:
