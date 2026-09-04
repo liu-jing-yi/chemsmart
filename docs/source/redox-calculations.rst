@@ -44,7 +44,8 @@ geometries.
 
 **Output analysis**
 
--  ``chemsmart run redox analyze`` — single-system analysis from eight output files.
+-  ``chemsmart run redox analyze`` — single-system analysis from eight output files. The reference couple is inferred
+   from Ref_ox/Ref_red formulas; ``-r`` overrides.
 -  ``chemsmart run chain redox analyze`` — the same analysis under ``chain`` (no ``-p``, ``-f``, or ``--program``).
 -  Analysis never invokes ``gaussian`` or ``orca`` job submission — only reads completed output files.
 
@@ -161,8 +162,10 @@ job class:
        )
    )
 
-``-r/--reference`` selects a registry name (default ``fc_fc+``). ``-n/--n-electrons`` defaults to the couple and must
-match it when given.
+``-r/--reference`` selects a registry name. Submit defaults to ``fc_fc+``. Analyze infers the couple from the Hill
+formulas of the Ref_ox and Ref_red outputs; ``-r`` overrides. The built-in ``fc_fc+`` couple matches
+:math:`\mathrm{C_{10}H_{10}Fe}`. If inference is ambiguous or the formula is unregistered, pass ``-r``.
+``-n/--n-electrons`` defaults to the couple and must match it when given.
 
 *******************************************
  Output Analysis (``chemsmart run redox``)
@@ -171,7 +174,7 @@ match it when given.
 All post-processing lives under ``chemsmart run redox analyze`` or ``chemsmart run chain redox analyze``. No Gaussian or
 ORCA backend is invoked during analysis.
 
-Provide all eight outputs:
+Provide all eight outputs. The reference couple is inferred from Ref_ox/Ref_red formulas; pass ``-r`` to override.
 
 .. code:: bash
 
@@ -187,12 +190,12 @@ Provide all eight outputs:
        -T 333.15 -c 1.0 -csg 100 -ch 100 \
        -o redox.dat
 
-Pass ``-n`` / ``-r`` on the ``redox`` group **before** ``analyze``:
+Pass ``-n`` / ``-r`` on the ``redox`` group **before** ``analyze`` when you need to override inference:
 
 .. code:: bash
 
    chemsmart run redox -n 1 -r fc_fc+ analyze --ox-gas ...
-   chemsmart run chain redox -n 1 analyze --ox-gas ...
+   chemsmart run chain redox -n 1 -r fc_fc+ analyze --ox-gas ...
 
 *************
  CLI Options
@@ -233,16 +236,30 @@ Analyze Options
 
    -  -  Option
       -  Description
+
+   -  -  ``-r, --reference``
+      -  Registry name of the reference couple. Default: inferred from Ref_ox/Ref_red Hill formulas. Overrides
+         inference. Pass it on the ``redox`` group before ``analyze``.
+
+   -  -  ``-n, --n-electrons``
+      -  Electrons transferred. Defaults to the reference couple; must match it when given. Pass it on the ``redox``
+         group before ``analyze``.
+
    -  -  ``-oxg, --ox-gas`` / ``-rdg, --red-gas``
       -  Gas-phase opt+freq outputs for the target couple.
+
    -  -  ``-rog, --ref-ox-gas`` / ``-rrg, --ref-red-gas``
       -  Gas-phase opt+freq outputs for the reference couple.
+
    -  -  ``-oxs, --ox-solv`` / ``-rds, --red-solv``
       -  Solution-phase SP outputs for the target couple.
+
    -  -  ``-ros, --ref-ox-solv`` / ``-rrs, --ref-red-solv``
       -  Solution-phase SP outputs for the reference couple.
+
    -  -  ``-T, --temperature`` / ``-c, --concentration`` / ``-csg`` / ``-ch``
       -  Thermochemistry options for quasi-harmonic G (same defaults as pKa analysis).
+
    -  -  ``-o, --output``
       -  Write the formatted summary to this file instead of printing it.
 

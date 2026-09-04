@@ -697,6 +697,45 @@ class TestChainWorkflows:
         assert "\n  batch" in result.output
         assert "\n  analyze" not in result.output
 
+    def test_sub_test_chain_reaction_product_uses_cli_flag(
+        self, isolated_config_dir, tmp_path, server_yaml_file, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        _combined_yaml(isolated_config_dir)
+        reactant = tmp_path / "r.xyz"
+        product = tmp_path / "p.xyz"
+        reactant.write_text("2\nh2\nH 0 0 0\nH 0 0 0.74\n")
+        product.write_text("2\nh2\nH 0 0 0\nH 0 0 0.90\n")
+        result = CliRunner().invoke(
+            sub,
+            [
+                "-s",
+                server_yaml_file,
+                "--test",
+                "chain",
+                "-p",
+                "combined",
+                "-f",
+                str(reactant),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--program",
+                "gaussian",
+                "--product",
+                str(product),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        run_script = tmp_path / "chemsmart_run_r_reaction.py"
+        assert run_script.exists(), sorted(tmp_path.glob("chemsmart_run_*.py"))
+        text = run_script.read_text()
+        assert "'--product'" in text
+        assert "'--products'" not in text
+
     def test_redox_submit_requires_program(
         self, isolated_config_dir, single_molecule_xyz_file
     ):

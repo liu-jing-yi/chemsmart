@@ -998,6 +998,9 @@ class TestReactionCLI:
         assert not job.phase_by_name("Guess").should_skip()
         assert isinstance(job.guess_job, GaussianComJob)
         assert "qst2" in job.guess_job.settings.input_string.lower()
+        cli_args = captured["submissions"][0][2]
+        assert "--product" in cli_args
+        assert "--products" not in cli_args
 
     def test_gaussian_ts_guess_with_product_is_qst3(
         self, tmp_path, monkeypatch
@@ -1081,6 +1084,11 @@ class TestReactionCLI:
         job = captured["submissions"][0][0]
         assert not job.phase_by_name("Guess").should_skip()
         assert "qst3" in job.guess_job.settings.input_string.lower()
+        cli_args = captured["submissions"][0][2]
+        assert "--reactant" in cli_args
+        assert "--reactants" not in cli_args
+        assert "--product" in cli_args
+        assert "--products" not in cli_args
 
     def test_ts_guess_without_product_is_usage_error(
         self, tmp_path, monkeypatch

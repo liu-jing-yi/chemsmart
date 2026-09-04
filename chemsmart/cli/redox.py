@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from click.core import ParameterSource
 
 from chemsmart.cli.job import click_job_options
 from chemsmart.cli.pka import (
@@ -22,6 +23,7 @@ from chemsmart.cli.pka import (
     pka_solvent_scf_energy,
     resolve_pka_entropy_cutoff,
 )
+from chemsmart.io.molecules.structure import Molecule
 from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.constants import FARADAY, energy_conversion
 from chemsmart.utils.utils import check_charge_and_multiplicity
@@ -43,6 +45,9 @@ class RedoxReference:
         couple_label: Chemical couple, e.g. ``Fc/Fc+``.
         ox_file: Optional path to the oxidized geometry.
         red_file: Optional path to the reduced geometry.
+        ox_formula: Optional Hill formula of the oxidized species.
+            Used to infer the couple from analysis outputs.
+        red_formula: Optional Hill formula of the reduced species.
         ox_charge: Optional charge of the oxidized species.
         ox_multiplicity: Optional multiplicity of the oxidized species.
         red_charge: Optional charge of the reduced species.
@@ -57,6 +62,8 @@ class RedoxReference:
     couple_label: str
     ox_file: str | None = None
     red_file: str | None = None
+    ox_formula: str | None = None
+    red_formula: str | None = None
     ox_charge: int | None = None
     ox_multiplicity: int | None = None
     red_charge: int | None = None
@@ -116,6 +123,63 @@ def get_redox_reference(name):
 def list_redox_references():
     """Return registered couples sorted by name."""
     return tuple(_REGISTRY[name] for name in sorted(_REGISTRY))
+
+
+def _formula_from_filepath(filepath):
+    mol = Molecule.from_filepath(filepath)
+    if isinstance(mol, list):
+        mol = mol[-1] if mol else None
+    if mol is None:
+        raise ValueError(f"Could not read a molecule from {filepath}.")
+    return mol.chemical_formula
+
+
+def infer_redox_reference(ox_formula, red_formula):
+    """Return the registered couple matching Hill formulas of Ref_ox and Ref_red.
+
+    Couples without ``ox_formula`` and ``red_formula`` are skipped.
+    Pass ``-r/--reference`` when this is ambiguous or unregistered.
+    """
+    matches = [
+        reference
+        for reference in list_redox_references()
+        if reference.ox_formula == ox_formula
+        and reference.red_formula == red_formula
+        and reference.ox_formula is not None
+        and reference.red_formula is not None
+    ]
+    observed_text = f"Ref_ox ({ox_formula}) and Ref_red ({red_formula})"
+    if len(matches) == 1:
+        logger.info(
+            "Inferred redox reference %s from %s.",
+            matches[0].name,
+            observed_text,
+        )
+        return matches[0]
+    available = ", ".join(sorted(_REGISTRY)) or "(none)"
+    if not matches:
+        raise ValueError(
+            f"Could not infer the reference couple from {observed_text}. "
+            "Pass -r/--reference. Available: "
+            f"{available}."
+        )
+    names = ", ".join(ref.name for ref in matches)
+    raise ValueError(
+        f"{observed_text} matches multiple registered couples "
+        f"({names}). Pass -r/--reference."
+    )
+
+
+def _commandline_reference(ctx):
+    current = ctx
+    while current is not None:
+        if current.params is not None and "reference" in current.params:
+            source = current.get_parameter_source("reference")
+            if source is ParameterSource.COMMANDLINE:
+                return current.params["reference"]
+            return None
+        current = current.parent
+    return None
 
 
 def resolve_redox_reference(reference=None):
@@ -203,7 +267,7 @@ def compute_redox_potential(
         ref_ox_solv_file: Solution-phase SP output for the oxidized reference.
         ref_red_solv_file: Solution-phase SP output for the reduced reference.
         reference: :class:`RedoxReference`, registry name, or ``None``
-            (defaults to ``fc_fc+``).
+            to infer from Ref_ox/Ref_red Hill formulas.
         n_electrons: Electrons transferred. Defaults to the reference couple.
             Must match the reference couple when given.
         temperature: Temperature in Kelvin for quasi-harmonic G.
@@ -227,7 +291,20 @@ def compute_redox_potential(
         ref_ox_solv_file=ref_ox_solv_file,
         ref_red_solv_file=ref_red_solv_file,
     )
-    reference = resolve_redox_reference(reference)
+    reference_inferred = False
+    if reference is None:
+        try:
+            ox_formula = _formula_from_filepath(ref_ox_gas_file)
+            red_formula = _formula_from_filepath(ref_red_gas_file)
+        except (OSError, FileNotFoundError, ValueError) as exc:
+            raise ValueError(
+                "Could not read Ref_ox/Ref_red formulas "
+                f"({exc}). Pass -r/--reference."
+            ) from exc
+        reference = infer_redox_reference(ox_formula, red_formula)
+        reference_inferred = True
+    else:
+        reference = resolve_redox_reference(reference)
     if n_electrons is None:
         n_electrons = reference.n_electrons
     elif n_electrons != reference.n_electrons:
@@ -281,6 +358,7 @@ def compute_redox_potential(
         "scale": reference.scale,
         "couple_label": reference.couple_label,
         "reference_name": reference.name,
+        "reference_inferred": reference_inferred,
         "n_electrons": n_electrons,
         "temperature": temperature,
         "G_soln_ox_au": ox["G_soln_au"],
@@ -304,13 +382,18 @@ def compute_redox_potential(
 
 def format_redox_summary(result):
     """Return a formatted summary of an exchange redox calculation."""
+    reference_line = (
+        f"Reference: {result['reference_name']} "
+        f"({result['couple_label']}, {result['scale']})"
+    )
+    if result.get("reference_inferred"):
+        reference_line += " [inferred from Ref_ox/Ref_red formulas]"
     lines = [
         "=" * 78,
         "Redox Potential - Dual-level Exchange Scheme",
         "=" * 78,
         "Reaction: Ox + Ref_red → Red + Ref_ox",
-        f"Reference: {result['reference_name']} "
-        f"({result['couple_label']}, {result['scale']})",
+        reference_line,
         f"n = {result['n_electrons']}",
         f"Temperature: {result['temperature']} K",
         "",
@@ -367,36 +450,59 @@ register_redox_reference(
         n_electrons=1,
         scale="Fc/Fc+",
         couple_label="Fc/Fc+",
+        ox_formula="C10H10Fe",
+        red_formula="C10H10Fe",
     )
 )
 
 
-def click_redox_reference_options(f):
-    """Reference couple and electron-count options for submit and analyze."""
+def click_redox_reference_options(f=None, *, for_analyze=False):
+    """Reference couple and electron-count options for submit and analyze.
 
-    @click.option(
-        "-n",
-        "--n-electrons",
-        type=int,
-        default=None,
-        help=(
-            "Electrons transferred. Defaults to the reference couple. "
-            "Must match the reference couple when given."
-        ),
-    )
-    @click.option(
-        "-r",
-        "--reference",
-        type=str,
-        default="fc_fc+",
-        show_default=True,
-        help="Registry name of the reference couple.",
-    )
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        return f(*args, **kwargs)
+    Submit defaults to ``fc_fc+``. Analyze infers the couple from
+    Ref_ox/Ref_red Hill formulas; ``-r/--reference`` overrides.
+    """
 
-    return wrapper
+    def decorator(func):
+        reference_kwargs = {
+            "type": str,
+            "help": (
+                "Registry name of the reference couple. Default: inferred "
+                "from Ref_ox and Ref_red formulas."
+                if for_analyze
+                else "Registry name of the reference couple."
+            ),
+        }
+        if for_analyze:
+            reference_kwargs["default"] = None
+        else:
+            reference_kwargs["default"] = "fc_fc+"
+            reference_kwargs["show_default"] = True
+
+        @click.option(
+            "-n",
+            "--n-electrons",
+            type=int,
+            default=None,
+            help=(
+                "Electrons transferred. Defaults to the reference couple. "
+                "Must match the reference couple when given."
+            ),
+        )
+        @click.option(
+            "-r",
+            "--reference",
+            **reference_kwargs,
+        )
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    if callable(f):
+        return decorator(f)
+    return decorator
 
 
 def click_redox_submit_structure_options(f):
@@ -590,7 +696,7 @@ def store_redox_shared(ctx, kwargs):
     )
     ctx.ensure_object(dict)
     ctx.obj["redox_shared"] = dict(
-        reference=kwargs.get("reference") or "fc_fc+",
+        reference=kwargs.get("reference"),
         n_electrons=kwargs.get("n_electrons"),
         red_file=kwargs.get("red"),
         red_charge=kwargs.get("red_charge"),
@@ -743,13 +849,15 @@ def register_redox_cli(parent_group, job_cls, settings_cls):
 
 
 @click.group(name="redox", cls=MyGroup)
-@click_redox_reference_options
+@click_redox_reference_options(for_analyze=True)
 @click.pass_context
 def redox(ctx, reference, n_electrons):
     """Backend-independent redox output analysis.
 
     Submit jobs with ``chemsmart run/sub gaussian|orca … redox`` or
     ``chemsmart run/sub chain … redox --program {gaussian,orca}``.
+    The reference couple is inferred from Ref_ox/Ref_red formulas;
+    ``-r/--reference`` overrides the inference.
     """
     store_redox_shared(
         ctx,
@@ -789,6 +897,9 @@ def analyze(
     Reaction: ``Ox + Ref_red → Red + Ref_ox``
 
     ``E_target = E_ref − ΔG_exchange / (n F)``
+
+    The reference couple is inferred from Ref_ox/Ref_red formulas.
+    Pass ``-r/--reference`` on the ``redox`` group to override.
     """
     shared = {}
     if ctx.obj is not None:
@@ -806,7 +917,7 @@ def analyze(
             red_solv_file=red_solv_file,
             ref_ox_solv_file=ref_ox_solv_file,
             ref_red_solv_file=ref_red_solv_file,
-            reference=shared.get("reference"),
+            reference=_commandline_reference(ctx),
             n_electrons=shared.get("n_electrons"),
             temperature=temperature,
             concentration=concentration,

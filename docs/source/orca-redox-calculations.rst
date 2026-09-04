@@ -10,8 +10,9 @@ experience.
 .. note::
 
    Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run redox analyze`` or
-   ``chemsmart run chain redox analyze``. See :ref:`redox-calculations` for the exchange scheme, dual-level free
-   energies, and the reference registry.
+   ``chemsmart run chain redox analyze``. The reference couple is inferred from the Ref_ox/Ref_red formulas; ``-r``
+   overrides. See :ref:`redox-calculations` for the exchange scheme, dual-level free energies, and the reference
+   registry.
 
 .. contents:: Table of Contents
    :local:
