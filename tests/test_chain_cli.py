@@ -9,6 +9,11 @@ from chemsmart.cli.run import run
 from chemsmart.cli.sub import sub
 from chemsmart.jobs.chain import ChainJob
 from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
+from chemsmart.jobs.gaussian.fukui import GaussianFukuiJob
+from chemsmart.jobs.gaussian.pka import GaussianpKaJob
+from chemsmart.jobs.gaussian.reaction import GaussianReactionJob
+from chemsmart.jobs.orca.fukui import ORCAFukuiJob
+from chemsmart.jobs.orca.reaction import ORCAReactionJob
 from chemsmart.settings.gaussian import GaussianProjectSettings
 from chemsmart.settings.user import CHEMSMARTUserSettings
 
@@ -51,13 +56,14 @@ class TestChainHelp:
         assert result.exit_code == 0, result.output
         assert "chain" in result.output
 
-    def test_chain_help_lists_custom_subcommand(self):
+    def test_chain_help_lists_custom_and_workflow_subcommands(self):
         result = CliRunner().invoke(run, ["chain", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  custom" in result.output
-        assert "\n  pka" not in result.output
-        assert "\n  fukui" not in result.output
-        assert "\n  reaction" not in result.output
+        assert "\n  pka" in result.output
+        assert "\n  fukui" in result.output
+        assert "\n  redox" in result.output
+        assert "\n  reaction" in result.output
         assert "\n  gaussian" not in result.output
         assert "\n  orca" not in result.output
         assert "\n  xtb" not in result.output
@@ -166,12 +172,12 @@ orca: gas_solv
                 "combined",
                 "-f",
                 single_molecule_xyz_file,
-                "pka",
+                "opt",
             ],
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
-        assert "No such command 'pka'" in result.output
+        assert "No such command 'opt'" in result.output
 
     def test_invalid_step_token_is_usage_error(
         self, isolated_config_dir, single_molecule_xyz_file
@@ -324,3 +330,263 @@ class TestChainPipelineExtras:
             )
         assert result.exit_code == 0, result.output
         gaussian_from_project.assert_called_once_with("test")
+
+
+def _water_xyz(isolated_config_dir):
+    path = isolated_config_dir / "water.xyz"
+    path.write_text(
+        "3\nwater\n"
+        "O  0.000  0.000  0.000\n"
+        "H  0.957  0.000  0.000\n"
+        "H -0.240  0.927  0.000\n"
+    )
+    return str(path)
+
+
+def _combined_yaml(isolated_config_dir):
+    return _write_chain_yaml(
+        isolated_config_dir,
+        "combined",
+        "gaussian: gas_solv\norca: gas_solv\n",
+    )
+
+
+class TestChainWorkflows:
+    def test_pka_program_gaussian_uses_chain_alias_project(
+        self, isolated_config_dir
+    ):
+        _combined_yaml(isolated_config_dir)
+        water = _water_xyz(isolated_config_dir)
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = _invoke_chain(
+                [
+                    "-p",
+                    "combined",
+                    "-f",
+                    water,
+                    "-c",
+                    "0",
+                    "-m",
+                    "1",
+                    "pka",
+                    "--program",
+                    "gaussian",
+                    "-s",
+                    "direct",
+                    "-pi",
+                    "2",
+                ],
+                standalone_mode=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianpKaJob)
+        gaussian_from_project.assert_called_with("gas_solv")
+
+    def test_pka_submit_requires_program(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "-s",
+                "direct",
+                "-pi",
+                "1",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "--program is required for submit" in result.output
+
+    def test_pka_analyze_works_without_project(self):
+        result = CliRunner().invoke(
+            chain,
+            ["pka", "analyze"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "all 8 output files are required" in result.output
+        assert "-p/--project" not in result.output
+
+    def test_steps_cannot_combine_with_pka(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-s",
+                "gaussian:opt",
+                "pka",
+                "--program",
+                "gaussian",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "Cannot combine -s/--steps" in result.output
+
+    def test_fukui_program_orca_builds_orca_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "fukui",
+                "--program",
+                "orca",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, ORCAFukuiJob)
+
+    def test_fukui_program_gaussian_builds_gaussian_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "fukui",
+                "--program",
+                "gaussian",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianFukuiJob)
+
+    def test_fukui_analyze_works_without_project(self):
+        result = CliRunner().invoke(
+            chain,
+            ["fukui", "analyze"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "Missing option" in result.output
+        assert "--neutral-filename" in result.output or "-n" in result.output
+        assert "-p/--project" not in result.output
+
+    def test_reaction_program_gaussian_builds_gaussian_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--program",
+                "gaussian",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianReactionJob)
+
+    def test_reaction_program_orca_builds_orca_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "reaction",
+                "--program",
+                "orca",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, ORCAReactionJob)
+
+    def test_reaction_has_no_analyze_command(self):
+        result = CliRunner().invoke(
+            chain,
+            ["reaction", "--help"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert "\n  submit" in result.output
+        assert "\n  batch" in result.output
+        assert "\n  analyze" not in result.output
+
+    def test_redox_submit_requires_program(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "redox",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "--program is required for submit" in result.output
+
+    def test_redox_analyze_is_registered_without_project(self):
+        result = CliRunner().invoke(
+            chain,
+            ["redox", "--help"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert "\n  analyze" in result.output
+
+        analyze_help = CliRunner().invoke(
+            chain,
+            ["redox", "analyze", "--help"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert analyze_help.exit_code == 0, analyze_help.output

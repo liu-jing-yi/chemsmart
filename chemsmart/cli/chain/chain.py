@@ -7,6 +7,10 @@ import os
 import click
 
 from chemsmart.cli.chain.step_options import apply_step_option_tokens
+from chemsmart.cli.chain.workflows import (
+    CHAIN_WORKFLOW_COMMANDS,
+    register_chain_workflows,
+)
 from chemsmart.cli.job import (
     click_file_label_and_index_options,
     click_filename_options,
@@ -36,8 +40,11 @@ def click_chain_options(f):
         "--project",
         "-p",
         type=str,
-        required=True,
-        help="Chain project settings.",
+        required=False,
+        help=(
+            "Chain project settings. Required for the -s/--steps pipeline "
+            "and for pka/fukui/redox/reaction submit."
+        ),
     )
     @click.option(
         "-c",
@@ -139,7 +146,11 @@ def _store_chain_invocation(
 
 def build_chain_pipeline_from_ctx(ctx):
     """Build a ``ChainJob`` from chain-group ``-s/--steps`` stored on ``ctx``."""
-    chain_settings = ctx.obj[CHAIN_PROJECT_SETTINGS_KEY]
+    chain_settings = ctx.obj.get(CHAIN_PROJECT_SETTINGS_KEY)
+    if chain_settings is None:
+        raise click.UsageError(
+            "-p/--project is required for the chain pipeline."
+        )
     defaults = ctx.obj[CHAIN_CLI_DEFAULTS_KEY]
     steps = ctx.obj.get(_PIPELINE_STEPS_KEY) or ()
     if not steps:
@@ -206,20 +217,30 @@ def chain(
     skip_completed,
     steps,
 ):
-    """Run a custom ``-s/--steps`` pipeline from a chain project.
+    """Run a custom ``-s/--steps`` pipeline or a workflow subcommand.
 
     ``chemsmart run/sub chain -p NAME -f mol.xyz -s gaussian:opt`` runs a
     pipeline from repeatable ``-s/--steps``. The ``custom`` subcommand is
-    the same pipeline. Single-program jobs use that program's own
-    ``-p`` project YAML.
+    the same pipeline. Predefined workflows are ``pka``, ``fukui``,
+    ``redox``, and ``reaction`` and require ``--program`` for submit.
     """
     ctx.ensure_object(dict)
-    try:
-        chain_settings = ChainProjectSettings.from_project(project)
-    except FileNotFoundError as exc:
-        raise click.UsageError(str(exc)) from exc
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
+    if project is None:
+        chain_settings = None
+    else:
+        try:
+            chain_settings = ChainProjectSettings.from_project(project)
+        except FileNotFoundError as exc:
+            raise click.UsageError(str(exc)) from exc
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
+    if ctx.invoked_subcommand in CHAIN_WORKFLOW_COMMANDS and steps:
+        names = ", ".join(CHAIN_WORKFLOW_COMMANDS)
+        raise click.UsageError(
+            "Cannot combine -s/--steps with chain workflow subcommands "
+            f"({names})."
+        )
 
     _store_chain_invocation(
         ctx,
@@ -252,3 +273,4 @@ def custom(ctx):
 
 
 chain.add_command(custom)
+register_chain_workflows(chain)
