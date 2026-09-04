@@ -14,14 +14,13 @@ subcommand with ``--program``:
    chemsmart sub chain -p combined [CHAIN_OPTIONS] reaction --program {gaussian,orca} \
        [REACTION_OPTIONS]
 
-The chain locates a transition state from a guess **or** from reactant + product (Gaussian QST2/QST3 or ORCA NEB-TS),
-then runs TS opt+freq, optional reactant/product opt+freq, and dual-level solvent single-points.
+The chain locates a transition state from a guess **or** from optimized reactant + product (Gaussian QST2/QST3 or ORCA
+NEB-TS), then runs TS opt+freq and dual-level solvent single-points on the optimized endpoints and TS.
 
 .. note::
 
-   Output analysis is **not** part of this command. There is no ``chemsmart run reaction analyze`` and no ``chemsmart
-   run chain reaction analyze``. After jobs finish, use :doc:`thermochemistry-analysis` on the individual opt/SP
-   outputs. A dedicated reaction analysis command is planned as a follow-up.
+   Output analysis is **not** part of this command. After jobs finish, use :doc:`thermochemistry-analysis` on the
+   individual opt/SP outputs. A dedicated reaction analysis command is planned as a follow-up.
 
 .. toctree::
    :maxdepth: 2
@@ -40,10 +39,11 @@ then runs TS opt+freq, optional reactant/product opt+freq, and dual-level solven
 
 **Job submission**
 
--  ``chemsmart run/sub gaussian ... reaction [submit|batch]`` — Gaussian QST (when locating a TS) then R/TS/P opt and
-   SP.
+-  ``chemsmart run/sub gaussian ... reaction [submit|batch]`` — Gaussian QST (when locating a TS) after endpoint opt,
+   then TS opt and SP.
 
--  ``chemsmart run/sub orca ... reaction [submit|batch]`` — ORCA NEB-TS (when locating a TS) then R/TS/P opt and SP.
+-  ``chemsmart run/sub orca ... reaction [submit|batch]`` — ORCA NEB-TS (when locating a TS) after endpoint opt, then TS
+   opt and SP.
 
 -  ``chemsmart run/sub chain -p combined ... reaction --program {gaussian,orca} [submit|batch]`` — same jobs, with
    theory and solvent from the chain YAML alias. ``--program gaussian`` builds ``GaussianReactionJob`` (QST);
@@ -62,17 +62,18 @@ then runs TS opt+freq, optional reactant/product opt+freq, and dual-level solven
  Case 1 vs Case 2
 ******************
 
-The chain always ends in the same TS characterization (opt=ts / OptTS + freq, then optional R/P opt + SP). Case 2 only
-**creates** that TS guess.
+The chain always ends in the same TS characterization (opt=ts / OptTS + freq, then SP). Case 2 first optimizes reactant
+and product endpoints, then locates the TS.
 
-**Case 1 — TS guess provided.** Skip Guess. Parent ``-f`` is the TS structure. Optional ``--reactant`` (without
-``--product``) adds reactant minima to optimize; that is not a path search.
+**Case 1 — TS guess provided.** Skip Endpoint Opt and Guess. Parent ``-f`` is the TS structure. Optional ``--reactant``
+(without ``--product``) adds reactant minima to optimize; that is not a path search.
 
-**Case 2 — reactant + product, optional TS guess.** Run Guess, then case 1 with the located TS:
+**Case 2 — reactant + product, optional TS guess.** Optimize endpoints, run Guess, then TS opt:
 
--  **Gaussian:** QST2 if only R+P; QST3 if a TS guess is also given. Atom order must match across coordinate blocks.
--  **ORCA:** project NEB-TS. Reactant is the NEB start, product is the ending geometry, optional TS guess is the
-   intermediate.
+-  **Gaussian:** QST2 if only R+P; QST3 if a TS guess is also given. Atom order must match across coordinate blocks. QST
+   uses optimized reactant and product geometries.
+-  **ORCA:** project NEB-TS on optimized endpoints. Reactant is the NEB start, product is the ending geometry, optional
+   TS guess is the intermediate.
 
 Failed QST/NEB does not continue to TS opt.
 
@@ -111,14 +112,16 @@ CLI dispatch
 Roles:
 
 -  **ts** (required): TS job with ``freq=True``, project ``ts_settings()`` (gas-phase)
--  **reactant** / **product** (optional): opt+freq, project ``opt_settings()``
+-  **reactant** / **product** (case 2): endpoint opt+freq before path search; case 1 optional fragments use
+   ``opt_settings()`` in the Opt phase
 -  **SP**: solvent single-points on optimized geometries, project ``sp_settings()`` (solv) — a different level of theory
    than opt when ``gas`` / ``solv`` differ
 
 Phases:
 
-#. **Guess** — QST or NEB; skipped in case 1
-#. **Opt** — R, then TS, then P
+#. **Endpoint Opt** — reactant and product opt+freq; case 2 only
+#. **Guess** — QST or NEB on optimized endpoints; skipped in case 1
+#. **Opt** — TS opt+freq (case 2); R, TS, and P in case 1 when optional fragments are given
 #. **SP** — solvent single-points
 
 IRC is not part of this workflow.
@@ -130,10 +133,10 @@ For a job labelled ``sn2``:
 
 .. code:: text
 
-   sn2_qst.com / sn2_neb.inp   # Guess (case 2)
+   sn2_R_opt / sn2_R1_opt     # reactant endpoint opt+freq (case 2; numbered when more than one)
+   sn2_P_opt / sn2_P1_opt     # product endpoint opt+freq (case 2)
+   sn2_qst.com / sn2_neb.inp   # Guess (case 2; uses optimized endpoints)
    sn2_TS_opt                 # TS opt+freq
-   sn2_R_opt / sn2_R1_opt     # reactant opt+freq (numbered when more than one)
-   sn2_P_opt / sn2_P1_opt     # product opt+freq
    sn2_TS_sp / sn2_R_sp / …   # matching solvent single-points
 
 Repeatable ``--reactant`` / ``--product`` cover extra fragments (two reactants, etc.).

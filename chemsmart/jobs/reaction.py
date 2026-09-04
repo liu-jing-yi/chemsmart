@@ -1,7 +1,8 @@
-"""Shared Guess → Opt → SP chain for Gaussian and ORCA reaction jobs."""
+"""Shared Endpoint Opt → Guess → Opt → SP chain for Gaussian and ORCA reaction jobs."""
 
 import logging
 
+from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.chain import ChainMixin, JobPhase
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,34 @@ PATH_SEARCH_SINGLE_STRUCTURE = (
     "geometry. Combine fragments into one structure, or provide a TS guess "
     "with extra fragments to optimize without path search."
 )
+
+
+def validate_path_search_structures(reactant, product, ts_guess=None):
+    """Require matching atom counts and atom order across path-search endpoints."""
+    structures = [("reactant", reactant), ("product", product)]
+    if ts_guess is not None:
+        structures.append(("ts guess", ts_guess))
+
+    for role, molecule in structures:
+        if not isinstance(molecule, Molecule):
+            raise ValueError(
+                f"Path-search {role} must be a Molecule, got "
+                f"{type(molecule).__name__}."
+            )
+
+    n_atoms = reactant.num_atoms
+    ref_symbols = list(reactant.chemical_symbols)
+    for role, molecule in structures[1:]:
+        if molecule.num_atoms != n_atoms:
+            raise ValueError(
+                "Path-search structures must have the same number of atoms; "
+                f"reactant has {n_atoms}, {role} has {molecule.num_atoms}."
+            )
+        if list(molecule.chemical_symbols) != ref_symbols:
+            raise ValueError(
+                "Path-search structures must have the same atom order; "
+                f"reactant and {role} chemical symbols differ."
+            )
 
 
 class ReactionChainMixin(ChainMixin):
@@ -53,10 +82,9 @@ class ReactionChainMixin(ChainMixin):
         self.sp_settings = sp_settings
         self.neb_settings = neb_settings
         self._configure_path_search()
+        self._validate_path_search_endpoints()
 
-        self.guess_job = (
-            self._make_guess_job() if self.uses_path_search else None
-        )
+        self.guess_job = None
         self.reactant_sp_jobs = None
         self.product_sp_jobs = None
         self.ts_sp_job = None
@@ -81,6 +109,15 @@ class ReactionChainMixin(ChainMixin):
             self.no_path_search = True
             return
         raise ValueError(PATH_SEARCH_SINGLE_STRUCTURE)
+
+    def _validate_path_search_endpoints(self):
+        if not self.uses_path_search:
+            return
+        validate_path_search_structures(
+            self.path_reactant,
+            self.path_product,
+            ts_guess=self.path_ts_guess,
+        )
 
     @property
     def uses_path_search(self):
@@ -110,7 +147,13 @@ class ReactionChainMixin(ChainMixin):
             return (self.molecule,)
         return ()
 
-    def _make_guess_job(self):
+    @property
+    def endpoint_opt_jobs(self):
+        if not self.uses_path_search:
+            return ()
+        return tuple(self.reactant_opt_jobs) + tuple(self.product_opt_jobs)
+
+    def _make_guess_job(self, reactant, product, ts_guess=None):
         raise NotImplementedError
 
     def _prepare_guess_inputs(self):
@@ -138,6 +181,27 @@ class ReactionChainMixin(ChainMixin):
         if output is not None and output.normal_termination:
             return output.molecule
         return fallback
+
+    def _optimized_endpoint_molecule(self, opt_job, fallback):
+        if opt_job is None:
+            return fallback
+        return self._output_molecule(opt_job, fallback)
+
+    def _optimized_reactant_for_guess(self):
+        reactant_job = (
+            self.reactant_opt_jobs[0] if self.reactant_opt_jobs else None
+        )
+        return self._optimized_endpoint_molecule(
+            reactant_job, self.path_reactant
+        )
+
+    def _optimized_product_for_guess(self):
+        product_job = (
+            self.product_opt_jobs[0] if self.product_opt_jobs else None
+        )
+        return self._optimized_endpoint_molecule(
+            product_job, self.path_product
+        )
 
     def _ts_molecule(self):
         if self.uses_path_search and self.guess_job is not None:
@@ -171,11 +235,14 @@ class ReactionChainMixin(ChainMixin):
         ]
 
     def _set_opt_jobs(self):
-        self.opt_jobs = (
-            list(self.reactant_opt_jobs)
-            + [self.ts_opt_job]
-            + list(self.product_opt_jobs)
-        )
+        if self.uses_path_search:
+            self.opt_jobs = [self.ts_opt_job]
+        else:
+            self.opt_jobs = (
+                list(self.reactant_opt_jobs)
+                + [self.ts_opt_job]
+                + list(self.product_opt_jobs)
+            )
 
     def _create_opt_jobs(self):
         self.reactant_opt_jobs = self._opt_jobs_for_role(
@@ -191,6 +258,20 @@ class ReactionChainMixin(ChainMixin):
         self.product_opt_jobs = self._opt_jobs_for_role(self.products, "P")
         self._set_opt_jobs()
 
+    def _endpoint_opt_jobs_for_phase(self):
+        return list(self.endpoint_opt_jobs)
+
+    def _guess_jobs_for_phase(self):
+        reactant = self._optimized_reactant_for_guess()
+        product = self._optimized_product_for_guess()
+        self.guess_job = self._make_guess_job(
+            reactant,
+            product,
+            ts_guess=self.path_ts_guess,
+        )
+        self._prepare_guess_inputs()
+        return [self.guess_job]
+
     def _opt_jobs_for_phase(self):
         if self.uses_path_search:
             ts_molecule = self._ts_molecule()
@@ -200,7 +281,7 @@ class ReactionChainMixin(ChainMixin):
                 self._ts_settings_for(ts_molecule),
                 f"{self.label}_TS_opt",
             )
-            self._set_opt_jobs()
+            self.opt_jobs = [self.ts_opt_job]
         return self.opt_jobs
 
     def _make_sp_job(self, opt_job):
@@ -231,10 +312,19 @@ class ReactionChainMixin(ChainMixin):
     def _build_reaction_phases(self):
         return [
             JobPhase(
-                name="Guess",
-                jobs=([self.guess_job] if self.guess_job is not None else []),
+                name="Endpoint Opt",
+                jobs_factory=self._endpoint_opt_jobs_for_phase,
                 skip_if=lambda: not self.uses_path_search,
-                before_run=self._prepare_guess_inputs,
+                require_complete=True,
+                stop_on_incomplete=True,
+                stop_message=(
+                    "Endpoint Opt jobs incomplete, halting serial execution."
+                ),
+            ),
+            JobPhase(
+                name="Guess",
+                jobs_factory=self._guess_jobs_for_phase,
+                skip_if=lambda: not self.uses_path_search,
                 require_complete=True,
                 stop_on_incomplete=True,
                 stop_message=(

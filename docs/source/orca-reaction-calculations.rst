@@ -10,8 +10,8 @@ experience. Path search uses project NEB-TS instead of QST.
 .. note::
 
    Output-file analysis is not part of ``orca reaction``. After calculations finish, use ``chemsmart run
-   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. There is no ``chemsmart run reaction
-   analyze`` and no ``chain reaction analyze``.
+   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
+   analyze`` command is planned as a follow-up.
 
 .. contents:: Table of Contents
    :local:
@@ -47,9 +47,10 @@ Chain submit uses the ORCA alias from the chain YAML:
 
 **Case 2 — reactant + product (NEB-TS)**
 
-``-f`` is the reactant. ``--product`` selects path search. The Guess phase reuses ``ORCANEBJob`` with project
-``neb_settings()`` (default ``NEB-TS``): reactant start, product ``ending_xyzfile``, optional ``--ts-guess`` as
-``intermediate_xyzfile``. Then OptTS characterization.
+``-f`` is the reactant. ``--product`` selects path search. Reactant and product are optimized first. The Guess phase
+reuses ``ORCANEBJob`` with project ``neb_settings()`` (default ``NEB-TS``): optimized reactant start, optimized product
+``ending_xyzfile``, optional ``--ts-guess`` as ``intermediate_xyzfile``. Endpoint optimization is handled by the
+reaction chain (not ORCA ``preopt_ends``). Then OptTS characterization.
 
 .. code:: bash
 
@@ -70,12 +71,12 @@ For a job with label ``sn2``:
 
 .. code:: text
 
-   sn2_neb.inp / sn2_neb.out     # NEB-TS (case 2 only)
-   sn2_neb_P.xyz                 # product geometry written for NEB
+   sn2_R_opt.out                 # reactant endpoint opt+freq (case 2)
+   sn2_P_opt.out                 # product endpoint opt+freq (case 2)
+   sn2_neb.inp / sn2_neb.out     # NEB-TS (case 2; optimized endpoints)
+   sn2_neb_P.xyz                 # optimized product geometry written for NEB
    sn2_neb_TS.xyz                # optional TS intermediate
    sn2_TS_opt.out                # TS gas-phase opt+freq
-   sn2_R_opt.out                 # reactant opt+freq (if given)
-   sn2_P_opt.out                 # product opt+freq (if given)
    sn2_TS_sp.out                 # TS solvent single-point
    sn2_R_sp.out / sn2_P_sp.out   # matching SP children
 

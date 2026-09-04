@@ -1,5 +1,5 @@
 """
-Gaussian reaction workflow: optional QST2/QST3 guess, then TS/R/P opt and SP.
+Gaussian reaction workflow: optional endpoint opt, QST2/QST3 guess, TS opt and SP.
 
 QST input reuses ``GaussianInputWriter`` and ``settings.route_string``. The
 only route change is the optimization keyword (``opt=qst2`` or ``opt=qst3``).
@@ -12,14 +12,16 @@ import logging
 import re
 from io import StringIO
 
-from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.gaussian.job import GaussianComJob, GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
 from chemsmart.jobs.gaussian.ts import GaussianTSJob
 from chemsmart.jobs.gaussian.writer import GaussianInputWriter
-from chemsmart.jobs.reaction import ReactionChainMixin
+from chemsmart.jobs.reaction import (
+    ReactionChainMixin,
+    validate_path_search_structures,
+)
 from chemsmart.utils.repattern import (
     gaussian_opt_keywords_pattern,
     multiple_spaces_pattern,
@@ -34,29 +36,7 @@ _OPT_JOB_TOKENS = ("ts", "qst2", "qst3")
 
 def validate_qst_structures(reactant, product, ts_guess=None):
     """Require matching atom counts and atom order across QST blocks."""
-    structures = [("reactant", reactant), ("product", product)]
-    if ts_guess is not None:
-        structures.append(("ts guess", ts_guess))
-
-    for role, molecule in structures:
-        if not isinstance(molecule, Molecule):
-            raise ValueError(
-                f"QST {role} must be a Molecule, got {type(molecule).__name__}."
-            )
-
-    n_atoms = reactant.num_atoms
-    ref_symbols = list(reactant.chemical_symbols)
-    for role, molecule in structures[1:]:
-        if molecule.num_atoms != n_atoms:
-            raise ValueError(
-                "QST structures must have the same number of atoms; "
-                f"reactant has {n_atoms}, {role} has {molecule.num_atoms}."
-            )
-        if list(molecule.chemical_symbols) != ref_symbols:
-            raise ValueError(
-                "QST structures must have the same atom order; "
-                f"reactant and {role} chemical symbols differ."
-            )
+    validate_path_search_structures(reactant, product, ts_guess=ts_guess)
 
 
 def make_qst_com_job(
@@ -225,14 +205,14 @@ class GaussianReactionJob(ReactionChainMixin, GaussianJob):
             )
         super().__init__(molecule=molecule, settings=settings, **kwargs)
 
-    def _make_guess_job(self):
-        settings = self._ts_settings_for(self.path_reactant)
+    def _make_guess_job(self, reactant, product, ts_guess=None):
+        settings = self._ts_settings_for(reactant)
         settings.freq = False
         return make_qst_com_job(
-            reactant=self.path_reactant,
-            product=self.path_product,
+            reactant=reactant,
+            product=product,
             settings=settings,
-            ts_guess=self.path_ts_guess,
+            ts_guess=ts_guess,
             label=f"{self.label}_qst",
             jobrunner=self.jobrunner,
             skip_completed=self.skip_completed,

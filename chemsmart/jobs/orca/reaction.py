@@ -1,5 +1,5 @@
 """
-ORCA reaction workflow: optional NEB-TS guess, then TS/R/P opt and SP.
+ORCA reaction workflow: optional endpoint opt, NEB-TS guess, TS opt and SP.
 
 Guess reuses ``ORCANEBJob`` with project ``neb_settings()`` (default
 ``NEB-TS``). Child Opt/TS/SP jobs are stock classes sequenced with
@@ -92,17 +92,18 @@ class ORCAReactionJob(ReactionChainMixin, ORCAJob):
             settings.joboption = "NEB-TS"
         return self._apply_charge_mult(settings, molecule)
 
-    def _make_guess_job(self):
-        settings = self._neb_settings_for(self.path_reactant)
+    def _make_guess_job(self, reactant, product, ts_guess=None):
+        settings = self._neb_settings_for(reactant)
+        settings.preopt_ends = False
         settings.ending_xyzfile = os.path.join(
             self.folder, f"{self.label}_neb_P.xyz"
         )
-        if self.path_ts_guess is not None:
+        if ts_guess is not None:
             settings.intermediate_xyzfile = os.path.join(
                 self.folder, f"{self.label}_neb_TS.xyz"
             )
         return ORCANEBJob(
-            molecule=self.path_reactant,
+            molecule=reactant,
             settings=settings,
             label=f"{self.label}_neb",
             jobrunner=self.jobrunner,
@@ -115,7 +116,9 @@ class ORCAReactionJob(ReactionChainMixin, ORCAJob):
         settings = self.guess_job.settings
         product_path = settings.ending_xyzfile
         if product_path:
-            self.path_product.write_xyz(product_path, mode="w")
+            self._optimized_product_for_guess().write_xyz(
+                product_path, mode="w"
+            )
         ts_path = settings.intermediate_xyzfile
         if ts_path and self.path_ts_guess is not None:
             self.path_ts_guess.write_xyz(ts_path, mode="w")

@@ -29,6 +29,19 @@ def _h2(z_h2=0.74, charge=0, multiplicity=1):
     )
 
 
+_REACTION_PHASES = ["Endpoint Opt", "Guess", "Opt", "SP"]
+
+
+def _reaction_phase_names(job):
+    return [phase.name for phase in job.phases]
+
+
+def _resolve_guess_job(job):
+    if job.guess_job is None and not job.phase_by_name("Guess").should_skip():
+        job.phase_by_name("Guess").resolve_jobs()
+    return job.guess_job
+
+
 def _water():
     return Molecule(
         symbols=["O", "H", "H"],
@@ -287,7 +300,8 @@ class TestGaussianReactionJob:
         )
         assert isinstance(job, GaussianJob)
         assert job.TYPE == "g16reaction"
-        assert [phase.name for phase in job.phases] == ["Guess", "Opt", "SP"]
+        assert _reaction_phase_names(job) == _REACTION_PHASES
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert job.phase_by_name("Guess").require_complete is True
@@ -315,6 +329,7 @@ class TestGaussianReactionJob:
             ts_settings=_ts_settings(),
             sp_settings=_sp_settings(),
         )
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert isinstance(job.reactant_opt_jobs[0], GaussianOptJob)
@@ -342,18 +357,22 @@ class TestGaussianReactionJob:
             ts_settings=_ts_settings(),
             sp_settings=_sp_settings(),
         )
+        assert not job.phase_by_name("Endpoint Opt").should_skip()
         assert not job.phase_by_name("Guess").should_skip()
         assert job.phase_by_name("Guess").require_complete is True
         assert job.phase_by_name("Guess").stop_on_incomplete is True
-        assert isinstance(job.guess_job, GaussianComJob)
-        assert job.guess_job.TYPE == "g16com"
-        assert job.guess_job.label == "sn2_qst"
-        qst_text = job.guess_job.settings.input_string.lower()
+        assert job.guess_job is None
+        guess_job = _resolve_guess_job(job)
+        assert isinstance(guess_job, GaussianComJob)
+        assert guess_job.TYPE == "g16com"
+        assert guess_job.label == "sn2_qst"
+        qst_text = guess_job.settings.input_string.lower()
         assert "qst2" in qst_text
         assert "qst3" not in qst_text
         assert isinstance(job.ts_opt_job, GaussianTSJob)
         assert job.reactant_opt_jobs[0].label == "sn2_R_opt"
         assert job.product_opt_jobs[0].label == "sn2_P_opt"
+        assert job.opt_jobs == [job.ts_opt_job]
 
     def test_case2_qst3_when_ts_guess_given(
         self, gaussian_jobrunner_no_scratch
@@ -368,7 +387,7 @@ class TestGaussianReactionJob:
             opt_settings=_opt_settings(),
             ts_settings=_ts_settings(),
         )
-        qst_text = job.guess_job.settings.input_string.lower()
+        qst_text = _resolve_guess_job(job).settings.input_string.lower()
         assert "qst3" in qst_text
         assert "qst2" not in qst_text
 
@@ -383,10 +402,12 @@ class TestGaussianReactionJob:
             reactants=[_h2(0.74)],
             products=[_h2(0.90)],
         )
-        qst_text = job.guess_job.settings.input_string.lower()
+        qst_text = _resolve_guess_job(job).settings.input_string.lower()
         assert "qst3" in qst_text
         assert job.reactant_opt_jobs[0].label == "sn2_R_opt"
-        assert job.opt_jobs[0].molecule.positions[1][2] == pytest.approx(0.74)
+        assert job.reactant_opt_jobs[0].molecule.positions[1][
+            2
+        ] == pytest.approx(0.74)
 
     def test_no_path_search_skips_guess_when_r_p_ts_set(
         self, gaussian_jobrunner_no_scratch
@@ -400,6 +421,7 @@ class TestGaussianReactionJob:
             products=[_h2(0.90)],
             no_path_search=True,
         )
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert isinstance(job.ts_opt_job, GaussianTSJob)
@@ -432,6 +454,7 @@ class TestGaussianReactionJob:
             products=[_h2(0.90, charge=-1)],
         )
         assert job.no_path_search is True
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert [child.label for child in job.reactant_opt_jobs] == [
@@ -525,6 +548,7 @@ class TestORCAReactionJob:
         )
         assert isinstance(job, ORCAJob)
         assert job.TYPE == "orcareaction"
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert isinstance(job.ts_opt_job, ORCATSJob)
@@ -544,17 +568,21 @@ class TestORCAReactionJob:
             ts_settings=_orca_settings("ts"),
             neb_settings=_orca_settings("neb"),
         )
+        assert not job.phase_by_name("Endpoint Opt").should_skip()
         assert not job.phase_by_name("Guess").should_skip()
         assert job.phase_by_name("Guess").require_complete is True
         assert job.phase_by_name("Guess").stop_on_incomplete is True
-        assert isinstance(job.guess_job, ORCANEBJob)
-        assert job.guess_job.label == "sn2_neb"
-        assert job.guess_job.settings.joboption == "NEB-TS"
-        assert job.guess_job.settings.ending_xyzfile.endswith("sn2_neb_P.xyz")
-        assert job.guess_job.settings.intermediate_xyzfile is None
+        guess_job = _resolve_guess_job(job)
+        assert isinstance(guess_job, ORCANEBJob)
+        assert guess_job.label == "sn2_neb"
+        assert guess_job.settings.joboption == "NEB-TS"
+        assert guess_job.settings.preopt_ends is False
+        assert guess_job.settings.ending_xyzfile.endswith("sn2_neb_P.xyz")
+        assert guess_job.settings.intermediate_xyzfile is None
         assert isinstance(job.ts_opt_job, ORCATSJob)
         assert isinstance(job.reactant_opt_jobs[0], ORCAOptJob)
         assert isinstance(job.product_opt_jobs[0], ORCAOptJob)
+        assert job.opt_jobs == [job.ts_opt_job]
 
     def test_case2_neb_intermediate_when_ts_guess_given(
         self, orca_jobrunner_no_scratch
@@ -567,7 +595,7 @@ class TestORCAReactionJob:
             products=[_h2(0.90)],
             ts_guess=_h2(0.82),
         )
-        assert job.guess_job.settings.intermediate_xyzfile.endswith(
+        assert _resolve_guess_job(job).settings.intermediate_xyzfile.endswith(
             "sn2_neb_TS.xyz"
         )
 
@@ -582,7 +610,7 @@ class TestORCAReactionJob:
             reactants=[_h2(0.74)],
             products=[_h2(0.90)],
         )
-        assert job.guess_job.settings.intermediate_xyzfile.endswith(
+        assert _resolve_guess_job(job).settings.intermediate_xyzfile.endswith(
             "sn2_neb_TS.xyz"
         )
         assert job.reactant_opt_jobs[0].label == "sn2_R_opt"
@@ -599,6 +627,7 @@ class TestORCAReactionJob:
             products=[_h2(0.90)],
             no_path_search=True,
         )
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
 
@@ -957,6 +986,7 @@ class TestReactionCLI:
         assert len(captured["submissions"]) == 1
         job = captured["submissions"][0][0]
         assert isinstance(job, GaussianReactionJob)
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
 
@@ -996,8 +1026,9 @@ class TestReactionCLI:
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert not job.phase_by_name("Guess").should_skip()
-        assert isinstance(job.guess_job, GaussianComJob)
-        assert "qst2" in job.guess_job.settings.input_string.lower()
+        guess_job = _resolve_guess_job(job)
+        assert isinstance(guess_job, GaussianComJob)
+        assert "qst2" in guess_job.settings.input_string.lower()
         cli_args = captured["submissions"][0][2]
         assert "--product" in cli_args
         assert "--products" not in cli_args
@@ -1040,8 +1071,8 @@ class TestReactionCLI:
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
-        assert isinstance(job.guess_job, GaussianComJob)
-        qst_text = job.guess_job.settings.input_string.lower()
+        assert isinstance(_resolve_guess_job(job), GaussianComJob)
+        qst_text = _resolve_guess_job(job).settings.input_string.lower()
         assert "qst3" in qst_text
         assert "qst2" not in qst_text
 
@@ -1083,7 +1114,7 @@ class TestReactionCLI:
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert not job.phase_by_name("Guess").should_skip()
-        assert "qst3" in job.guess_job.settings.input_string.lower()
+        assert "qst3" in _resolve_guess_job(job).settings.input_string.lower()
         cli_args = captured["submissions"][0][2]
         assert "--reactant" in cli_args
         assert "--reactants" not in cli_args
@@ -1236,6 +1267,7 @@ class TestReactionCLI:
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert isinstance(job, ORCAReactionJob)
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
 
@@ -1245,7 +1277,6 @@ class TestReactionCLI:
         from click.testing import CliRunner
 
         from chemsmart.cli.sub import sub
-        from chemsmart.jobs.orca.neb import ORCANEBJob
 
         reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
         product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
@@ -1275,7 +1306,7 @@ class TestReactionCLI:
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert not job.phase_by_name("Guess").should_skip()
-        assert isinstance(job.guess_job, ORCANEBJob)
+        assert _resolve_guess_job(job) is not None
 
     def test_batch_table_groups_by_reaction_id(self, tmp_path, monkeypatch):
         from click.testing import CliRunner
@@ -1315,7 +1346,7 @@ class TestReactionCLI:
         job = captured["submissions"][0][0]
         assert job.label == "sn2"
         assert not job.phase_by_name("Guess").should_skip()
-        assert job.guess_job is not None
+        assert _resolve_guess_job(job) is not None
         cli_args = captured["submissions"][0][2]
         assert "batch" not in cli_args
         assert "submit" in cli_args
@@ -1361,6 +1392,7 @@ class TestReactionCLI:
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert [child.label for child in job.reactant_opt_jobs] == [
@@ -1438,6 +1470,7 @@ class TestReactionCLI:
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert job.label == "sn2"
+        assert job.phase_by_name("Endpoint Opt").should_skip()
         assert job.phase_by_name("Guess").should_skip()
         assert job.guess_job is None
         assert job.reactant_opt_jobs == []

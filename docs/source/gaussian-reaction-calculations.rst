@@ -4,14 +4,14 @@
  Gaussian Reaction Calculations
 ################################
 
-This page covers **Gaussian reaction job submission** — QST2/QST3 when locating a TS from reactant and product, then
-TS/R/P opt+freq and solvent single-points.
+This page covers **Gaussian reaction job submission** — endpoint optimization, QST2/QST3 path search on minimized
+reactant and product, TS opt+freq, and solvent single-points.
 
 .. note::
 
    Output-file analysis is not part of ``gaussian reaction``. After calculations finish, use ``chemsmart run
-   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. There is no ``chemsmart run reaction
-   analyze`` and no ``chain reaction analyze``.
+   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
+   analyze`` command is planned as a follow-up.
 
 .. contents:: Table of Contents
    :local:
@@ -47,8 +47,9 @@ Chain submit uses the Gaussian alias from the chain YAML:
 
 **Case 2 — reactant + product (QST2)**
 
-``-f`` is the reactant. ``--product`` selects path search. Gaussian builds a QST2 ``.com`` (two geometry blocks) and
-runs it as a COM job, then characterizes the located TS.
+``-f`` is the reactant. ``--product`` selects path search. Reactant and product are optimized first, then Gaussian
+builds a QST2 ``.com`` (two geometry blocks from the minimized endpoints) and runs it as a COM job, then characterizes
+the located TS.
 
 .. code:: bash
 
@@ -78,11 +79,11 @@ Sub-job labels determine output filenames. For a job with label ``sn2`` (the def
 
 .. code:: text
 
-   sn2_qst.com / sn2_qst.log     # QST2 or QST3 (case 2 only)
+   sn2_R_opt.log                 # reactant endpoint opt+freq (case 2)
+   sn2_R1_opt.log / sn2_R2_opt   # extra reactant fragments (case 1)
+   sn2_P_opt.log                 # product endpoint opt+freq (case 2)
+   sn2_qst.com / sn2_qst.log     # QST2 or QST3 (case 2; optimized endpoints)
    sn2_TS_opt.log                # TS gas-phase opt+freq
-   sn2_R_opt.log                 # reactant opt+freq (if given)
-   sn2_R1_opt.log / sn2_R2_opt   # extra reactant fragments
-   sn2_P_opt.log                 # product opt+freq (if given)
    sn2_TS_sp.log                 # TS solvent single-point
    sn2_R_sp.log / sn2_P_sp.log   # matching SP children
 
