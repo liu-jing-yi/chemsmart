@@ -360,6 +360,9 @@ class TestFukuiCLI:
         runner = CliRunner()
         result = runner.invoke(run, ["--help"])
         assert result.exit_code == 0, result.output
+        assert "\n  fukui" not in result.output
+        result = runner.invoke(run, ["chain", "--help"])
+        assert result.exit_code == 0, result.output
         assert "\n  fukui" in result.output
 
     def test_sub_help_does_not_list_analysis_fukui(self):

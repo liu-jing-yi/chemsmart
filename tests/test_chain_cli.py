@@ -72,6 +72,22 @@ class TestChainHelp:
         assert "\n  xtb" not in result.output
         assert "\n  crest" not in result.output
 
+    def test_run_help_hides_chain_workflow_subcommands(self):
+        result = CliRunner().invoke(run, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  pka" not in result.output
+        assert "\n  fukui" not in result.output
+        assert "\n  redox" not in result.output
+        assert "\n  reaction" not in result.output
+
+    def test_sub_help_hides_chain_workflow_subcommands(self):
+        result = CliRunner().invoke(sub, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  pka" not in result.output
+        assert "\n  fukui" not in result.output
+        assert "\n  redox" not in result.output
+        assert "\n  reaction" not in result.output
+
 
 class TestChainPipeline:
     def test_pipeline_builds_chain_job(

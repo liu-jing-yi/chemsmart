@@ -537,6 +537,9 @@ class TestRedoxCLI:
     def test_run_help_lists_redox(self):
         result = CliRunner().invoke(run, ["--help"])
         assert result.exit_code == 0, result.output
+        assert "\n  redox" not in result.output
+        result = CliRunner().invoke(run, ["chain", "--help"])
+        assert result.exit_code == 0, result.output
         assert "\n  redox" in result.output
 
     def test_sub_help_does_not_list_analysis_redox(self):
