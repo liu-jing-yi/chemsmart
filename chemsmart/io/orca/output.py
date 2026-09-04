@@ -1714,6 +1714,9 @@ class ORCAOutput(ORCAFileMixin):
         for i, line_i in enumerate(self.contents):
             mulliken_atomic_charges = {}
             if "MULLIKEN ATOMIC CHARGES" in line_i:
+                # Restricted: last column is charge. Unrestricted tables
+                # add a spin column, so charge is second-to-last.
+                charge_column = -2 if "SPIN POPULATIONS" in line_i else -1
                 for line_j in self.contents[i + 2 :]:
                     if "Sum of atomic charges" in line_j:
                         break
@@ -1724,7 +1727,7 @@ class ORCAOutput(ORCAFileMixin):
                     # use 1-indexed
                     element_num_1idx = increment_numbers(element_num, 1)
                     mulliken_atomic_charges[element_num_1idx] = float(
-                        line_j_elements[-1]
+                        line_j_elements[charge_column]
                     )
                 all_mulliken_atomic_charges.append(mulliken_atomic_charges)
         return all_mulliken_atomic_charges[-1]
@@ -1738,6 +1741,7 @@ class ORCAOutput(ORCAFileMixin):
         for i, line_i in enumerate(self.contents):
             loewdin_atomic_charges = {}
             if "LOEWDIN ATOMIC CHARGES" in line_i:
+                charge_column = -2 if "SPIN POPULATIONS" in line_i else -1
                 for line_j in self.contents[i + 2 :]:
                     line_j_elements = line_j.split()
                     if (
@@ -1750,7 +1754,7 @@ class ORCAOutput(ORCAFileMixin):
                     element_num = f"{element}{line_j_elements[0]}"
                     element_num_1idx = increment_numbers(element_num, 1)
                     loewdin_atomic_charges[element_num_1idx] = float(
-                        line_j_elements[-1]
+                        line_j_elements[charge_column]
                     )
                 all_loewdin_atomic_charges.append(loewdin_atomic_charges)
         return all_loewdin_atomic_charges[-1]
