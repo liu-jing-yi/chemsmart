@@ -496,8 +496,17 @@ Structure Optimization
       -  Single point calculation
 
    -  -  ``fukui``
+
       -  Fukui charge-state calculations (N / N±1). ORCA modes are ``mulliken`` (default) and ``hirshfeld``. Analyze
-         with ``chemsmart run fukui``
+         with ``chemsmart run fukui`` or ``chemsmart run chain fukui analyze``. Also ``chemsmart run/sub chain … fukui
+         --program orca``
+
+   -  -  ``pka``
+      -  Dual-level pKa job submission; analyze with ``chemsmart run pka``. See :doc:`orca-pka-calculations`
+
+   -  -  ``redox``
+      -  Dual-level exchange redox submission; analyze with ``chemsmart run redox analyze``. See
+         :doc:`orca-redox-calculations`
 
 Transition State Search
 =======================
@@ -550,5 +559,7 @@ For detailed information on each job type:
 -  :doc:`orca-structure-optimization`
 -  :doc:`orca-transition-state`
 -  :doc:`orca-reaction-calculations`
+-  :doc:`orca-pka-calculations`
+-  :doc:`orca-redox-calculations`
 -  :doc:`orca-direct-input`
 -  :doc:`orca-multiscale-calculations`

@@ -51,11 +51,29 @@
    :undoc-members:
    :show-inheritance:
 
+*******************************
+ chemsmart.cli.orca.pka module
+*******************************
+
+.. automodule:: chemsmart.cli.orca.pka
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 ************************************
  chemsmart.cli.orca.reaction module
 ************************************
 
 .. automodule:: chemsmart.cli.orca.reaction
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+*********************************
+ chemsmart.cli.orca.redox module
+*********************************
+
+.. automodule:: chemsmart.cli.orca.redox
    :members:
    :undoc-members:
    :show-inheritance:

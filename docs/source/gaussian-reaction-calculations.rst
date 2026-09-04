@@ -10,8 +10,8 @@ TS/R/P opt+freq and solvent single-points.
 .. note::
 
    Output-file analysis is not part of ``gaussian reaction``. After calculations finish, use ``chemsmart run
-   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
-   analyze`` command is planned as a follow-up.
+   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. There is no ``chemsmart run reaction
+   analyze`` and no ``chain reaction analyze``.
 
 .. contents:: Table of Contents
    :local:
@@ -37,6 +37,13 @@ Where:
 -  ``-c 0 -m 1``: Charge and multiplicity of the TS
 
 This runs TS opt+freq (``ts_settings()``) and a solvent single-point (``sp_settings()``).
+
+Chain submit uses the Gaussian alias from the chain YAML:
+
+.. code:: bash
+
+   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program gaussian
 
 **Case 2 — reactant + product (QST2)**
 

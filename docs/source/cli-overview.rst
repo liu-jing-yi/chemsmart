@@ -177,7 +177,10 @@ These options are only available with ``chemsmart sub``:
 -  ``orca``: Run or submit ORCA jobs
 -  ``xtb``: Run or submit xTB jobs
 -  ``crest``: Run or submit CREST conformational search jobs
--  ``chain``: Run multi-program ``-s/--steps`` pipelines from a chain project file
+-  ``chain``: Run multi-program ``-s/--steps`` pipelines, or pKa / Fukui / redox / reaction workflow subcommands
+-  ``pka``: Analyze pKa from completed Gaussian or ORCA outputs (``chemsmart run`` only)
+-  ``fukui``: Analyze Fukui indices from completed outputs (``chemsmart run`` only)
+-  ``redox``: Analyze exchange redox potentials from completed outputs (``chemsmart run`` only)
 -  ``mol``: Run PyMOL visualization and analysis jobs
 -  ``thermochemistry``: Run thermochemistry analysis jobs
 -  ``grouper``: Run structure grouping jobs
@@ -195,6 +198,9 @@ For specific job types, see the detailed tutorials:
 -  :doc:`crest-cli-options`
 -  :doc:`chain-cli-options`
 -  :doc:`chain-jobs`
+-  :doc:`pka-calculations`
+-  :doc:`redox-calculations`
+-  :doc:`reaction`
 -  :doc:`pymol-cli-options`
 -  :doc:`thermochemistry-analysis`
 -  :doc:`grouper-cli-options`

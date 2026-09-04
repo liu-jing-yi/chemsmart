@@ -773,3 +773,115 @@ class TestRedoxCLI:
         assert result.exit_code == 0, result.output
         assert "E_target" in result.output
         assert "-p/--project" not in result.output
+
+    def test_run_redox_analyze_n2_arithmetic(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        register_redox_reference(
+            RedoxReference(
+                name="n2_cli",
+                E_ref_V=0.25,
+                n_electrons=2,
+                scale="SHE",
+                couple_label="N2/N2+",
+            )
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_gas_phase_data",
+            lambda filepath, **kwargs: {
+                "ox_gas.log": (1.00, 0.01),
+                "red_gas.log": (1.10, 0.02),
+                "ref_ox_gas.log": (2.00, 0.03),
+                "ref_red_gas.log": (2.20, 0.04),
+            }[Path(filepath).name],
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            lambda filepath: {
+                "ox_solv.log": 0.90,
+                "red_solv.log": 1.00,
+                "ref_ox_solv.log": 1.80,
+                "ref_red_solv.log": 2.00,
+            }[Path(filepath).name],
+        )
+        result = CliRunner().invoke(
+            run,
+            [
+                "redox",
+                "-n",
+                "2",
+                "-r",
+                "n2_cli",
+                "analyze",
+                *_analyze_file_args(files),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "n = 2" in result.output
+        assert "SHE" in result.output
+
+    def test_chain_redox_analyze_n2_arithmetic(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        from chemsmart.cli.chain.chain import chain
+
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        register_redox_reference(
+            RedoxReference(
+                name="n2_chain",
+                E_ref_V=0.25,
+                n_electrons=2,
+                scale="SHE",
+                couple_label="N2/N2+",
+            )
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_gas_phase_data",
+            lambda filepath, **kwargs: (0.0, 0.0),
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            lambda filepath: 0.0,
+        )
+        result = CliRunner().invoke(
+            chain,
+            [
+                "redox",
+                "-n",
+                "2",
+                "-r",
+                "n2_chain",
+                "analyze",
+                *_analyze_file_args(files),
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert "n = 2" in result.output
+        assert "SHE" in result.output
+        assert "-p/--project" not in result.output

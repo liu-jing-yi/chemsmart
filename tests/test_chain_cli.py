@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -674,3 +675,269 @@ class TestChainWorkflows:
         assert "Missing option" in result.output
         assert "--ox-gas" in result.output
         assert "-p/--project" not in result.output
+
+    @pytest.mark.parametrize(
+        "step,snippet",
+        [
+            ("gaussian:fukui", "do not support gaussian 'fukui'"),
+            ("gaussian:redox", "do not support gaussian 'redox'"),
+            ("gaussian:reaction", "do not support gaussian 'reaction'"),
+            ("orca:pka", "do not support orca 'pka'"),
+            ("orca:fukui", "do not support orca 'fukui'"),
+            ("orca:redox", "do not support orca 'redox'"),
+            ("orca:reaction", "do not support orca 'reaction'"),
+        ],
+    )
+    def test_nested_only_workflow_steps_are_usage_errors(
+        self, isolated_config_dir, single_molecule_xyz_file, step, snippet
+    ):
+        _combined_yaml(isolated_config_dir)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-s",
+                step,
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert snippet in result.output
+
+    def test_pka_analyze_computes_without_project(self, tmp_path, monkeypatch):
+        files = {
+            name: str(tmp_path / name)
+            for name in (
+                "ha.log",
+                "a.log",
+                "hb.log",
+                "b.log",
+                "has.log",
+                "as.log",
+                "hbs.log",
+                "bs.log",
+            )
+        }
+        for path in files.values():
+            Path(path).write_text("Gaussian, Inc.\n")
+        called = {}
+
+        def _fake_print(*args, **kwargs):
+            called["kwargs"] = kwargs
+
+        monkeypatch.setattr("chemsmart.cli.pka.print_pka_summary", _fake_print)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "pka",
+                "analyze",
+                "-ha",
+                files["ha.log"],
+                "-a",
+                files["a.log"],
+                "-hr",
+                files["hb.log"],
+                "-r",
+                files["b.log"],
+                "-has",
+                files["has.log"],
+                "-as",
+                files["as.log"],
+                "--href-solv",
+                files["hbs.log"],
+                "--ref-solv",
+                files["bs.log"],
+                "-rp",
+                "6.75",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert called["kwargs"]["ha_gas_file"] == files["ha.log"]
+        assert called["kwargs"]["pka_reference"] == 6.75
+        assert "-p/--project" not in result.output
+
+    def test_fukui_analyze_computes_without_project(
+        self, tmp_path, monkeypatch
+    ):
+        files = {
+            "n": tmp_path / "mol_n.log",
+            "rc": tmp_path / "mol_rc.log",
+            "ra": tmp_path / "mol_ra.log",
+        }
+        for path in files.values():
+            path.write_text("n")
+        called = {}
+
+        def _fake_analyze(**kwargs):
+            called.update(kwargs)
+
+        monkeypatch.setattr("chemsmart.cli.fukui.analyze_fukui", _fake_analyze)
+        result = CliRunner().invoke(
+            chain,
+            [
+                "fukui",
+                "analyze",
+                "-n",
+                str(files["n"]),
+                "-c",
+                str(files["rc"]),
+                "-a",
+                str(files["ra"]),
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert called["neutral_filename"] == str(files["n"])
+        assert called["radical_cation_filename"] == str(files["rc"])
+        assert "-p/--project" not in result.output
+
+
+class TestExistingProgramCLI:
+    def test_gaussian_pka_still_uses_gaussian_project(self, tmp_path):
+        water = tmp_path / "water.xyz"
+        water.write_text(
+            "3\nwater\n"
+            "O  0.000  0.000  0.000\n"
+            "H  0.957  0.000  0.000\n"
+            "H -0.240  0.927  0.000\n"
+        )
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = CliRunner().invoke(
+                gaussian,
+                [
+                    "-p",
+                    "test",
+                    "-f",
+                    str(water),
+                    "-c",
+                    "0",
+                    "-m",
+                    "1",
+                    "pka",
+                    "-s",
+                    "direct",
+                    "-pi",
+                    "2",
+                ],
+                obj={"jobrunner": MagicMock()},
+                catch_exceptions=False,
+                standalone_mode=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianpKaJob)
+        gaussian_from_project.assert_called_with("test")
+
+    def test_gaussian_reaction_still_uses_gaussian_project(
+        self, single_molecule_xyz_file
+    ):
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = CliRunner().invoke(
+                gaussian,
+                [
+                    "-p",
+                    "test",
+                    "-f",
+                    single_molecule_xyz_file,
+                    "-c",
+                    "0",
+                    "-m",
+                    "1",
+                    "reaction",
+                ],
+                obj={"jobrunner": MagicMock()},
+                catch_exceptions=False,
+                standalone_mode=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianReactionJob)
+        gaussian_from_project.assert_called_with("test")
+
+    def test_run_pka_analyze_still_works(self, tmp_path, monkeypatch):
+        files = {
+            name: tmp_path / name
+            for name in (
+                "ha.log",
+                "a.log",
+                "hb.log",
+                "b.log",
+                "has.log",
+                "as.log",
+                "hbs.log",
+                "bs.log",
+            )
+        }
+        for path in files.values():
+            path.write_text("Gaussian, Inc.\n")
+        called = {}
+
+        def _fake_print(*args, **kwargs):
+            called["kwargs"] = kwargs
+
+        monkeypatch.setattr("chemsmart.cli.pka.print_pka_summary", _fake_print)
+        result = CliRunner().invoke(
+            run,
+            [
+                "pka",
+                "analyze",
+                "-ha",
+                str(files["ha.log"]),
+                "-a",
+                str(files["a.log"]),
+                "-hr",
+                str(files["hb.log"]),
+                "-r",
+                str(files["b.log"]),
+                "-has",
+                str(files["has.log"]),
+                "-as",
+                str(files["as.log"]),
+                "--href-solv",
+                str(files["hbs.log"]),
+                "--ref-solv",
+                str(files["bs.log"]),
+                "-rp",
+                "6.75",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called["kwargs"]["ha_gas_file"] == str(files["ha.log"])
+        assert called["kwargs"]["pka_reference"] == 6.75
+
+    def test_run_fukui_still_works(self, tmp_path, monkeypatch):
+        files = {
+            "n": tmp_path / "mol_n.log",
+            "rc": tmp_path / "mol_rc.log",
+            "ra": tmp_path / "mol_ra.log",
+        }
+        for path in files.values():
+            path.write_text("n")
+        called = {}
+
+        def _fake_analyze(**kwargs):
+            called.update(kwargs)
+
+        monkeypatch.setattr("chemsmart.cli.fukui.analyze_fukui", _fake_analyze)
+        result = CliRunner().invoke(
+            run,
+            [
+                "fukui",
+                "-n",
+                str(files["n"]),
+                "-c",
+                str(files["rc"]),
+                "-a",
+                str(files["ra"]),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called["neutral_filename"] == str(files["n"])

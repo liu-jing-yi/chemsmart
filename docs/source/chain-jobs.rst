@@ -5,7 +5,12 @@
 #################
 
 Chain projects tie together CREST, xTB, Gaussian, and ORCA calculations. A chain YAML file holds **project aliases**
-only; pipeline order comes from repeatable ``-s/--steps`` on the CLI. Combined YAML is used only by ``chain`` jobs.
+only. Combined YAML is used only by ``chain`` jobs.
+
+``chemsmart run/sub chain`` has two shapes:
+
+-  A **custom pipeline** from repeatable ``-s/--steps`` (or the ``custom`` subcommand).
+-  **Workflow subcommands** ``pka``, ``fukui``, ``redox``, and ``reaction``. These are not ``-s`` pipeline steps.
 
 .. contents:: Table of Contents
    :local:
@@ -31,9 +36,10 @@ Top-level keys ``crest``, ``xtb``, ``gaussian``, and ``orca`` are aliases to exi
 YAML stems under ``~/.chemsmart/crest/``, ``xtb/``, ``gaussian/``, and ``orca/``). Any other top-level key is rejected.
 A legacy ``steps`` key in the file is also rejected — specify the pipeline with ``-s/--steps`` instead.
 
-Each pipeline step's program must have a corresponding alias in the file. The target per-program YAML must exist;
-otherwise CHEMSMART raises the same ``from_project`` error as for a missing Gaussian or ORCA project. ``chemsmart sub
-gaussian -p test`` still loads ``~/.chemsmart/gaussian/test.yaml`` only — it does not read chain YAML.
+Each pipeline step's program, and each workflow ``--program``, must have a corresponding alias in the file. The target
+per-program YAML must exist; otherwise CHEMSMART raises the same ``from_project`` error as for a missing Gaussian or
+ORCA project. ``chemsmart sub gaussian -p test`` still loads ``~/.chemsmart/gaussian/test.yaml`` only — it does not read
+chain YAML.
 
 Packaged templates are copied to ``~/.chemsmart/chain/`` by ``chemsmart config`` and ``chemsmart update projects``. See
 :doc:`configuration-project-settings` for the full schema.
@@ -85,9 +91,11 @@ The following ``(program, job)`` pairs are supported:
       -  ``opt``, ``ts``, ``sp``
       -  ORCA optimization, transition state, or single point
 
-Jobs that need large option surfaces or extra input structures — **pKa**, **Fukui**, **reaction**, QM/MM, IRC, scan, and
-similar — are **not** pipeline steps. Run them on the program CLI with that program's own project YAML, e.g. ``chemsmart
-sub gaussian -p gaussian_project2 pka submit``.
+**pKa**, **Fukui**, **redox**, and **reaction** are **not** ``-s/--steps`` pipeline jobs. ``chain -s gaussian:pka`` (and
+the same for Fukui, redox, and reaction) is rejected. Run them as :ref:`chain-workflow-subcommands` with ``--program``,
+or on the program CLI with that program's own project YAML.
+
+QM/MM, IRC, scan, and similar jobs stay on the program CLI only.
 
 Geometry handoff between phases:
 
@@ -99,6 +107,50 @@ Geometry handoff between phases:
 Child job labels follow ``{chain_label}_{index:02d}_{program}_{job}`` (e.g. ``mol_00_gaussian_opt``,
 ``mol_01_gaussian_opt`` for two Gaussian optimization steps). Charge and multiplicity from ``-c`` / ``-m`` on the chain
 command are merged into each child.
+
+Do not combine ``-s/--steps`` with ``pka``, ``fukui``, ``redox``, or ``reaction``.
+
+.. _chain-workflow-subcommands:
+
+**********************
+ Workflow Subcommands
+**********************
+
+``pka``, ``fukui``, ``redox``, and ``reaction`` are Click groups under ``chain``. Submit requires ``--program
+{gaussian,orca}``. Project settings come from the chain YAML alias for that program (``combined.yaml`` → ``gaussian:
+gaussian_project2``). Functional, basis, and solvent are **not** re-declared on the chain group; they come from that
+program project, the same as pipeline children.
+
+.. code:: bash
+
+   # Submit (program required; theory/solvent from that program's YAML alias)
+   chemsmart run/sub chain -p combined -f mol.xyz -c 0 -m 1 \
+     pka --program gaussian [pka options] [submit]
+   chemsmart run/sub chain -p combined -f mol.xyz -c 0 -m 1 \
+     fukui --program orca [fukui options]
+   chemsmart run/sub chain -p combined -f ox.xyz -c 1 -m 1 \
+     redox --program gaussian [redox options]
+   chemsmart run/sub chain -p combined -f ts.xyz -c 0 -m 1 \
+     reaction --program gaussian [reaction options] [submit]
+
+Analyze is backend-independent. It does not need chain ``-p``, ``-f``, or ``--program``:
+
+.. code:: bash
+
+   chemsmart run chain pka analyze [pka analyze options]
+   chemsmart run chain fukui analyze [fukui analyze options]
+   chemsmart run chain redox analyze [redox analyze options]
+
+Reaction is **submit/batch only**. There is no ``chain reaction analyze`` and no ``chemsmart run reaction analyze``.
+After reaction jobs finish, use :doc:`thermochemistry-analysis` on the child outputs.
+
+Program-nested submit and top-level analyze remain available:
+
+-  ``chemsmart run/sub gaussian|orca … pka|fukui|redox|reaction``
+-  ``chemsmart run pka analyze``, ``chemsmart run fukui``, and ``chemsmart run redox analyze``
+
+See :doc:`pka-calculations`, :ref:`fukui-jobs`, :doc:`redox-calculations`, and :doc:`reaction` for chemistry, options,
+and analysis details.
 
 ********************
  Running a Pipeline
@@ -128,12 +180,13 @@ its job type differs from the parent.
  Program CLI
 *************
 
-``chemsmart sub chain --help`` lists ``custom``. pKa, Fukui, reaction, and other single-program jobs stay on the program
-CLI and use that program's own ``-p`` project YAML:
+``chemsmart sub chain --help`` lists ``custom``, ``pka``, ``fukui``, ``redox``, and ``reaction``. Pipeline jobs such as
+``opt`` remain ``-s`` steps, not nested program groups:
 
 .. code:: bash
 
    chemsmart sub chain -p combined -f mol.xyz -s gaussian:opt custom
+   chemsmart sub chain -p combined -f mol.xyz -c 0 -m 1 pka --program gaussian submit
    chemsmart sub gaussian -p gaussian_project2 -f mol.xyz -c 0 -m 1 pka submit
    chemsmart sub gaussian -p gaussian_project2 -f mol.xyz -c 0 -m 1 -o maxstep=8,maxsize=12 opt
 
@@ -143,5 +196,5 @@ CLI and use that program's own ``-p`` project YAML:
  CLI Reference
 ***************
 
-See :doc:`chain-cli-options` for chain-specific options. Program subcommands accept the same options as documented in
-their respective CLI pages.
+See :doc:`chain-cli-options` for chain-specific options, including ``--program`` and when ``-p`` / ``-f`` are required.
+Program subcommands accept the same options as documented in their respective CLI pages.

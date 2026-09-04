@@ -177,11 +177,29 @@
    :undoc-members:
    :show-inheritance:
 
+***********************************
+ chemsmart.cli.gaussian.pka module
+***********************************
+
+.. automodule:: chemsmart.cli.gaussian.pka
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 ****************************************
  chemsmart.cli.gaussian.reaction module
 ****************************************
 
 .. automodule:: chemsmart.cli.gaussian.reaction
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+*************************************
+ chemsmart.cli.gaussian.redox module
+*************************************
+
+.. automodule:: chemsmart.cli.gaussian.redox
    :members:
    :undoc-members:
    :show-inheritance:

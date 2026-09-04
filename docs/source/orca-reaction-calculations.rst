@@ -10,8 +10,8 @@ experience. Path search uses project NEB-TS instead of QST.
 .. note::
 
    Output-file analysis is not part of ``orca reaction``. After calculations finish, use ``chemsmart run
-   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
-   analyze`` command is planned as a follow-up.
+   thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. There is no ``chemsmart run reaction
+   analyze`` and no ``chain reaction analyze``.
 
 .. contents:: Table of Contents
    :local:
@@ -37,6 +37,13 @@ Where:
 
 This runs OptTS + freq (``ts_settings()``) and a solvent single-point (``sp_settings()``). Hessian/ScanTS flags from
 ``orca ts`` are not re-exposed; TS children use project ``ts_settings()``.
+
+Chain submit uses the ORCA alias from the chain YAML:
+
+.. code:: bash
+
+   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program orca
 
 **Case 2 — reactant + product (NEB-TS)**
 

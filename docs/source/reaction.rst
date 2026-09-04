@@ -4,22 +4,24 @@
  Reaction Workflow
 ###################
 
-CHEMSMART provides a program-first reaction chain nested under Gaussian and ORCA, the same way pKa and Fukui already
-are:
+CHEMSMART provides a program-first reaction chain nested under Gaussian and ORCA, and the same workflow as a ``chain``
+subcommand with ``--program``:
 
 .. code:: bash
 
    chemsmart sub gaussian [GAUSSIAN_OPTIONS] reaction [REACTION_OPTIONS]
    chemsmart sub orca     [ORCA_OPTIONS]     reaction [REACTION_OPTIONS]
+   chemsmart sub chain -p combined [CHAIN_OPTIONS] reaction --program {gaussian,orca} \
+       [REACTION_OPTIONS]
 
 The chain locates a transition state from a guess **or** from reactant + product (Gaussian QST2/QST3 or ORCA NEB-TS),
 then runs TS opt+freq, optional reactant/product opt+freq, and dual-level solvent single-points.
 
 .. note::
 
-   Output analysis is **not** part of this command. There is no ``chemsmart run reaction analyze`` yet. After jobs
-   finish, use :doc:`thermochemistry-analysis` on the individual opt/SP outputs. A dedicated reaction analysis command
-   is planned as a follow-up.
+   Output analysis is **not** part of this command. There is no ``chemsmart run reaction analyze`` and no ``chemsmart
+   run chain reaction analyze``. After jobs finish, use :doc:`thermochemistry-analysis` on the individual opt/SP
+   outputs. A dedicated reaction analysis command is planned as a follow-up.
 
 .. toctree::
    :maxdepth: 2
@@ -40,9 +42,16 @@ then runs TS opt+freq, optional reactant/product opt+freq, and dual-level solven
 
 -  ``chemsmart run/sub gaussian ... reaction [submit|batch]`` — Gaussian QST (when locating a TS) then R/TS/P opt and
    SP.
+
 -  ``chemsmart run/sub orca ... reaction [submit|batch]`` — ORCA NEB-TS (when locating a TS) then R/TS/P opt and SP.
+
+-  ``chemsmart run/sub chain -p combined ... reaction --program {gaussian,orca} [submit|batch]`` — same jobs, with
+   theory and solvent from the chain YAML alias. ``--program gaussian`` builds ``GaussianReactionJob`` (QST);
+   ``--program orca`` builds ``ORCAReactionJob`` (NEB). See :ref:`chain-workflow-subcommands`.
+
 -  Use ``chemsmart run`` for local preparation and execution; use ``chemsmart sub`` on HPC clusters to generate
    scheduler scripts.
+
 -  When ``reaction`` is invoked without an explicit subcommand, a submission table triggers ``batch``; otherwise
    ``submit`` runs.
 
@@ -88,6 +97,12 @@ CLI dispatch
    # Case 2 ORCA NEB then OptTS
    chemsmart sub orca -p proj -f reactant.xyz -c 0 -m 1 reaction --product product.xyz
    chemsmart sub orca -p proj -f reactant.xyz reaction --product product.xyz --ts-guess ts.xyz
+
+   # Chain submit
+   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program gaussian
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program orca --product product.xyz
 
 **********************************
  What Happens After the TS Exists
@@ -181,8 +196,8 @@ No ``xtb reaction`` in this version.
  Analysis (later)
 ******************
 
-``chemsmart run reaction analyze`` is not implemented. Until that lands, compute thermochemistry on the child outputs
-with :doc:`thermochemistry-analysis`.
+``chemsmart run reaction analyze`` and ``chemsmart run chain reaction analyze`` are not implemented. Until that lands,
+compute thermochemistry on the child outputs with :doc:`thermochemistry-analysis`.
 
 **********
  See Also
@@ -190,6 +205,7 @@ with :doc:`thermochemistry-analysis`.
 
 -  :ref:`gaussian-reaction-calculations`
 -  :ref:`orca-reaction-calculations`
+-  :ref:`chain-workflow-subcommands`
 -  :doc:`gaussian-transition-state`
 -  :doc:`orca-transition-state`
 -  :doc:`thermochemistry-analysis`

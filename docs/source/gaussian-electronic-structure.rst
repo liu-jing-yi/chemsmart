@@ -303,6 +303,7 @@ For a given molecule, submit population calculations on the neutral, radical cat
 .. code:: bash
 
    chemsmart sub [OPTIONS] gaussian [GAUSSIAN_OPTIONS] fukui [FUKUI_OPTIONS]
+   chemsmart sub chain -p combined [CHAIN_OPTIONS] fukui --program gaussian [FUKUI_OPTIONS]
 
 Fukui Submission Options
 ------------------------
@@ -347,14 +348,18 @@ The neutral structure comes from the parent Gaussian ``-f`` option. Neutral char
    chemsmart sub gaussian -p project -f molecule.log -c 0 -m 1 fukui \\
      -rcc 1 -rcm 2
 
+   chemsmart sub chain -p combined -f molecule.xyz -c 0 -m 1 \
+     fukui --program gaussian
+
 This writes ``<label>_n``, ``<label>_rc``, and ``<label>_ra``.
 
 Analysis (``chemsmart run fukui``)
 ==================================
 
 Post-processing is program-agnostic (Gaussian ``.log`` or ORCA ``.out``) and matches the historical ``fukui.py`` script
-options. Analysis is available only under ``chemsmart run``; use ``chemsmart sub gaussian … fukui`` or ``chemsmart sub
-orca … fukui`` to submit charge-state jobs.
+options. Analysis is available under ``chemsmart run fukui`` and ``chemsmart run chain fukui analyze`` (no ``-p``,
+``-f``, or ``--program``). Use ``chemsmart sub gaussian … fukui``, ``chemsmart sub orca … fukui``, or ``chemsmart sub
+chain … fukui --program {gaussian,orca}`` to submit charge-state jobs.
 
 .. list-table::
    :header-rows: 1
@@ -388,6 +393,8 @@ orca … fukui`` to submit charge-state jobs.
 .. code:: bash
 
    chemsmart run fukui -n <label>_n.log -c <label>_rc.log -a <label>_ra.log
+
+   chemsmart run chain fukui analyze -n <label>_n.log
 
    chemsmart run fukui -n <label>_n.log -m nbo
 
