@@ -5,6 +5,7 @@ import pytest
 
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.chain_steps import (
+    _CHAIN_PROGRAMS,
     CHAIN_NESTED_ONLY_JOBS,
     CHAIN_STEP_SPECS,
     ChainStep,
@@ -170,6 +171,9 @@ class TestParseChainStep:
 
 
 class TestChainStepRegistry:
+    def test_chain_program_registry_matches_project_settings(self):
+        assert tuple(_CHAIN_PROGRAMS) == ChainProjectSettings.PROGRAMS
+
     def test_supported_pairs_map_to_job_classes(self):
         assert CHAIN_STEP_SPECS == _EXPECTED_SPECS
         for program, jobs in _EXPECTED_SPECS.items():
