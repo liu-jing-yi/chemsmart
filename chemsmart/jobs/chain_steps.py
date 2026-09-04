@@ -426,5 +426,6 @@ def build_chain_job(
         jobrunner=jobrunner,
         skip_completed=skip_completed,
         phases=phases,
+        programs=tuple(dict.fromkeys(step.program for step, _ in prepared)),
         **kwargs,
     )

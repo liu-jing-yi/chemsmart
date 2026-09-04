@@ -127,6 +127,8 @@ orca: gas_solv
         assert result.exit_code == 0, result.output
         job = result.return_value
         assert isinstance(job, ChainJob)
+        assert job.PROGRAM == "chain"
+        assert job.programs == ("crest", "xtb", "gaussian", "orca")
         assert job.label == "crest_best"
         assert [phase.name for phase in job.phases] == [
             "00_crest_conformers",
@@ -138,6 +140,56 @@ orca: gas_solv
         assert len(children) == 1
         assert isinstance(children[0], CRESTConformerSearchJob)
         assert children[0].label == "crest_best_00_crest_conformers"
+
+    def test_sub_test_writes_chain_pipeline_script(
+        self,
+        isolated_config_dir,
+        tmp_path,
+        server_yaml_file,
+        single_molecule_xyz_file,
+        monkeypatch,
+    ):
+        monkeypatch.chdir(tmp_path)
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "crest: test\nxtb: test\ngaussian: gas_solv\n",
+        )
+        result = CliRunner().invoke(
+            sub,
+            [
+                "-s",
+                server_yaml_file,
+                "--test",
+                "chain",
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "-s",
+                "crest:conformers",
+                "-s",
+                "xtb:opt",
+                "-s",
+                "gaussian:opt",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        submit_script = tmp_path / "chemsmart_sub_crest_best.sh"
+        run_script = tmp_path / "chemsmart_run_crest_best.py"
+        assert submit_script.exists()
+        assert run_script.exists()
+        submit_text = submit_script.read_text()
+        assert submit_text.count("conda activate") == 1
+        assert "module load craype-x86-rome" in submit_text
+        assert "g16.login" in submit_text
+        assert "GAUSS_EXEDIR" in submit_text
+        assert "'chain'" in run_script.read_text()
 
     def test_pipeline_without_steps_is_usage_error(
         self, isolated_config_dir, single_molecule_xyz_file

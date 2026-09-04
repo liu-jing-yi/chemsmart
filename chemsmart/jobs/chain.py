@@ -157,6 +157,7 @@ class ChainJob(ChainMixin, Job):
     """Standalone job that runs child jobs in ordered phases."""
 
     TYPE = "chain"
+    PROGRAM = "chain"
 
     def __init__(
         self,
@@ -166,6 +167,7 @@ class ChainJob(ChainMixin, Job):
         settings=None,
         phases=None,
         skip_completed=True,
+        programs=None,
         **kwargs,
     ):
         if molecule is not None and not isinstance(molecule, Molecule):
@@ -185,6 +187,7 @@ class ChainJob(ChainMixin, Job):
 
         self.molecule = molecule.copy() if molecule is not None else None
         self.settings = settings.copy() if settings is not None else None
+        self.programs = tuple(programs) if programs else ()
 
         if label is None and self.molecule is not None:
             self.label = self.molecule.get_chemical_formula(empirical=True)
