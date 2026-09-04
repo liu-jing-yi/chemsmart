@@ -1,7 +1,9 @@
 """Chain-step registry and ChainJob builder."""
 
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 
 from chemsmart.jobs.chain import ChainJob, JobPhase
 from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
@@ -33,44 +35,54 @@ __all__ = [
     "build_chain_job",
 ]
 
-# Jobs that need extra structures or option surfaces. Run them with the
-# program CLI and that program's own ``-p`` project YAML.
-CHAIN_NESTED_ONLY_JOBS = {
-    "gaussian": (
-        "pka",
-        "reaction",
-        "qmmm",
-        "com",
-        "userjob",
-        "link",
-        "traj",
-        "dias",
-        "crest",
-        "nci",
-        "wbi",
-        "td",
-        "resp",
-        "irc",
-        "scan",
-        "modred",
-        "qrc",
-        "fukui",
-        "redox",
-    ),
-    "orca": (
-        "pka",
-        "reaction",
-        "qmmm",
-        "inp",
-        "neb",
-        "irc",
-        "scan",
-        "modred",
-        "qrc",
-        "fukui",
-        "redox",
-    ),
-}
+
+def _program_cli_group(program):
+    if program == "crest":
+        from chemsmart.cli.crest import crest
+
+        return crest
+    if program == "xtb":
+        from chemsmart.cli.xtb import xtb
+
+        return xtb
+    if program == "gaussian":
+        from chemsmart.cli.gaussian import gaussian
+
+        return gaussian
+    if program == "orca":
+        from chemsmart.cli.orca import orca
+
+        return orca
+    return None
+
+
+@lru_cache(maxsize=None)
+def _nested_only_jobs(program):
+    """Program CLI subcommands that are not pipeline steps."""
+    group = _program_cli_group(program)
+    if group is None:
+        return frozenset()
+    pipeline = set(CHAIN_STEP_SPECS.get(program, ()))
+    return frozenset(group.commands) - pipeline
+
+
+class _NestedOnlyJobs(Mapping):
+    """CLI job names minus ``CHAIN_STEP_SPECS`` for each chain program."""
+
+    def __getitem__(self, program):
+        if program not in CHAIN_PROGRAM_SETTINGS:
+            raise KeyError(program)
+        return _nested_only_jobs(program)
+
+    def __iter__(self):
+        return iter(CHAIN_PROGRAM_SETTINGS)
+
+    def __len__(self):
+        return len(CHAIN_PROGRAM_SETTINGS)
+
+
+# Jobs registered on the program CLI that are not ``-s`` pipeline steps.
+CHAIN_NESTED_ONLY_JOBS = _NestedOnlyJobs()
 
 
 @dataclass(frozen=True)
@@ -237,10 +249,9 @@ def get_chain_step_spec(program, job):
         ChainStepSpec: Job class and project-settings class for the pair.
 
     Raises:
-        ValueError: If the pair is not a pipeline step. Jobs that need
-            extra structures or option surfaces (pKa, reaction, QM/MM)
-            must be run via the program CLI with that program's own
-            ``-p`` project YAML.
+        ValueError: If the pair is not a pipeline step. Other jobs
+            registered on that program's CLI must be run via the program
+            CLI with that program's own ``-p`` project YAML.
     """
     jobs = CHAIN_STEP_SPECS.get(program)
     job_class = None if jobs is None else jobs.get(job)

@@ -177,6 +177,25 @@ class TestChainStepRegistry:
                 spec = get_chain_step_spec(program, job)
                 assert spec.job_class is job_class
 
+    def test_nested_only_jobs_are_cli_commands_minus_pipeline(self):
+        from chemsmart.cli.crest import crest
+        from chemsmart.cli.gaussian import gaussian
+        from chemsmart.cli.orca import orca
+        from chemsmart.cli.xtb import xtb
+
+        groups = {
+            "crest": crest,
+            "xtb": xtb,
+            "gaussian": gaussian,
+            "orca": orca,
+        }
+        for program, group in groups.items():
+            pipeline = set(CHAIN_STEP_SPECS[program])
+            assert set(CHAIN_NESTED_ONLY_JOBS[program]) == (
+                set(group.commands) - pipeline
+            )
+            assert pipeline.isdisjoint(CHAIN_NESTED_ONLY_JOBS[program])
+
     def test_nested_only_pka_errors(self):
         with pytest.raises(
             ValueError,
