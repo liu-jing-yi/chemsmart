@@ -574,8 +574,11 @@ class TestRedoxCLI:
         )
         assert result.exit_code == 0, result.output
         assert "--ref-ox" in result.output
+        assert "-ro" in result.output
         assert "--ref-red" in result.output
+        assert "-rr" in result.output
         assert "--red" in result.output
+        assert "-rd" in result.output
         assert "\n  analyze" not in result.output
 
     def test_orca_redox_help_is_submission_only(
@@ -602,6 +605,18 @@ class TestRedoxCLI:
         result = CliRunner().invoke(run, ["redox", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  analyze" in result.output
+
+    def test_run_redox_analyze_help_lists_short_flags(self):
+        result = CliRunner().invoke(run, ["redox", "analyze", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "-oxg" in result.output
+        assert "-rdg" in result.output
+        assert "-rog" in result.output
+        assert "-rrg" in result.output
+        assert "-oxs" in result.output
+        assert "-rds" in result.output
+        assert "-ros" in result.output
+        assert "-rrs" in result.output
 
     def test_gaussian_redox_builds_job(
         self, tmp_path, single_molecule_xyz_file
@@ -640,6 +655,91 @@ class TestRedoxCLI:
         assert job.ox_job.settings.solvent_model is None
         assert job.settings.solvent_model == "smd"
         assert job.settings.reference.name == "fc_fc+"
+
+    def test_gaussian_redox_accepts_short_reference_flags(
+        self, tmp_path, single_molecule_xyz_file
+    ):
+        from chemsmart.cli.gaussian.gaussian import gaussian
+        from chemsmart.jobs.gaussian.redox import GaussianRedoxJob
+
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        result = CliRunner().invoke(
+            gaussian,
+            [
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+                "-ro",
+                ref_ox,
+                "-rr",
+                ref_red,
+            ],
+            obj={"jobrunner": MagicMock()},
+            catch_exceptions=False,
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        job = result.return_value
+        assert isinstance(job, GaussianRedoxJob)
+        assert job.settings.ref_ox_file == ref_ox
+        assert job.settings.ref_red_file == ref_red
+
+    def test_sub_reconstructs_ref_ox_not_dest_name(
+        self, tmp_path, single_molecule_xyz_file, monkeypatch
+    ):
+        from chemsmart.settings.server import Server
+
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        captured = {}
+        fake_server = Server(name="dummy")
+        fake_server.submit = (
+            lambda job, test=False, cli_args=None, **kw: captured.update(
+                cli_args=cli_args
+            )
+        )
+        monkeypatch.setattr(
+            "chemsmart.settings.server.Server.from_servername",
+            lambda _name: fake_server,
+        )
+
+        result = CliRunner().invoke(
+            sub,
+            [
+                "--test",
+                "--server",
+                "dummy",
+                "gaussian",
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+                "--ref-ox",
+                ref_ox,
+                "--ref-red",
+                ref_red,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        cli_args = captured["cli_args"]
+        assert "--ref-ox" in cli_args
+        assert "--ref-red" in cli_args
+        assert "--ref-ox-file" not in cli_args
+        assert "--ref-red-file" not in cli_args
+        assert cli_args[cli_args.index("--ref-ox") + 1] == ref_ox
+        assert cli_args[cli_args.index("--ref-red") + 1] == ref_red
 
     def test_orca_redox_builds_job(self, tmp_path, single_molecule_xyz_file):
         from chemsmart.cli.orca.orca import orca

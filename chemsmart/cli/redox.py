@@ -402,6 +402,7 @@ def click_redox_submit_structure_options(f):
     """Target/reference geometry and charge options for redox submit."""
 
     @click.option(
+        "-rrm",
         "--ref-red-multiplicity",
         type=int,
         default=None,
@@ -411,6 +412,7 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rrc",
         "--ref-red-charge",
         type=int,
         default=None,
@@ -420,6 +422,7 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rom",
         "--ref-ox-multiplicity",
         type=int,
         default=None,
@@ -429,6 +432,7 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-roc",
         "--ref-ox-charge",
         type=int,
         default=None,
@@ -438,8 +442,8 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rr",
         "--ref-red",
-        "ref_red_file",
         type=click.Path(exists=True, dir_okay=False),
         default=None,
         help=(
@@ -448,8 +452,8 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-ro",
         "--ref-ox",
-        "ref_ox_file",
         type=click.Path(exists=True, dir_okay=False),
         default=None,
         help=(
@@ -458,6 +462,7 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rdm",
         "--red-multiplicity",
         type=int,
         default=None,
@@ -467,6 +472,7 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rdc",
         "--red-charge",
         type=int,
         default=None,
@@ -476,8 +482,8 @@ def click_redox_submit_structure_options(f):
         ),
     )
     @click.option(
+        "-rd",
         "--red",
-        "red_file",
         type=click.Path(exists=True, dir_okay=False),
         default=None,
         help=(
@@ -502,6 +508,7 @@ def click_redox_shared_options(f):
 def click_redox_analyze_options(f):
     """Output-file options for exchange redox analysis."""
     f = click.option(
+        "-rrs",
         "--ref-red-solv",
         "ref_red_solv_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -509,6 +516,7 @@ def click_redox_analyze_options(f):
         help="Solution-phase SP output for the reduced reference.",
     )(f)
     f = click.option(
+        "-ros",
         "--ref-ox-solv",
         "ref_ox_solv_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -516,6 +524,7 @@ def click_redox_analyze_options(f):
         help="Solution-phase SP output for the oxidized reference.",
     )(f)
     f = click.option(
+        "-rds",
         "--red-solv",
         "red_solv_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -523,6 +532,7 @@ def click_redox_analyze_options(f):
         help="Solution-phase SP output for the reduced target.",
     )(f)
     f = click.option(
+        "-oxs",
         "--ox-solv",
         "ox_solv_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -530,6 +540,7 @@ def click_redox_analyze_options(f):
         help="Solution-phase SP output for the oxidized target.",
     )(f)
     f = click.option(
+        "-rrg",
         "--ref-red-gas",
         "ref_red_gas_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -537,6 +548,7 @@ def click_redox_analyze_options(f):
         help="Gas-phase opt+freq output for the reduced reference.",
     )(f)
     f = click.option(
+        "-rog",
         "--ref-ox-gas",
         "ref_ox_gas_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -544,6 +556,7 @@ def click_redox_analyze_options(f):
         help="Gas-phase opt+freq output for the oxidized reference.",
     )(f)
     f = click.option(
+        "-rdg",
         "--red-gas",
         "red_gas_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -551,6 +564,7 @@ def click_redox_analyze_options(f):
         help="Gas-phase opt+freq output for the reduced target.",
     )(f)
     f = click.option(
+        "-oxg",
         "--ox-gas",
         "ox_gas_file",
         type=click.Path(exists=True, dir_okay=False),
@@ -570,11 +584,11 @@ def store_redox_shared(ctx, kwargs):
     ctx.obj["redox_shared"] = dict(
         reference=kwargs.get("reference") or "fc_fc+",
         n_electrons=kwargs.get("n_electrons"),
-        red_file=kwargs.get("red_file"),
+        red_file=kwargs.get("red"),
         red_charge=kwargs.get("red_charge"),
         red_multiplicity=kwargs.get("red_multiplicity"),
-        ref_ox_file=kwargs.get("ref_ox_file"),
-        ref_red_file=kwargs.get("ref_red_file"),
+        ref_ox_file=kwargs.get("ref_ox"),
+        ref_red_file=kwargs.get("ref_red"),
         ref_ox_charge=kwargs.get("ref_ox_charge"),
         ref_ox_multiplicity=kwargs.get("ref_ox_multiplicity"),
         ref_red_charge=kwargs.get("ref_red_charge"),

@@ -209,15 +209,15 @@ Submit Options
       -  Registry name of the reference couple (default ``fc_fc+``).
    -  -  ``-n, --n-electrons``
       -  Electrons transferred. Defaults to the reference couple; must match it when given.
-   -  -  ``--red``
+   -  -  ``-rd, --red``
       -  Reduced target geometry. Defaults to the oxidized structure from parent ``-f`` with charge ``ox − n``.
-   -  -  ``--red-charge`` / ``--red-multiplicity``
+   -  -  ``-rdc, --red-charge`` / ``-rdm, --red-multiplicity``
       -  Charge and multiplicity of the reduced target.
-   -  -  ``--ref-ox`` / ``--ref-red``
+   -  -  ``-ro, --ref-ox`` / ``-rr, --ref-red``
       -  Oxidized and reduced reference geometries. Required unless the registered couple provides them.
-   -  -  ``--ref-ox-charge`` / ``--ref-ox-multiplicity``
+   -  -  ``-roc, --ref-ox-charge`` / ``-rom, --ref-ox-multiplicity``
       -  Charge and multiplicity of the oxidized reference.
-   -  -  ``--ref-red-charge`` / ``--ref-red-multiplicity``
+   -  -  ``-rrc, --ref-red-charge`` / ``-rrm, --ref-red-multiplicity``
       -  Charge and multiplicity of the reduced reference.
 
 Analyze Options
@@ -229,13 +229,13 @@ Analyze Options
 
    -  -  Option
       -  Description
-   -  -  ``--ox-gas`` / ``--red-gas``
+   -  -  ``-oxg, --ox-gas`` / ``-rdg, --red-gas``
       -  Gas-phase opt+freq outputs for the target couple.
-   -  -  ``--ref-ox-gas`` / ``--ref-red-gas``
+   -  -  ``-rog, --ref-ox-gas`` / ``-rrg, --ref-red-gas``
       -  Gas-phase opt+freq outputs for the reference couple.
-   -  -  ``--ox-solv`` / ``--red-solv``
+   -  -  ``-oxs, --ox-solv`` / ``-rds, --red-solv``
       -  Solution-phase SP outputs for the target couple.
-   -  -  ``--ref-ox-solv`` / ``--ref-red-solv``
+   -  -  ``-ros, --ref-ox-solv`` / ``-rrs, --ref-red-solv``
       -  Solution-phase SP outputs for the reference couple.
 
 Thermochemistry options (``-T``, concentration, pressure, entropy/enthalpy cutoffs) match pKa analysis. See
