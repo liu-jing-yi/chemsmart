@@ -239,10 +239,22 @@ class TestMoleculeFromCompletedJob:
         job = DummyHandoffJob("opt", mol, complete=False)
         assert molecule_from_completed_job(job) is None
 
+    def test_returns_fallback_when_incomplete(self):
+        mol = _h2()
+        fallback = _h2(z=0.80)
+        job = DummyHandoffJob("opt", mol, complete=False)
+        assert molecule_from_completed_job(job, fallback=fallback) is fallback
+
     def test_opt_uses_optimized_structure(self):
         mol = _h2(z=0.90)
         job = DummyHandoffJob("opt", mol, complete=True)
         assert molecule_from_completed_job(job) is mol
+
+    def test_opt_ignores_fallback_when_complete(self):
+        mol = _h2(z=0.90)
+        fallback = _h2(z=0.80)
+        job = DummyHandoffJob("opt", mol, complete=True)
+        assert molecule_from_completed_job(job, fallback=fallback) is mol
 
     def test_sp_falls_back_to_output_molecule(self):
         input_mol = _h2(z=0.74)

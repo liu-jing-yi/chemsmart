@@ -230,23 +230,28 @@ def get_chain_step_spec(program, job):
     )
 
 
-def molecule_from_completed_job(job):
+def molecule_from_completed_job(job, fallback=None):
     """Geometry to pass from a completed child to the next chain step.
 
     CREST uses the best conformer. Other jobs use
     ``optimized_structure()``, falling back to the output molecule when
     the child did not optimize (e.g. single-point).
+
+    If the child is incomplete or no geometry can be read, return
+    ``fallback``.
     """
     if not job.is_complete():
-        return None
+        return fallback
     if isinstance(job, CRESTJob):
         output = job._output()
-        return None if output is None else output.best_conformer
+        mol = None if output is None else output.best_conformer
+        return fallback if mol is None else mol
     mol = job.optimized_structure()
     if mol is not None:
         return mol
     output = job._output()
-    return None if output is None else output.molecule
+    mol = None if output is None else output.molecule
+    return fallback if mol is None else mol
 
 
 def _first_set(*values):

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from click.testing import CliRunner
 
-from chemsmart.cli.redox import (
+from chemsmart.analysis.redox import (
     RedoxReference,
     compute_redox_potential,
     format_redox_summary,
@@ -44,10 +44,12 @@ def _h2_molecule(charge=1, multiplicity=2):
 
 @pytest.fixture
 def isolated_redox_registry(monkeypatch):
-    from chemsmart.cli import redox as redox_cli
+    from chemsmart.analysis import redox as redox_analysis
 
-    monkeypatch.setattr(redox_cli, "_REGISTRY", dict(redox_cli._REGISTRY))
-    return redox_cli._REGISTRY
+    monkeypatch.setattr(
+        redox_analysis, "_REGISTRY", dict(redox_analysis._REGISTRY)
+    )
+    return redox_analysis._REGISTRY
 
 
 class TestRedoxReferenceRegistry:
@@ -103,6 +105,19 @@ class TestRedoxReferenceRegistry:
                 couple_label="X/X+",
             )
 
+    def test_cli_reexports_registry_api(self):
+        from chemsmart.analysis.redox import (
+            RedoxReference as AnalysisRedoxReference,
+        )
+        from chemsmart.analysis.redox import (
+            get_redox_reference as analysis_get,
+        )
+        from chemsmart.cli.redox import RedoxReference as CliRedoxReference
+        from chemsmart.cli.redox import get_redox_reference as cli_get
+
+        assert CliRedoxReference is AnalysisRedoxReference
+        assert cli_get is analysis_get
+
 
 class TestReducedChargeAndMultiplicity:
     def test_odd_n_singlet_becomes_doublet(self):
@@ -123,9 +138,11 @@ class TestComputeRedoxPotential:
         def fake_solv(filepath):
             return solv[Path(filepath).name]
 
-        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy", fake_solv
+            "chemsmart.analysis.redox.gas_phase_data", fake_gas
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.solvent_scf_energy", fake_solv
         )
 
     def _result_for_n(self, monkeypatch, tmp_path, n_electrons, e_ref):
@@ -911,11 +928,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(
@@ -944,11 +961,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(
@@ -977,11 +994,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(
@@ -1027,9 +1044,11 @@ class TestRedoxCLI:
         def fake_solv(filepath):
             return solv[Path(filepath).name]
 
-        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy", fake_solv
+            "chemsmart.analysis.redox.gas_phase_data", fake_gas
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.solvent_scf_energy", fake_solv
         )
         result = CliRunner().invoke(run, ["redox", *_analyze_cli_args(files)])
         assert result.exit_code == 0, result.output
@@ -1060,9 +1079,11 @@ class TestRedoxCLI:
             captured.update(kwargs)
             return 0.0, 0.0
 
-        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy", lambda filepath: 0.0
+            "chemsmart.analysis.redox.gas_phase_data", fake_gas
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.solvent_scf_energy", lambda filepath: 0.0
         )
         result = CliRunner().invoke(
             run,
@@ -1104,11 +1125,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         output_path = tmp_path / "subdir" / "redox.dat"
@@ -1144,11 +1165,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(
@@ -1177,7 +1198,7 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: {
                 "ox_gas.log": (1.00, 0.01),
                 "red_gas.log": (1.10, 0.02),
@@ -1186,7 +1207,7 @@ class TestRedoxCLI:
             }[Path(filepath).name],
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: {
                 "ox_solv.log": 0.90,
                 "red_solv.log": 1.00,
@@ -1229,11 +1250,11 @@ class TestRedoxCLI:
             )
         }
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
+            "chemsmart.analysis.redox.gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
         )
         monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            "chemsmart.analysis.redox.solvent_scf_energy",
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(

@@ -138,7 +138,7 @@ job class:
 
 .. code:: python
 
-   from chemsmart.cli.redox import (
+   from chemsmart.analysis.redox import (
        RedoxReference,
        get_redox_reference,
        list_redox_references,

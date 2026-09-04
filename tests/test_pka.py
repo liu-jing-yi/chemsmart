@@ -113,7 +113,7 @@ def _install_fake_thermochemistry(monkeypatch, constructed=None):
             super().__init__(filename, **kwargs)
 
     monkeypatch.setattr(
-        "chemsmart.cli.pka.Thermochemistry",
+        "chemsmart.analysis.thermochemistry.Thermochemistry",
         _TrackingFakeThermochemistry,
     )
     return constructed
@@ -408,11 +408,11 @@ class TestPKa:
                 pass
 
         monkeypatch.setattr(
-            "chemsmart.cli.pka.Thermochemistry",
+            "chemsmart.analysis.thermochemistry.Thermochemistry",
             _MissingScfThermochemistry,
         )
 
-        from chemsmart.cli.pka import pka_solvent_scf_energy
+        from chemsmart.analysis.pka import pka_solvent_scf_energy
 
         with pytest.raises(ValueError, match="Could not extract SCF energy"):
             pka_solvent_scf_energy(str(tmp_path / "missing.out"))
@@ -426,17 +426,26 @@ class TestPKa:
                 pass
 
         monkeypatch.setattr(
-            "chemsmart.cli.pka.Thermochemistry",
+            "chemsmart.analysis.thermochemistry.Thermochemistry",
             _MissingQhThermochemistry,
         )
 
-        from chemsmart.cli.pka import pka_gas_phase_data
+        from chemsmart.analysis.pka import pka_gas_phase_data
 
         with pytest.raises(
             ValueError,
             match="Could not extract quasi-harmonic Gibbs free energy",
         ):
             pka_gas_phase_data(str(tmp_path / "gas.out"))
+
+    def test_cli_reexports_compute_helpers(self):
+        from chemsmart.analysis.pka import compute_pka as analysis_compute_pka
+        from chemsmart.analysis.pka import pka_gas_phase_data as analysis_gas
+        from chemsmart.cli.pka import compute_pka as cli_compute_pka
+        from chemsmart.cli.pka import pka_gas_phase_data as cli_gas
+
+        assert cli_compute_pka is analysis_compute_pka
+        assert cli_gas is analysis_gas
 
     def test_run_pka_unparseable_output_raises(self, tmp_path):
         """analyze no longer pre-detects program type; parsing fails on bad files."""

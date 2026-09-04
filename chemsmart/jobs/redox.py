@@ -60,7 +60,7 @@ class RedoxJobSettingsMixin:
         energy_units="hartree",
         **kwargs,
     ):
-        from chemsmart.cli.redox import resolve_redox_reference
+        from chemsmart.analysis.redox import resolve_redox_reference
 
         super().__init__(**kwargs)
         self.reference = resolve_redox_reference(reference)
@@ -280,12 +280,6 @@ class RedoxChainMixin(ChainMixin):
         settings.freq = False
         return self._apply_charge_mult(settings, charge, multiplicity)
 
-    def _output_molecule(self, job, fallback):
-        output = job._output()
-        if output is not None and output.normal_termination:
-            return output.molecule
-        return fallback
-
     def _prepare_opt_jobs(self):
         ox_mol = self.settings.ox_molecule(self.molecule)
         red_mol = self.settings.red_molecule(self.molecule)
@@ -404,7 +398,7 @@ class RedoxChainMixin(ChainMixin):
 
     def compute_redox_potential(self):
         """Compute the exchange redox potential from completed child outputs."""
-        from chemsmart.cli.redox import compute_redox_potential
+        from chemsmart.analysis.redox import compute_redox_potential
 
         return compute_redox_potential(
             reference=self.settings.reference,
@@ -419,6 +413,6 @@ class RedoxChainMixin(ChainMixin):
 
     def format_redox_summary(self):
         """Return a formatted summary of the exchange redox calculation."""
-        from chemsmart.cli.redox import format_redox_summary
+        from chemsmart.analysis.redox import format_redox_summary
 
         return format_redox_summary(self.compute_redox_potential())

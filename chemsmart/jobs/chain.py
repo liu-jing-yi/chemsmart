@@ -118,6 +118,11 @@ class ChainMixin:
                 return phase
         return None
 
+    def _output_molecule(self, job, fallback):
+        from chemsmart.jobs.chain_steps import molecule_from_completed_job
+
+        return molecule_from_completed_job(job, fallback=fallback)
+
     def run_phase(self, name: str) -> None:
         """Run a single named phase without advancing the rest of the chain."""
         phase = self.phase_by_name(name)

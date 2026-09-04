@@ -230,23 +230,15 @@ class GaussianpKaJob(ChainMixin, GaussianJob):
             self._create_ref_sp_jobs()
         return self.ref_sp_jobs
 
-    @staticmethod
-    def _optimized_molecule_from_job(job, fallback_molecule):
-        """Return optimized geometry for a finished opt job, or a fallback."""
-        out = job._output()
-        if out is not None and out.normal_termination:
-            return out.molecule
-        return fallback_molecule
-
     def _create_sp_jobs(self):
         """Create solution phase SP jobs from optimized geometries."""
         _, conj_fallback_mol = self.settings.conjugate_pair_molecules(
             self.molecule
         )
-        prot_opt_mol = self._optimized_molecule_from_job(
+        prot_opt_mol = self._output_molecule(
             self.protonated_job, self.molecule
         )
-        conj_opt_mol = self._optimized_molecule_from_job(
+        conj_opt_mol = self._output_molecule(
             self.conjugate_base_job, conj_fallback_mol
         )
 
@@ -281,10 +273,10 @@ class GaussianpKaJob(ChainMixin, GaussianJob):
             ref_acid_fallback_mol, ref_conjugate_base_fallback_mol = (
                 reference_pair
             )
-        ref_acid_opt_mol = self._optimized_molecule_from_job(
+        ref_acid_opt_mol = self._output_molecule(
             self.ref_acid_job, ref_acid_fallback_mol
         )
-        ref_conjugate_base_opt_mol = self._optimized_molecule_from_job(
+        ref_conjugate_base_opt_mol = self._output_molecule(
             self.ref_conjugate_base_job, ref_conjugate_base_fallback_mol
         )
         ref_acid_sp_settings, ref_conjugate_base_sp_settings = (

@@ -176,12 +176,6 @@ class ReactionChainMixin(ChainMixin):
     def _ts_settings_for(self, molecule):
         return self._child_settings(self.ts_settings, "ts", True, molecule)
 
-    def _output_molecule(self, job, fallback):
-        output = job._output()
-        if output is not None and output.normal_termination:
-            return output.molecule
-        return fallback
-
     def _optimized_endpoint_molecule(self, opt_job, fallback):
         if opt_job is None:
             return fallback
