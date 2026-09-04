@@ -1,5 +1,6 @@
 """Chain-step registry and ChainJob builder."""
 
+import shlex
 from dataclasses import dataclass
 
 from chemsmart.jobs.chain import ChainJob, JobPhase
@@ -32,8 +33,8 @@ __all__ = [
     "build_chain_job",
 ]
 
-# CLI jobs that need extra structures or option surfaces. Run them as
-# nested program commands, e.g. ``chain -p NAME gaussian pka ...``.
+# Jobs that need extra structures or option surfaces. Run them with the
+# program CLI and that program's own ``-p`` project YAML.
 CHAIN_NESTED_ONLY_JOBS = {
     "gaussian": (
         "pka",
@@ -72,10 +73,13 @@ CHAIN_NESTED_ONLY_JOBS = {
 
 @dataclass(frozen=True)
 class ChainStep:
-    """One pipeline step: program name and job type."""
+    """One pipeline step: program name, job type, and optional CLI extras."""
 
     program: str
     job: str
+    extra_option_tokens: tuple = ()
+    extra_settings: tuple = ()
+    extra_keywords: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -136,13 +140,16 @@ _JOB_SETTINGS = {
 
 
 def parse_chain_step(token):
-    """Parse a CLI ``PROGRAM:JOB`` token into a :class:`ChainStep`.
+    """Parse a CLI step token into a :class:`ChainStep`.
+
+    Accepts ``PROGRAM:JOB`` or ``PROGRAM: [OPTIONS] JOB``, e.g.
+    ``gaussian:opt`` and ``gaussian: -o maxstep=8,maxsize=12 opt``.
 
     Args:
         token (str): One ``-s/--steps`` value.
 
     Returns:
-        ChainStep: Parsed program and job names.
+        ChainStep: Parsed program, job, and extra option tokens.
 
     Raises:
         ValueError: If the token is missing ``:``, has empty parts, or is
@@ -151,16 +158,60 @@ def parse_chain_step(token):
     token = token.strip()
     if ":" not in token:
         raise ValueError(
-            f"Invalid chain step {token!r}; expected PROGRAM:JOB."
+            f"Invalid chain step {token!r}; expected PROGRAM:JOB "
+            "or PROGRAM: [OPTIONS] JOB."
         )
-    program, job = token.split(":", 1)
-    program = program.strip()
-    job = job.strip()
-    if not program or not job:
+    program, rest = token.split(":", 1)
+    program = program.strip().lower()
+    rest = rest.strip()
+    if not program or not rest:
         raise ValueError(
-            f"Invalid chain step {token!r}; expected PROGRAM:JOB."
+            f"Invalid chain step {token!r}; expected PROGRAM:JOB "
+            "or PROGRAM: [OPTIONS] JOB."
         )
-    return ChainStep(program=program, job=job)
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        raise ValueError(f"Invalid chain step {token!r}: {exc}") from exc
+    if not tokens:
+        raise ValueError(
+            f"Invalid chain step {token!r}; expected PROGRAM:JOB "
+            "or PROGRAM: [OPTIONS] JOB."
+        )
+
+    known_jobs = set(CHAIN_STEP_SPECS.get(program, ()))
+    nested_jobs = set(CHAIN_NESTED_ONLY_JOBS.get(program, ()))
+    job_index = None
+    job = None
+    for index, part in enumerate(tokens):
+        name = part.lower()
+        if name in known_jobs or name in nested_jobs:
+            job_index = index
+            job = name
+            break
+    if job is None:
+        if len(tokens) == 1 and not tokens[0].startswith("-"):
+            job = tokens[0].lower()
+            extra_option_tokens = ()
+        else:
+            raise ValueError(
+                f"Invalid chain step {token!r}; expected PROGRAM:JOB "
+                "or PROGRAM: [OPTIONS] JOB."
+            )
+    else:
+        extra_option_tokens = tuple(tokens[:job_index])
+        suffix = tokens[job_index + 1 :]
+        if suffix:
+            raise ValueError(
+                f"Unsupported options after {job!r} in chain step {token!r}; "
+                f"put program options before the job name, e.g. "
+                '-s "gaussian: -o maxstep=8,maxsize=12 opt".'
+            )
+    return ChainStep(
+        program=program,
+        job=job,
+        extra_option_tokens=extra_option_tokens,
+    )
 
 
 def _settings_for_chain_step(program, job, project_settings):
@@ -186,7 +237,8 @@ def get_chain_step_spec(program, job):
     Raises:
         ValueError: If the pair is not a pipeline step. Jobs that need
             extra structures or option surfaces (pKa, reaction, QM/MM)
-            must be run as nested program commands.
+            must be run via the program CLI with that program's own
+            ``-p`` project YAML.
     """
     jobs = CHAIN_STEP_SPECS.get(program)
     job_class = None if jobs is None else jobs.get(job)
@@ -199,8 +251,7 @@ def get_chain_step_spec(program, job):
     if job in nested_jobs:
         raise ValueError(
             f"Chain pipeline steps do not support {program} {job!r}; "
-            f"run it as a nested command "
-            f"(chain -p NAME {program} {job} ...)."
+            f"run it as chemsmart sub {program} -p <project> {job} ..."
         )
     allowed = ", ".join(jobs or ())
     if allowed:
@@ -331,8 +382,15 @@ def build_chain_job(
                 step.job,
                 project_settings_by_program[step.program],
             )
-            if overrides:
-                settings = settings.merge(overrides, keywords=tuple(overrides))
+            merge_values = dict(overrides)
+            merge_keywords = list(overrides)
+            if step.extra_settings:
+                merge_values.update(dict(step.extra_settings))
+                merge_keywords.extend(step.extra_keywords)
+            if merge_values:
+                settings = settings.merge(
+                    merge_values, keywords=tuple(merge_keywords)
+                )
             child_label = f"{label}_{index:02d}_{step.program}_{step.job}"
             return [
                 spec.job_class(

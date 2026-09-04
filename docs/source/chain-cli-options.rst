@@ -3,25 +3,17 @@
 ###################
 
 This page documents the CLI options for the ``chain`` command group. Use ``chemsmart sub chain --help`` for the complete
-list, including nested ``gaussian``, ``orca``, ``xtb``, and ``crest`` subcommands.
+list, including the ``custom`` subcommand.
 
 *************************
  Basic Command Structure
 *************************
 
-**CLI pipeline** (no nested subcommand):
+**Custom pipeline** (no nested subcommand, or ``custom``):
 
 .. code:: bash
 
-   chemsmart sub [OPTIONS] chain [CHAIN_OPTIONS] -f FILE -s PROGRAM:JOB [-s ...]
-
-**Nested program slice**:
-
-.. code:: bash
-
-   chemsmart sub [OPTIONS] chain [CHAIN_OPTIONS] <PROGRAM> [PROGRAM_OPTIONS] <SUBCMD> [SUBCMD_OPTIONS]
-
-where ``<PROGRAM>`` is one of ``gaussian``, ``orca``, ``xtb``, or ``crest``.
+   chemsmart sub [OPTIONS] chain [CHAIN_OPTIONS] -f FILE -s STEP [-s ...] [custom]
 
 ***************
  Chain Options
@@ -44,12 +36,15 @@ Project and File Options
 
    -  -  ``-f, --filename``
       -  string
-      -  Input structure file (required for the CLI pipeline; nested programs also accept ``-f``)
+      -  Input structure file (required for the CLI pipeline)
 
    -  -  ``-s, --steps``
+
       -  string (repeatable)
-      -  One pipeline step as ``PROGRAM:JOB`` (e.g. ``gaussian:opt``). Required for the CLI pipeline; repeat for each
-         phase. Not the same as ``run``/``sub`` ``-s/--server``.
+
+      -  One pipeline step as ``PROGRAM:JOB`` or quoted ``PROGRAM: [OPTIONS] JOB`` (e.g. ``gaussian:opt`` or
+         ``"gaussian: -o maxstep=8,maxsize=12 opt"``). Required for the CLI pipeline; repeat for each phase. Not the
+         same as ``run``/``sub`` ``-s/--server``.
 
    -  -  ``-l, --label``
       -  string
@@ -74,13 +69,8 @@ Project and File Options
 .. note::
 
    -  ``-p`` uses the chain project name without the ``.yaml`` extension.
-
-   -  For the CLI pipeline, ``-f`` and at least one ``-s/--steps`` are required. An aliases-only chain file without a
-      nested program command is valid only when you invoke a nested ``gaussian``, ``orca``, ``xtb``, or ``crest``
-      subcommand.
-
-   -  Combining ``-s/--steps`` with a nested program command is a usage error.
-
+   -  For the CLI pipeline, ``-f`` and at least one ``-s/--steps`` are required. The ``custom`` subcommand runs the same
+      pipeline.
    -  ``-l`` and ``-a`` are mutually exclusive.
 
 Execution Control
@@ -91,17 +81,6 @@ The chain group accepts the standard job options documented in :doc:`cli-overvie
 -  ``-S/-R, --skip-completed/--no-skip-completed``
 -  ``--fake/--no-fake``
 -  ``--scratch/--no-scratch``
-
-Nested Program Options
-======================
-
-When a nested ``gaussian``, ``orca``, ``xtb``, or ``crest`` command is used, that program's options apply — including
-its own ``-p`` override, ``-f``, charge/multiplicity, and subcommand-specific flags. See:
-
--  :doc:`gaussian-cli-options`
--  :doc:`orca-cli-options`
--  :doc:`xtb-cli-options`
--  :doc:`crest-cli-options`
 
 **********
  Examples
@@ -114,23 +93,27 @@ Full pipeline on HPC:
    chemsmart sub -s mycluster chain -p combined -f ligand.xyz -c 0 -m 1 \
      -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
 
-Gaussian pKa slice using the chain file's Gaussian alias:
+Quoted step with Gaussian opt extras:
 
 .. code:: bash
 
-   chemsmart sub chain -p combined gaussian -f ligand.xyz -c 0 -m 1 pka submit
+   chemsmart run chain -p combined -f mol.xyz -c 0 -m 1 \
+     -s "gaussian: -o maxstep=8,maxsize=12 opt" \
+     -s gaussian:sp
 
-Chain-level structure and charge/multiplicity forwarded to a nested Gaussian opt:
-
-.. code:: bash
-
-   chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 gaussian opt
-
-Override the Gaussian project while keeping other chain aliases for other nested commands:
+Same pipeline via the ``custom`` subcommand:
 
 .. code:: bash
 
-   chemsmart sub chain -p combined gaussian -p gas_solv -f ligand.xyz opt
+   chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 \
+     -s gaussian:opt custom
+
+Ordinary Gaussian opt or pKa uses that program's own project YAML:
+
+.. code:: bash
+
+   chemsmart sub gaussian -p gaussian_project2 -f ligand.xyz -c 0 -m 1 -o maxstep=8,maxsize=12 opt
+   chemsmart sub gaussian -p gaussian_project2 -f ligand.xyz -c 0 -m 1 pka submit
 
 ************
  Next Steps

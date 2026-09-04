@@ -1,4 +1,4 @@
-"""CLI group for YAML chain pipelines and nested program slices."""
+"""CLI group for YAML chain pipelines."""
 
 import functools
 import logging
@@ -6,27 +6,27 @@ import os
 
 import click
 
-from chemsmart.cli.crest import crest
-from chemsmart.cli.gaussian import gaussian
+from chemsmart.cli.chain.step_options import apply_step_option_tokens
 from chemsmart.cli.job import (
     click_file_label_and_index_options,
     click_filename_options,
     click_job_options,
 )
-from chemsmart.cli.orca import orca
 from chemsmart.cli.utils import (
     CHAIN_CLI_DEFAULTS_KEY,
     CHAIN_PROJECT_SETTINGS_KEY,
 )
-from chemsmart.cli.xtb import xtb
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.chain_steps import build_chain_job, parse_chain_step
 from chemsmart.settings.chain import ChainProjectSettings
-from chemsmart.utils.cli import MyGroup
+from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.io import clean_label
 from chemsmart.utils.utils import return_objects_and_indices_from_string_index
 
 logger = logging.getLogger(__name__)
+
+_PIPELINE_STEPS_KEY = "chain_pipeline_steps"
+_SKIP_COMPLETED_KEY = "chain_skip_completed"
 
 
 def click_chain_options(f):
@@ -95,6 +95,7 @@ def _parse_cli_steps(steps, chain_settings):
     for token in steps:
         try:
             step = parse_chain_step(token)
+            step = apply_step_option_tokens(step)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
         if step.program not in ChainProjectSettings.PROGRAMS:
@@ -111,6 +112,70 @@ def _parse_cli_steps(steps, chain_settings):
     return parsed
 
 
+def _store_chain_invocation(
+    ctx,
+    chain_settings,
+    filename,
+    label,
+    append_label,
+    index,
+    charge,
+    multiplicity,
+    skip_completed,
+    steps,
+):
+    ctx.obj[CHAIN_PROJECT_SETTINGS_KEY] = chain_settings
+    ctx.obj[CHAIN_CLI_DEFAULTS_KEY] = {
+        "filename": filename,
+        "label": label,
+        "append_label": append_label,
+        "index": index,
+        "charge": charge,
+        "multiplicity": multiplicity,
+    }
+    ctx.obj[_SKIP_COMPLETED_KEY] = skip_completed
+    ctx.obj[_PIPELINE_STEPS_KEY] = steps
+
+
+def build_chain_pipeline_from_ctx(ctx):
+    """Build a ``ChainJob`` from chain-group ``-s/--steps`` stored on ``ctx``."""
+    chain_settings = ctx.obj[CHAIN_PROJECT_SETTINGS_KEY]
+    defaults = ctx.obj[CHAIN_CLI_DEFAULTS_KEY]
+    steps = ctx.obj.get(_PIPELINE_STEPS_KEY) or ()
+    if not steps:
+        raise click.UsageError(
+            "Custom pipeline requires at least one -s/--steps."
+        )
+    filename = defaults["filename"]
+    if filename is None:
+        raise click.UsageError(
+            "Chain pipeline requires a structure file (-f/--filename)."
+        )
+    parsed_steps = _parse_cli_steps(steps, chain_settings)
+    molecule = _molecule_from_filename(filename, defaults["index"])
+    job_label = _chain_label(
+        filename, defaults["label"], defaults["append_label"]
+    )
+    logger.info(
+        "Building chain pipeline %s from project %s",
+        job_label,
+        chain_settings.PROJECT_NAME,
+    )
+    try:
+        return build_chain_job(
+            chain_settings,
+            steps=parsed_steps,
+            molecule=molecule,
+            label=job_label,
+            charge=defaults["charge"],
+            multiplicity=defaults["multiplicity"],
+            jobrunner=ctx.obj["jobrunner"],
+            skip_completed=ctx.obj[_SKIP_COMPLETED_KEY],
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+
 @click.group(cls=MyGroup, invoke_without_command=True)
 @click_chain_options
 @click_filename_options
@@ -121,8 +186,12 @@ def _parse_cli_steps(steps, chain_settings):
     "--steps",
     "steps",
     multiple=True,
-    metavar="PROGRAM:JOB",
-    help="Pipeline step (repeatable), e.g. gaussian:opt.",
+    metavar="STEP",
+    help=(
+        "Pipeline step (repeatable). Use PROGRAM:JOB or quoted "
+        "PROGRAM: [OPTIONS] JOB, e.g. gaussian:opt or "
+        '"gaussian: -o maxstep=8,maxsize=12 opt".'
+    ),
 )
 @click.pass_context
 def chain(
@@ -137,13 +206,12 @@ def chain(
     skip_completed,
     steps,
 ):
-    """Run a YAML chain pipeline or a nested program slice.
+    """Run a custom ``-s/--steps`` pipeline from a chain project.
 
     ``chemsmart run/sub chain -p NAME -f mol.xyz -s gaussian:opt`` runs a
-    pipeline from repeatable ``-s/--steps``. Nested ``gaussian``,
-    ``orca``, ``xtb``, and ``crest`` commands reuse those programs' CLIs
-    with this file's project aliases, e.g.
-    ``chain -p NAME gaussian pka ...``.
+    pipeline from repeatable ``-s/--steps``. The ``custom`` subcommand is
+    the same pipeline. Single-program jobs use that program's own
+    ``-p`` project YAML.
     """
     ctx.ensure_object(dict)
     try:
@@ -152,54 +220,35 @@ def chain(
         raise click.UsageError(str(exc)) from exc
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
-    ctx.obj[CHAIN_PROJECT_SETTINGS_KEY] = chain_settings
+
+    _store_chain_invocation(
+        ctx,
+        chain_settings,
+        filename,
+        label,
+        append_label,
+        index,
+        charge,
+        multiplicity,
+        skip_completed,
+        steps,
+    )
 
     if ctx.invoked_subcommand is not None:
-        if steps:
-            raise click.UsageError(
-                "Cannot combine -s/--steps with a nested program command."
-            )
-        ctx.obj[CHAIN_CLI_DEFAULTS_KEY] = {
-            "filename": filename,
-            "label": label,
-            "append_label": append_label,
-            "index": index,
-            "charge": charge,
-            "multiplicity": multiplicity,
-        }
         return None
 
-    if not steps:
-        raise click.UsageError(
-            "Chain pipeline requires at least one -s/--steps."
-        )
-    if filename is None:
-        raise click.UsageError(
-            "Chain pipeline requires a structure file (-f/--filename)."
-        )
-
-    parsed_steps = _parse_cli_steps(steps, chain_settings)
-    molecule = _molecule_from_filename(filename, index)
-    job_label = _chain_label(filename, label, append_label)
-    logger.info(
-        "Building chain pipeline %s from project %s", job_label, project
-    )
-    try:
-        return build_chain_job(
-            chain_settings,
-            steps=parsed_steps,
-            molecule=molecule,
-            label=job_label,
-            charge=charge,
-            multiplicity=multiplicity,
-            jobrunner=ctx.obj["jobrunner"],
-            skip_completed=skip_completed,
-        )
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
+    return build_chain_pipeline_from_ctx(ctx)
 
 
-chain.add_command(gaussian)
-chain.add_command(orca)
-chain.add_command(xtb)
-chain.add_command(crest)
+@click.command("custom", cls=MyCommand)
+@click.pass_context
+def custom(ctx):
+    """Run a custom ``-s/--steps`` pipeline from this chain project.
+
+    Pass ``-s`` on the chain group before ``custom``, e.g.
+    ``chain -p combined -f mol.xyz -s gaussian:opt custom``.
+    """
+    return build_chain_pipeline_from_ctx(ctx)
+
+
+chain.add_command(custom)

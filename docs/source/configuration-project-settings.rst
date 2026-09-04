@@ -558,7 +558,7 @@ Copy it into ``~/.chemsmart/crest/`` and rename it for your project.
 ************************
 
 The ``~/.chemsmart/chain/`` directory contains chain project files that alias per-program projects. Chain files are used
-by ``chemsmart run/sub chain``; see :doc:`chain-jobs`. Pipeline order is specified on the CLI with repeatable
+by ``chemsmart run/sub chain`` only; see :doc:`chain-jobs`. Pipeline order is specified on the CLI with repeatable
 ``-s/--steps``, not in the YAML.
 
 Example (``~/.chemsmart/chain/combined.yaml``):

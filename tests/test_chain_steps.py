@@ -148,6 +148,18 @@ class TestParseChainStep:
             program="gaussian", job="opt"
         )
 
+    def test_parses_options_before_job(self):
+        step = parse_chain_step("gaussian: -o maxstep=8,maxsize=12 opt")
+        assert step == ChainStep(
+            program="gaussian",
+            job="opt",
+            extra_option_tokens=("-o", "maxstep=8,maxsize=12"),
+        )
+
+    def test_options_after_job_error(self):
+        with pytest.raises(ValueError, match="before the job name"):
+            parse_chain_step("gaussian:opt -o maxstep=8")
+
     def test_missing_colon_errors(self):
         with pytest.raises(ValueError, match="expected PROGRAM:JOB"):
             parse_chain_step("gaussian")

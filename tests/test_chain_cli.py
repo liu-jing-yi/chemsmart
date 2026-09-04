@@ -51,36 +51,17 @@ class TestChainHelp:
         assert result.exit_code == 0, result.output
         assert "chain" in result.output
 
-    def test_chain_help_lists_nested_programs(self):
+    def test_chain_help_lists_custom_subcommand(self):
         result = CliRunner().invoke(run, ["chain", "--help"])
         assert result.exit_code == 0, result.output
-        assert "gaussian" in result.output
-        assert "orca" in result.output
-        assert "xtb" in result.output
-        assert "crest" in result.output
-
-    def test_chain_gaussian_pka_help(
-        self, isolated_config_dir, single_molecule_xyz_file
-    ):
-        _write_chain_yaml(
-            isolated_config_dir,
-            "combined",
-            "gaussian: gas_solv\n",
-        )
-        result = _invoke_chain(
-            [
-                "-p",
-                "combined",
-                "gaussian",
-                "-f",
-                single_molecule_xyz_file,
-                "pka",
-                "--help",
-            ]
-        )
-        assert result.exit_code == 0, result.output
-        assert "submit" in result.output
-        assert "batch" in result.output
+        assert "\n  custom" in result.output
+        assert "\n  pka" not in result.output
+        assert "\n  fukui" not in result.output
+        assert "\n  reaction" not in result.output
+        assert "\n  gaussian" not in result.output
+        assert "\n  orca" not in result.output
+        assert "\n  xtb" not in result.output
+        assert "\n  crest" not in result.output
 
 
 class TestChainPipeline:
@@ -170,7 +151,7 @@ orca: gas_solv
         assert result.exit_code == 2, result.output
         assert "requires a structure file" in result.output
 
-    def test_steps_with_nested_command_is_usage_error(
+    def test_unknown_nested_command_is_usage_error(
         self, isolated_config_dir, single_molecule_xyz_file
     ):
         _write_chain_yaml(
@@ -185,15 +166,12 @@ orca: gas_solv
                 "combined",
                 "-f",
                 single_molecule_xyz_file,
-                "-s",
-                "gaussian:opt",
-                "gaussian",
-                "opt",
+                "pka",
             ],
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
-        assert "Cannot combine -s/--steps" in result.output
+        assert "No such command 'pka'" in result.output
 
     def test_invalid_step_token_is_usage_error(
         self, isolated_config_dir, single_molecule_xyz_file
@@ -242,56 +220,8 @@ orca: gas_solv
         assert "do not support gaussian 'pka'" in result.output
 
 
-class TestChainNestedSlice:
-    def test_gaussian_opt_uses_chain_alias_and_skips_other_programs(
-        self, isolated_config_dir, single_molecule_xyz_file
-    ):
-        _write_chain_yaml(
-            isolated_config_dir,
-            "combined",
-            "gaussian: gas_solv\norca: gas_solv\n",
-        )
-        args = [
-            "-p",
-            "combined",
-            "gaussian",
-            "-f",
-            single_molecule_xyz_file,
-            "-c",
-            "0",
-            "-m",
-            "1",
-            "opt",
-        ]
-        with (
-            patch(
-                "chemsmart.settings.gaussian.GaussianProjectSettings."
-                "from_project",
-                wraps=GaussianProjectSettings.from_project,
-            ) as gaussian_from_project,
-            patch(
-                "chemsmart.settings.orca.ORCAProjectSettings.from_project"
-            ) as orca_from_project,
-            patch(
-                "chemsmart.settings.xtb.XTBProjectSettings.from_project"
-            ) as xtb_from_project,
-            patch(
-                "chemsmart.settings.crest.CRESTProjectSettings.from_project"
-            ) as crest_from_project,
-            patch(
-                "chemsmart.jobs.gaussian.opt.GaussianOptJob",
-                return_value=MagicMock(),
-            ) as mock_job,
-        ):
-            result = _invoke_chain(args)
-        assert result.exit_code == 0, result.output
-        gaussian_from_project.assert_called_once_with("gas_solv")
-        orca_from_project.assert_not_called()
-        xtb_from_project.assert_not_called()
-        crest_from_project.assert_not_called()
-        assert mock_job.called
-
-    def test_nested_gaussian_uses_chain_level_file_charge_multiplicity(
+class TestChainPipelineExtras:
+    def test_pipeline_quoted_step_applies_opt_options(
         self, isolated_config_dir, single_molecule_xyz_file
     ):
         _write_chain_yaml(
@@ -299,33 +229,64 @@ class TestChainNestedSlice:
             "combined",
             "gaussian: gas_solv\n",
         )
-        args = [
-            "-p",
-            "combined",
-            "-f",
-            single_molecule_xyz_file,
-            "-c",
-            "0",
-            "-m",
-            "1",
-            "gaussian",
-            "opt",
-        ]
-        with patch(
-            "chemsmart.jobs.gaussian.opt.GaussianOptJob",
-            return_value=MagicMock(),
-        ) as mock_job:
-            result = _invoke_chain(args)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "-s",
+                "gaussian: -o maxstep=8,maxsize=12 opt",
+            ],
+            standalone_mode=False,
+        )
         assert result.exit_code == 0, result.output
-        assert mock_job.called
-        call_kwargs = mock_job.call_args.kwargs
-        assert call_kwargs["settings"].charge == 0
-        assert call_kwargs["settings"].multiplicity == 1
+        job = result.return_value
+        assert isinstance(job, ChainJob)
+        child = job.phases[0].resolve_jobs()[0]
+        assert (
+            child.settings.additional_opt_options_in_route
+            == "maxstep=8,maxsize=12"
+        )
+
+    def test_custom_subcommand_builds_pipeline(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _write_chain_yaml(
+            isolated_config_dir,
+            "combined",
+            "gaussian: gas_solv\n",
+        )
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "-s",
+                "gaussian:opt",
+                "custom",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, ChainJob)
+        assert [phase.name for phase in result.return_value.phases] == [
+            "00_gaussian_opt"
+        ]
 
     def test_missing_chain_project_is_usage_error(self, isolated_config_dir):
         result = CliRunner().invoke(
             chain,
-            ["-p", "missing", "gaussian", "opt"],
+            ["-p", "missing", "custom"],
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
