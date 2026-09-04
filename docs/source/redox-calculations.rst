@@ -10,8 +10,8 @@ CHEMSMART provides redox workflows in two separate stages:
    reference couple. See :ref:`gaussian-redox-calculations` and :ref:`orca-redox-calculations`.
 
 #. **Output analysis** — compute the exchange redox potential from completed output files using the backend-independent
-   command ``chemsmart run redox analyze --e-ref 0.0`` (also ``chemsmart run chain redox analyze --e-ref 0.0``).
-   Analysis is **program-agnostic**: the same workflow reads Gaussian ``.log`` and ORCA ``.out`` files.
+   command ``chemsmart run redox analyze``. Analysis is **program-agnostic**: the same workflow reads Gaussian ``.log``
+   and ORCA ``.out`` files. The same analysis is also registered under ``chain``; see :doc:`chain-jobs`.
 
 The scheme is **exchange-only**. There is no isolated-electron :math:`G(\mathrm{e}^{-})` term and no bundled Fc/Fc+
 geometries.
@@ -44,10 +44,8 @@ geometries.
 
 **Output analysis**
 
--  ``chemsmart run redox analyze --e-ref 0.0`` — single-system analysis from eight output files. ``--e-ref`` is the
-   reference potential in volts.
--  ``chemsmart run chain redox analyze --e-ref 0.0`` — the same analysis under ``chain`` (no ``-p``, ``-f``, or
-   ``--program``).
+-  ``chemsmart run redox analyze`` — single-system analysis from eight output files. The reference couple is inferred
+   from Ref_ox/Ref_red formulas; ``-r`` overrides.
 -  Analysis never invokes ``gaussian`` or ``orca`` job submission — only reads completed output files.
 
 ********
@@ -171,8 +169,7 @@ volts).
  Output Analysis (``chemsmart run redox``)
 *******************************************
 
-All post-processing lives under ``chemsmart run redox analyze`` or ``chemsmart run chain redox analyze``. No Gaussian or
-ORCA backend is invoked during analysis.
+All post-processing lives under ``chemsmart run redox analyze``. No Gaussian or ORCA backend is invoked during analysis.
 
 Provide all eight outputs and ``--e-ref`` (the reference potential in volts used as :math:`E_{\mathrm{ref}}`):
 
@@ -195,7 +192,6 @@ Provide all eight outputs and ``--e-ref`` (the reference potential in volts used
 .. code:: bash
 
    chemsmart run redox analyze --e-ref 0.2 -n 1 --ox-gas ...
-   chemsmart run chain redox analyze --e-ref 0.2 --ox-gas ...
 
 *************
  CLI Options

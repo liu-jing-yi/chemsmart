@@ -9,9 +9,9 @@ experience.
 
 .. note::
 
-   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run redox analyze --e-ref
-   0.0`` or ``chemsmart run chain redox analyze --e-ref 0.0``. See :ref:`redox-calculations` for the exchange scheme,
-   dual-level free energies, and the reference registry.
+   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run redox analyze``. See
+   :ref:`redox-calculations` for the exchange scheme, dual-level free energies, and the reference registry. The same
+   analysis is also registered under ``chain``; see :doc:`chain-jobs`.
 
 .. contents:: Table of Contents
    :local:

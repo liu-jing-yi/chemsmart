@@ -355,8 +355,8 @@ Analysis (``chemsmart run fukui``)
 ==================================
 
 Post-processing is program-agnostic (Gaussian ``.log`` or ORCA ``.out``) and matches the historical ``fukui.py`` script
-options. Use ``chemsmart run fukui`` to analyze (also ``chemsmart run chain fukui analyze``). Submit with ``chemsmart
-sub gaussian … fukui``, ``chemsmart sub orca … fukui``, or ``chemsmart sub chain … fukui --program {gaussian,orca}``.
+options. Use ``chemsmart run fukui`` to analyze. Submit with ``chemsmart sub gaussian … fukui`` or ``chemsmart sub orca
+… fukui``. The same analysis is also registered under ``chain``; see :doc:`chain-jobs`.
 
 .. list-table::
    :header-rows: 1

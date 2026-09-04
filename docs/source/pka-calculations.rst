@@ -11,9 +11,9 @@ CHEMSMART provides pKa workflows in two separate stages:
    ``chemsmart run/sub chain … pka --program {gaussian,orca}`` (see :ref:`chain-workflow-subcommands`).
 
 #. **Output analysis** — compute pKa values from completed output files using the backend-independent command
-   ``chemsmart run pka`` (also ``chemsmart run chain pka analyze``). Analysis is **program-agnostic**: the same workflow
-   reads Gaussian ``.log`` and ORCA ``.out`` files and extracts the energies and thermal corrections needed for the pKa
-   cycle.
+   ``chemsmart run pka``. Analysis is **program-agnostic**: the same workflow reads Gaussian ``.log`` and ORCA ``.out``
+   files and extracts the energies and thermal corrections needed for the pKa cycle. The same analysis is also
+   registered under ``chain``; see :doc:`chain-jobs`.
 
 .. toctree::
    :maxdepth: 2
@@ -46,7 +46,6 @@ CHEMSMART provides pKa workflows in two separate stages:
 **Output analysis**
 
 -  ``chemsmart run pka analyze`` — single-system analysis from up to eight output files.
--  ``chemsmart run chain pka analyze`` — the same analysis under ``chain`` (no ``-p``, ``-f``, or ``--program``).
 -  ``chemsmart run pka batch-analyze`` — table-driven batch analysis.
 -  These commands use the same pKa analysis workflow. Gaussian ``.log`` and ORCA ``.out`` files can be mixed in the same
    batch table; each file is read and interpreted on its own.
@@ -378,8 +377,7 @@ configuration.
  Output Analysis (``chemsmart run pka``)
 *****************************************
 
-All post-processing lives under ``chemsmart run pka`` or ``chemsmart run chain pka``. No Gaussian or ORCA backend is
-invoked during analysis.
+All post-processing lives under ``chemsmart run pka``. No Gaussian or ORCA backend is invoked during analysis.
 
 Thermochemistry extraction
 ==========================
@@ -408,11 +406,6 @@ the naming convention below. ``-rp`` / ``--reference-pka`` is required.
        -hr ref_acid_pka_HRef_opt.log \
        -rp 6.75 \
        -T 333.15 -c 1.0 -csg 100 -ch 100
-
-   chemsmart run chain pka analyze \
-       -ha acid1_pka_HA_opt.log \
-       -hr ref_acid_pka_HRef_opt.log \
-       -rp 6.75
 
 Provide all eight files explicitly when auto-discovery is not appropriate:
 

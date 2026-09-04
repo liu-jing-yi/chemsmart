@@ -9,9 +9,9 @@ This page covers **Gaussian pKa job submission** — generating input files and 
 
 .. note::
 
-   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run pka analyze``,
-   ``chemsmart run chain pka analyze``, or ``chemsmart run pka batch-analyze``. See :ref:`pka-calculations` for the full
-   analysis workflow, table formats, and thermochemistry options.
+   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run pka analyze`` or
+   ``chemsmart run pka batch-analyze``. See :ref:`pka-calculations` for the full analysis workflow. The same analysis is
+   also registered under ``chain``; see :doc:`chain-jobs`.
 
 .. contents:: Table of Contents
    :local:
