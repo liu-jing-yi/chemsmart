@@ -832,6 +832,7 @@ class TestChainWorkflows:
         assert analyze_help.exit_code == 0, analyze_help.output
         assert "--ox-gas" in analyze_help.output
         assert "--ref-red-solv" in analyze_help.output
+        assert "--e-ref" in analyze_help.output
 
     def test_redox_analyze_works_without_project(self):
         result = CliRunner().invoke(
@@ -841,7 +842,7 @@ class TestChainWorkflows:
         )
         assert result.exit_code == 2, result.output
         assert "Missing option" in result.output
-        assert "--ox-gas" in result.output
+        assert "--e-ref" in result.output or "--ox-gas" in result.output
         assert "-p/--project" not in result.output
 
     @pytest.mark.parametrize(

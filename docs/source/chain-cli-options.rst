@@ -22,13 +22,13 @@ list, including ``custom`` and the workflow subcommands ``pka``, ``fukui``, ``re
    chemsmart sub [OPTIONS] chain -p PROJECT -f FILE -c CHARGE -m MULT \
      pka|fukui|redox|reaction --program {gaussian,orca} [WORKFLOW_OPTIONS]
 
-**Workflow analyze** (pKa, Fukui, and redox only; no ``-p``, ``-f``, or ``--program``). Redox infers ``-r`` from
-Ref_ox/Ref_red formulas; pass ``-r`` to override:
+**Workflow analyze** (pKa, Fukui, and redox only; no ``-p``, ``-f``, or ``--program``). Redox analyze requires
+``--e-ref``:
 
 .. code:: bash
 
-   chemsmart run chain pka|fukui|redox analyze [ANALYZE_OPTIONS]
-   chemsmart run chain redox -r fc_fc+ analyze [ANALYZE_OPTIONS]
+   chemsmart run chain pka|fukui analyze [ANALYZE_OPTIONS]
+   chemsmart run chain redox analyze --e-ref 0.0 [ANALYZE_OPTIONS]
 
 ***************
  Chain Options

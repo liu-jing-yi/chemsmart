@@ -9,7 +9,6 @@ from chemsmart.cli.redox import (
     compute_redox_potential,
     format_redox_summary,
     get_redox_reference,
-    infer_redox_reference,
     list_redox_references,
     register_redox_reference,
 )
@@ -61,8 +60,6 @@ class TestRedoxReferenceRegistry:
         assert reference.couple_label == "Fc/Fc+"
         assert reference.ox_file is None
         assert reference.red_file is None
-        assert reference.ox_formula == "C10H10Fe"
-        assert reference.red_formula == "C10H10Fe"
         names = [item.name for item in list_redox_references()]
         assert "fc_fc+" in names
 
@@ -95,47 +92,6 @@ class TestRedoxReferenceRegistry:
         assert loaded is custom
         assert loaded.E_ref_V == 0.40
         assert loaded.scale == "SHE"
-
-    def test_infers_fc_from_formulas(self, isolated_redox_registry):
-        inferred = infer_redox_reference("C10H10Fe", "C10H10Fe")
-        assert inferred.name == "fc_fc+"
-
-    def test_infers_registered_formula_couple(self, isolated_redox_registry):
-        register_redox_reference(
-            RedoxReference(
-                name="h2_h2+",
-                E_ref_V=0.40,
-                n_electrons=1,
-                scale="SHE",
-                couple_label="H2/H2+",
-                ox_formula="H2",
-                red_formula="H2",
-            )
-        )
-        inferred = infer_redox_reference("H2", "H2")
-        assert inferred.name == "h2_h2+"
-
-    def test_infer_requires_reference_when_unmatched(
-        self, isolated_redox_registry
-    ):
-        with pytest.raises(ValueError, match="Could not infer"):
-            infer_redox_reference("H2", "H2")
-
-    def test_infer_ambiguous_couples(self, isolated_redox_registry):
-        for name in ("h2_a", "h2_b"):
-            register_redox_reference(
-                RedoxReference(
-                    name=name,
-                    E_ref_V=0.1,
-                    n_electrons=1,
-                    scale="SHE",
-                    couple_label="H2/H2+",
-                    ox_formula="H2",
-                    red_formula="H2",
-                )
-            )
-        with pytest.raises(ValueError, match="multiple registered couples"):
-            infer_redox_reference("H2", "H2")
 
     def test_invalid_n_electrons(self):
         with pytest.raises(ValueError, match="positive integer"):
@@ -282,6 +238,91 @@ class TestComputeRedoxPotential:
                 ref_ox_solv_file="refoxs.log",
                 ref_red_solv_file="refreds.log",
             )
+
+    def test_e_ref_without_registry(self, tmp_path, monkeypatch):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        self._install_fake_energies(
+            monkeypatch,
+            {
+                "ox_gas.log": (1.00, 0.01),
+                "red_gas.log": (1.10, 0.02),
+                "ref_ox_gas.log": (2.00, 0.03),
+                "ref_red_gas.log": (2.20, 0.04),
+            },
+            {
+                "ox_solv.log": 0.90,
+                "red_solv.log": 1.00,
+                "ref_ox_solv.log": 1.80,
+                "ref_red_solv.log": 2.00,
+            },
+        )
+        result = compute_redox_potential(
+            ox_gas_file=files["ox_gas.log"],
+            red_gas_file=files["red_gas.log"],
+            ref_ox_gas_file=files["ref_ox_gas.log"],
+            ref_red_gas_file=files["ref_red_gas.log"],
+            ox_solv_file=files["ox_solv.log"],
+            red_solv_file=files["red_solv.log"],
+            ref_ox_solv_file=files["ref_ox_solv.log"],
+            ref_red_solv_file=files["ref_red_solv.log"],
+            e_ref=0.2,
+        )
+        assert result["E_ref_V"] == pytest.approx(0.2)
+        assert result["n_electrons"] == 1
+        assert result["reference_name"] is None
+        delta_g_j = energy_conversion("hartree", "j/mol", -0.10)
+        assert result["E_target_V"] == pytest.approx(0.2 - delta_g_j / FARADAY)
+        text = format_redox_summary(result)
+        assert "E_ref = 0.2000 V" in text
+        assert "Fc/Fc+" not in text
+
+    def test_e_ref_overrides_registry_potential(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        self._install_fake_energies(
+            monkeypatch,
+            {Path(p).name: (0.0, 0.0) for p in files.values()},
+            {Path(p).name: 0.0 for p in files.values()},
+        )
+        result = compute_redox_potential(
+            ox_gas_file=files["ox_gas.log"],
+            red_gas_file=files["red_gas.log"],
+            ref_ox_gas_file=files["ref_ox_gas.log"],
+            ref_red_gas_file=files["ref_red_gas.log"],
+            ox_solv_file=files["ox_solv.log"],
+            red_solv_file=files["red_solv.log"],
+            ref_ox_solv_file=files["ref_ox_solv.log"],
+            ref_red_solv_file=files["ref_red_solv.log"],
+            reference="fc_fc+",
+            e_ref=0.2,
+        )
+        assert result["E_ref_V"] == pytest.approx(0.2)
+        assert result["reference_name"] == "fc_fc+"
 
     def test_n_mismatch_errors(
         self, isolated_redox_registry, tmp_path, monkeypatch
@@ -578,7 +619,7 @@ def _analyze_file_args(files):
 
 
 def _analyze_cli_args(files, *extra):
-    return ["-r", "fc_fc+", "analyze", *_analyze_file_args(files), *extra]
+    return ["analyze", "--e-ref", "0.0", *_analyze_file_args(files), *extra]
 
 
 class TestRedoxCLI:
@@ -655,8 +696,8 @@ class TestRedoxCLI:
         assert "\n  analyze" in result.output
         assert "-T, --temperature" not in result.output
         assert "-csg" not in result.output
-        assert "-r, --reference" in result.output
-        assert "inferred" in result.output
+        assert "-r, --reference" not in result.output
+        assert "-er, --e-ref" not in result.output
 
     def test_run_redox_analyze_help_lists_short_flags(self):
         result = CliRunner().invoke(run, ["redox", "analyze", "--help"])
@@ -674,6 +715,8 @@ class TestRedoxCLI:
         assert "-csg" in result.output
         assert "-ch" in result.output
         assert "-o, --output" in result.output
+        assert "--e-ref" in result.output
+        assert "-er" in result.output
 
     def test_gaussian_redox_builds_job(
         self, tmp_path, single_molecule_xyz_file
@@ -851,7 +894,7 @@ class TestRedoxCLI:
         assert result.exit_code == 2, result.output
         assert "reference geometries" in result.output
 
-    def test_run_redox_analyze_errors_when_couple_cannot_be_inferred(
+    def test_run_redox_analyze_requires_e_ref(
         self, isolated_redox_registry, tmp_path, monkeypatch
     ):
         files = {
@@ -879,11 +922,10 @@ class TestRedoxCLI:
             run, ["redox", "analyze", *_analyze_file_args(files)]
         )
         assert result.exit_code == 2, result.output
-        assert "Could not infer the reference couple" in result.output
-        assert "Pass -r/--reference" in result.output
+        assert "--e-ref" in result.output
         assert "E_target" not in result.output
 
-    def test_chain_redox_analyze_errors_when_couple_cannot_be_inferred(
+    def test_chain_redox_analyze_requires_e_ref(
         self, isolated_redox_registry, tmp_path, monkeypatch
     ):
         from chemsmart.cli.chain.chain import chain
@@ -915,10 +957,10 @@ class TestRedoxCLI:
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
-        assert "Could not infer the reference couple" in result.output
+        assert "--e-ref" in result.output
         assert "E_target" not in result.output
 
-    def test_run_redox_analyze_infers_registered_couple(
+    def test_run_redox_analyze_uses_e_ref(
         self, isolated_redox_registry, tmp_path, monkeypatch
     ):
         files = {
@@ -934,17 +976,6 @@ class TestRedoxCLI:
                 "ref_red_solv.log",
             )
         }
-        register_redox_reference(
-            RedoxReference(
-                name="h2_cli",
-                E_ref_V=0.40,
-                n_electrons=1,
-                scale="SHE",
-                couple_label="H2/H2+",
-                ox_formula="H2",
-                red_formula="H2",
-            )
-        )
         monkeypatch.setattr(
             "chemsmart.cli.redox.pka_gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
@@ -954,54 +985,12 @@ class TestRedoxCLI:
             lambda filepath: 0.0,
         )
         result = CliRunner().invoke(
-            run, ["redox", "analyze", *_analyze_file_args(files)]
+            run,
+            ["redox", "analyze", "--e-ref", "0.2", *_analyze_file_args(files)],
         )
         assert result.exit_code == 0, result.output
-        assert "h2_cli" in result.output
-        assert "SHE" in result.output
-        assert "[inferred from Ref_ox/Ref_red formulas]" in result.output
-
-    def test_run_redox_analyze_reference_flag_overrides_inference(
-        self, isolated_redox_registry, tmp_path, monkeypatch
-    ):
-        files = {
-            name: _write_h2_xyz(tmp_path / name)
-            for name in (
-                "ox_gas.log",
-                "red_gas.log",
-                "ref_ox_gas.log",
-                "ref_red_gas.log",
-                "ox_solv.log",
-                "red_solv.log",
-                "ref_ox_solv.log",
-                "ref_red_solv.log",
-            )
-        }
-        register_redox_reference(
-            RedoxReference(
-                name="h2_cli",
-                E_ref_V=0.40,
-                n_electrons=1,
-                scale="SHE",
-                couple_label="H2/H2+",
-                ox_formula="H2",
-                red_formula="H2",
-            )
-        )
-        monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_gas_phase_data",
-            lambda filepath, **kwargs: (0.0, 0.0),
-        )
-        monkeypatch.setattr(
-            "chemsmart.cli.redox.pka_solvent_scf_energy",
-            lambda filepath: 0.0,
-        )
-        result = CliRunner().invoke(run, ["redox", *_analyze_cli_args(files)])
-        assert result.exit_code == 0, result.output
-        assert "fc_fc+" in result.output
-        assert "Fc/Fc+" in result.output
-        assert "SHE" not in result.output
-        assert "[inferred from Ref_ox/Ref_red formulas]" not in result.output
+        assert "E_ref = 0.2000 V" in result.output
+        assert "Fc/Fc+" not in result.output
 
     def test_run_redox_analyze_arithmetic(
         self, isolated_redox_registry, tmp_path, monkeypatch
@@ -1045,7 +1034,7 @@ class TestRedoxCLI:
         result = CliRunner().invoke(run, ["redox", *_analyze_cli_args(files)])
         assert result.exit_code == 0, result.output
         assert "E_target" in result.output
-        assert "Fc/Fc+" in result.output
+        assert "E_ref = 0.0000 V" in result.output
         assert "kcal/mol" in result.output
         assert "J/mol" in result.output
 
@@ -1134,7 +1123,7 @@ class TestRedoxCLI:
         assert "E_target" not in result.output
         text = output_path.read_text()
         assert "E_target" in text
-        assert "Fc/Fc+" in text
+        assert "E_ref = 0.0000 V" in text
 
     def test_chain_redox_analyze_arithmetic(
         self, isolated_redox_registry, tmp_path, monkeypatch
@@ -1187,15 +1176,6 @@ class TestRedoxCLI:
                 "ref_red_solv.log",
             )
         }
-        register_redox_reference(
-            RedoxReference(
-                name="n2_cli",
-                E_ref_V=0.25,
-                n_electrons=2,
-                scale="SHE",
-                couple_label="N2/N2+",
-            )
-        )
         monkeypatch.setattr(
             "chemsmart.cli.redox.pka_gas_phase_data",
             lambda filepath, **kwargs: {
@@ -1218,17 +1198,17 @@ class TestRedoxCLI:
             run,
             [
                 "redox",
+                "analyze",
+                "--e-ref",
+                "0.25",
                 "-n",
                 "2",
-                "-r",
-                "n2_cli",
-                "analyze",
                 *_analyze_file_args(files),
             ],
         )
         assert result.exit_code == 0, result.output
         assert "n = 2" in result.output
-        assert "SHE" in result.output
+        assert "E_ref = 0.2500 V" in result.output
 
     def test_chain_redox_analyze_n2_arithmetic(
         self, isolated_redox_registry, tmp_path, monkeypatch
@@ -1248,15 +1228,6 @@ class TestRedoxCLI:
                 "ref_red_solv.log",
             )
         }
-        register_redox_reference(
-            RedoxReference(
-                name="n2_chain",
-                E_ref_V=0.25,
-                n_electrons=2,
-                scale="SHE",
-                couple_label="N2/N2+",
-            )
-        )
         monkeypatch.setattr(
             "chemsmart.cli.redox.pka_gas_phase_data",
             lambda filepath, **kwargs: (0.0, 0.0),
@@ -1269,16 +1240,16 @@ class TestRedoxCLI:
             chain,
             [
                 "redox",
+                "analyze",
+                "--e-ref",
+                "0.25",
                 "-n",
                 "2",
-                "-r",
-                "n2_chain",
-                "analyze",
                 *_analyze_file_args(files),
             ],
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 0, result.output
         assert "n = 2" in result.output
-        assert "SHE" in result.output
+        assert "E_ref = 0.2500 V" in result.output
         assert "-p/--project" not in result.output

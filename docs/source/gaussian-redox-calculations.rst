@@ -9,10 +9,9 @@ and Ref_red.
 
 .. note::
 
-   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run redox analyze`` or
-   ``chemsmart run chain redox analyze``. The reference couple is inferred from the Ref_ox/Ref_red formulas; ``-r``
-   overrides. See :ref:`redox-calculations` for the exchange scheme, dual-level free energies, and the reference
-   registry.
+   Output-file analysis is backend-independent. After calculations finish, use ``chemsmart run redox analyze --e-ref
+   0.0`` or ``chemsmart run chain redox analyze --e-ref 0.0``. See :ref:`redox-calculations` for the exchange scheme,
+   dual-level free energies, and the reference registry.
 
 .. contents:: Table of Contents
    :local:
@@ -74,7 +73,7 @@ Use the backend-independent analysis command (not ``gaussian redox``):
 
 .. code:: bash
 
-   chemsmart run redox analyze \
+   chemsmart run redox analyze --e-ref 0.0 \
        --ox-gas mol_redox_ox_opt.log \
        --red-gas mol_redox_red_opt.log \
        --ref-ox-gas mol_redox_RefOx_opt.log \
