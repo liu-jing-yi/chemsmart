@@ -348,18 +348,15 @@ The neutral structure comes from the parent Gaussian ``-f`` option. Neutral char
    chemsmart sub gaussian -p project -f molecule.log -c 0 -m 1 fukui \\
      -rcc 1 -rcm 2
 
-   chemsmart sub chain -p combined -f molecule.xyz -c 0 -m 1 \
-     fukui --program gaussian
-
-This writes ``<label>_n``, ``<label>_rc``, and ``<label>_ra``.
+This writes ``<label>_n``, ``<label>_rc``, and ``<label>_ra``. Chain submit is ``chemsmart sub chain -p combined -f
+molecule.xyz -c 0 -m 1 fukui --program gaussian``.
 
 Analysis (``chemsmart run fukui``)
 ==================================
 
 Post-processing is program-agnostic (Gaussian ``.log`` or ORCA ``.out``) and matches the historical ``fukui.py`` script
-options. Analysis is available under ``chemsmart run fukui`` and ``chemsmart run chain fukui analyze`` (no ``-p``,
-``-f``, or ``--program``). Use ``chemsmart sub gaussian … fukui``, ``chemsmart sub orca … fukui``, or ``chemsmart sub
-chain … fukui --program {gaussian,orca}`` to submit charge-state jobs.
+options. Use ``chemsmart run fukui`` to analyze (also ``chemsmart run chain fukui analyze``). Submit with ``chemsmart
+sub gaussian … fukui``, ``chemsmart sub orca … fukui``, or ``chemsmart sub chain … fukui --program {gaussian,orca}``.
 
 .. list-table::
    :header-rows: 1
@@ -393,8 +390,6 @@ chain … fukui --program {gaussian,orca}`` to submit charge-state jobs.
 .. code:: bash
 
    chemsmart run fukui -n <label>_n.log -c <label>_rc.log -a <label>_ra.log
-
-   chemsmart run chain fukui analyze -n <label>_n.log
 
    chemsmart run fukui -n <label>_n.log -m nbo
 

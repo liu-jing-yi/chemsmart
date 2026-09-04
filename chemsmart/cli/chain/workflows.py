@@ -11,6 +11,7 @@ import importlib
 import logging
 
 import click
+from click.core import ParameterSource
 
 from chemsmart.analysis.fukui import FUKUI_MODES, ORCA_FUKUI_MODES
 from chemsmart.cli.fukui import fukui as fukui_analyze
@@ -32,7 +33,6 @@ from chemsmart.cli.redox import click_redox_shared_options, store_redox_shared
 from chemsmart.cli.utils import (
     CHAIN_CLI_DEFAULTS_KEY,
     CHAIN_PROJECT_SETTINGS_KEY,
-    resolve_program_project,
 )
 from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.io import clean_label
@@ -164,7 +164,10 @@ def hydrate_program_ctx_from_chain(ctx, program, job_name=None):
     charge = defaults.get("charge")
     multiplicity = defaults.get("multiplicity")
 
-    project_name = resolve_program_project(ctx, program, None)
+    try:
+        project_name = chain_settings.project_for(program)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     project_settings, job_settings = _default_program_settings(
         program, project_name
     )
@@ -284,6 +287,32 @@ def _import_program_workflow(program, workflow):
     raise click.UsageError(f"No {program} {workflow} command is registered.")
 
 
+def _resolved_skip_completed(ctx):
+    """Prefer COMMANDLINE ``-R``/``-S``, else the chain-group stored value."""
+    current = ctx
+    while current is not None:
+        source = current.get_parameter_source("skip_completed")
+        if source is ParameterSource.COMMANDLINE:
+            return current.params["skip_completed"]
+        current = current.parent
+    if ctx.obj is not None:
+        from chemsmart.cli.chain.chain import _SKIP_COMPLETED_KEY
+
+        if _SKIP_COMPLETED_KEY in ctx.obj:
+            return ctx.obj[_SKIP_COMPLETED_KEY]
+    return True
+
+
+def _params_with_resolved_skip_completed(ctx, command, extra_params=None):
+    params = dict(ctx.params)
+    if extra_params:
+        params.update(extra_params)
+    names = {param.name for param in command.params}
+    if "skip_completed" in names:
+        params["skip_completed"] = _resolved_skip_completed(ctx)
+    return params
+
+
 def _prepare_workflow_submit(ctx, program, job_name):
     program = require_workflow_program(program)
     require_chain_project(ctx)
@@ -293,9 +322,7 @@ def _prepare_workflow_submit(ctx, program, job_name):
 
 def _invoke_program_workflow(ctx, program, workflow, extra_params=None):
     command = _import_program_workflow(program, workflow)
-    params = dict(ctx.params)
-    if extra_params:
-        params.update(extra_params)
+    params = _params_with_resolved_skip_completed(ctx, command, extra_params)
     return ctx.invoke(command, **_params_for(command, params))
 
 
@@ -308,9 +335,7 @@ def _invoke_program_subcommand(
         raise click.UsageError(
             f"No {program} {workflow} {subcommand_name} command is registered."
         )
-    params = dict(ctx.params)
-    if extra_params:
-        params.update(extra_params)
+    params = _params_with_resolved_skip_completed(ctx, command, extra_params)
     return ctx.invoke(command, **_params_for(command, params))
 
 
@@ -363,6 +388,7 @@ def _register_pka(chain_group):
         Submit uses the chain YAML alias for ``--program``. Analyze is
         backend-independent and does not need ``-p``, ``-f``, or ``--program``.
         """
+        kwargs["skip_completed"] = _resolved_skip_completed(ctx)
         _store_pka_shared(ctx, kwargs)
         if ctx.invoked_subcommand in _ANALYZE_SUBCOMMANDS:
             return None

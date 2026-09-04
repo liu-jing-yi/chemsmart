@@ -388,8 +388,8 @@ Electronic Structure Properties
       -  Wiberg Bond Index analysis
 
    -  -  ``fukui``
-      -  Fukui charge-state calculations (N / N±1); analyze with ``chemsmart run fukui`` or ``chemsmart run chain fukui
-         analyze``. Also ``chemsmart run/sub chain … fukui --program gaussian``.
+      -  Fukui charge-state calculations (N / N±1); analyze with ``chemsmart run fukui``. See :doc:`chain-jobs` for
+         ``chain … fukui --program gaussian``.
 
    -  -  ``pka``
       -  Dual-level pKa job submission; analyze with ``chemsmart run pka``. See :doc:`gaussian-pka-calculations`

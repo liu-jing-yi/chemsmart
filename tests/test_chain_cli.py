@@ -395,6 +395,67 @@ class TestChainWorkflows:
         assert result.exit_code == 0, result.output
         assert isinstance(result.return_value, GaussianpKaJob)
         gaussian_from_project.assert_called_with("gas_solv")
+        assert result.return_value.skip_completed is True
+
+    def test_pka_chain_level_rerun_sets_skip_completed_false(
+        self, isolated_config_dir
+    ):
+        _combined_yaml(isolated_config_dir)
+        water = _water_xyz(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-R",
+                "-p",
+                "combined",
+                "-f",
+                water,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "--program",
+                "gaussian",
+                "-s",
+                "direct",
+                "-pi",
+                "2",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianpKaJob)
+        assert result.return_value.skip_completed is False
+
+    def test_pka_workflow_level_rerun_sets_skip_completed_false(
+        self, isolated_config_dir
+    ):
+        _combined_yaml(isolated_config_dir)
+        water = _water_xyz(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                water,
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "-R",
+                "--program",
+                "gaussian",
+                "-s",
+                "direct",
+                "-pi",
+                "2",
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianpKaJob)
+        assert result.return_value.skip_completed is False
 
     def test_pka_submit_requires_program(
         self, isolated_config_dir, single_molecule_xyz_file

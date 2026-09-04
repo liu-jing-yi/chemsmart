@@ -1,50 +1,9 @@
 import logging
 
-import click
-
 logger = logging.getLogger(__name__)
 
 CHAIN_PROJECT_SETTINGS_KEY = "chain_project_settings"
 CHAIN_CLI_DEFAULTS_KEY = "chain_cli_defaults"
-
-
-def resolve_chain_cli_defaults(ctx, **options):
-    """Fill omitted program options from chain-level CLI flags on ``ctx.obj``.
-
-    Only keys present in ``options`` are considered. A program value of
-    ``None`` is replaced by the chain default when one was set on the parent
-    ``chain`` group.
-    """
-    if ctx.obj is None:
-        return options
-    defaults = ctx.obj.get(CHAIN_CLI_DEFAULTS_KEY)
-    if defaults is None:
-        return options
-    resolved = dict(options)
-    for key, value in options.items():
-        if value is None and key in defaults:
-            resolved[key] = defaults[key]
-    return resolved
-
-
-def resolve_program_project(ctx, program, project):
-    """Resolve a program's project name for CLI group callbacks.
-
-    An explicit ``-p`` on the program group is used as-is. Otherwise, if
-    chain project settings are present on ``ctx.obj``, that file's alias
-    for ``program`` is used. A missing alias raises ``click.UsageError``.
-    Without chain settings, ``project`` is returned unchanged so
-    ``from_project`` keeps its current behavior.
-    """
-    if project is not None:
-        return project
-    if ctx.obj is None or CHAIN_PROJECT_SETTINGS_KEY not in ctx.obj:
-        return project
-    chain_settings = ctx.obj[CHAIN_PROJECT_SETTINGS_KEY]
-    try:
-        return chain_settings.project_for(program)
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
 
 
 def build_jobs(ctx, job_cls, settings, skip_completed, kwargs):

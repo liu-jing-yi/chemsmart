@@ -118,73 +118,46 @@ Execution Control
 
 The chain group accepts the standard job options documented in :doc:`cli-overview`:
 
--  ``-S/-R, --skip-completed/--no-skip-completed``
+-  ``-S/-R, --skip-completed/--no-skip-completed`` — applies to the ``-s/--steps`` pipeline and to workflow **submit**
+   (pKa, Fukui, redox, reaction). ``-R`` on the chain group is enough; repeating it after the workflow name also works.
+   Analyze is unchanged.
+
 -  ``--fake/--no-fake``
+
 -  ``--scratch/--no-scratch``
 
 **********
  Examples
 **********
 
-Full pipeline on HPC:
+Pipeline (optional ``custom``):
 
 .. code:: bash
 
    chemsmart sub -s mycluster chain -p combined -f ligand.xyz -c 0 -m 1 \
      -s crest:conformers -s xtb:opt -s gaussian:opt -s orca:sp
-
-Quoted step with Gaussian opt extras:
-
-.. code:: bash
-
    chemsmart run chain -p combined -f mol.xyz -c 0 -m 1 \
      -s "gaussian: -o maxstep=8,maxsize=12 opt" \
-     -s gaussian:sp
+     -s gaussian:sp custom
 
-Same pipeline via the ``custom`` subcommand:
-
-.. code:: bash
-
-   chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 \
-     -s gaussian:opt custom
-
-Workflow submit from the chain alias:
+Workflow submit:
 
 .. code:: bash
 
    chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 \
      pka --program gaussian -pi 10 submit
-   chemsmart sub chain -p combined -f ligand.xyz -c 0 -m 1 \
-     fukui --program orca
-   chemsmart sub chain -p combined -f ox.xyz -c 1 -m 1 \
-     redox --program gaussian --ref-ox ref_ox.xyz --ref-red ref_red.xyz
-   chemsmart sub chain -p combined -f ts.xyz -c 0 -m 1 \
-     reaction --program gaussian
 
-Analyze without a chain project:
+Program CLI uses that program's own project YAML, not chain YAML:
 
 .. code:: bash
 
-   chemsmart run chain pka analyze -ha acid_HA_opt.log -hr ref_HRef_opt.log -rp 6.75
-   chemsmart run chain fukui analyze -n mol_n.log
-   chemsmart run chain redox analyze --ox-gas ox_opt.log --red-gas red_opt.log \
-     --ref-ox-gas RefOx_opt.log --ref-red-gas RefRed_opt.log \
-     --ox-solv ox_sp.log --red-solv red_sp.log \
-     --ref-ox-solv RefOx_sp.log --ref-red-solv RefRed_sp.log
-
-Ordinary Gaussian opt or pKa uses that program's own project YAML:
-
-.. code:: bash
-
-   chemsmart sub gaussian -p gaussian_project2 -f ligand.xyz -c 0 -m 1 -o maxstep=8,maxsize=12 opt
    chemsmart sub gaussian -p gaussian_project2 -f ligand.xyz -c 0 -m 1 pka submit
 
 ************
  Next Steps
 ************
 
--  :doc:`chain-jobs` — chain YAML aliases, ``-s/--steps`` pipeline, workflow subcommands, geometry handoff, and HPC
-   submission
+-  :doc:`chain-jobs` — chain YAML aliases, ``-s/--steps`` pipeline, and workflow subcommands
 -  :doc:`configuration-project-settings` — chain project file location and alias rules
 -  :doc:`pka-calculations` — pKa submit and analyze
 -  :doc:`redox-calculations` — exchange redox submit and analyze

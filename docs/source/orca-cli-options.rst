@@ -496,10 +496,8 @@ Structure Optimization
       -  Single point calculation
 
    -  -  ``fukui``
-
       -  Fukui charge-state calculations (N / N±1). ORCA modes are ``mulliken`` (default) and ``hirshfeld``. Analyze
-         with ``chemsmart run fukui`` or ``chemsmart run chain fukui analyze``. Also ``chemsmart run/sub chain … fukui
-         --program orca``
+         with ``chemsmart run fukui``. See :doc:`chain-jobs` for ``chain … fukui --program orca``.
 
    -  -  ``pka``
       -  Dual-level pKa job submission; analyze with ``chemsmart run pka``. See :doc:`orca-pka-calculations`
