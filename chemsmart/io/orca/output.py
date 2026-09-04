@@ -3964,3 +3964,19 @@ class ORCApKaOutput(ORCAOutput):
             scheme=scheme,
             delta_G_proton=delta_G_proton,
         )
+
+
+class ORCARedoxOutput(ORCAOutput):
+    """Thin wrapper for exchange redox analysis of ORCA outputs."""
+
+    @staticmethod
+    def compute_redox_potential(**kwargs):
+        from chemsmart.cli.redox import compute_redox_potential
+
+        return compute_redox_potential(**kwargs)
+
+    @staticmethod
+    def format_redox_summary(result):
+        from chemsmart.cli.redox import format_redox_summary
+
+        return format_redox_summary(result)

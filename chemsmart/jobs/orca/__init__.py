@@ -12,6 +12,7 @@ from .modred import ORCAModredJob
 from .opt import ORCAOptJob
 from .qmmm import ORCAQMMMJob
 from .qrc import ORCAQRCJob
+from .redox import ORCARedoxJob
 from .runner import ORCAJobRunner
 from .scan import ORCAScanJob
 from .singlepoint import ORCASinglePointJob
@@ -31,6 +32,7 @@ __all__ = [
     "ORCAModredJob",
     "ORCAJobRunner",
     "ORCAQRCJob",
+    "ORCARedoxJob",
     "ORCAScanJob",
     "ORCASinglePointJob",
     "ORCATSJob",

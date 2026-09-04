@@ -185,6 +185,15 @@ class TestChainStepRegistry:
             get_chain_step_spec("gaussian", "pka")
         assert "pka" in CHAIN_NESTED_ONLY_JOBS["gaussian"]
         assert "pka" in CHAIN_NESTED_ONLY_JOBS["orca"]
+        assert "redox" in CHAIN_NESTED_ONLY_JOBS["gaussian"]
+        assert "redox" in CHAIN_NESTED_ONLY_JOBS["orca"]
+
+    def test_nested_only_redox_errors(self):
+        with pytest.raises(
+            ValueError,
+            match="do not support gaussian 'redox'",
+        ):
+            get_chain_step_spec("gaussian", "redox")
 
     def test_removed_yaml_job_errors_as_nested(self):
         with pytest.raises(

@@ -1,0 +1,508 @@
+from pathlib import Path
+
+import pytest
+
+from chemsmart.cli.redox import (
+    RedoxReference,
+    compute_redox_potential,
+    format_redox_summary,
+    get_redox_reference,
+    list_redox_references,
+    register_redox_reference,
+)
+from chemsmart.io.molecules.structure import Molecule
+from chemsmart.jobs.gaussian.job import GaussianJob
+from chemsmart.jobs.gaussian.opt import GaussianOptJob
+from chemsmart.jobs.gaussian.redox import (
+    GaussianRedoxJob,
+    GaussianRedoxJobSettings,
+)
+from chemsmart.jobs.gaussian.runner import GaussianJobRunner
+from chemsmart.jobs.gaussian.settings import GaussianJobSettings
+from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
+from chemsmart.jobs.redox import reduced_charge_and_multiplicity
+from chemsmart.utils.constants import FARADAY, energy_conversion
+
+
+def _write_h2_xyz(path, comment="h2"):
+    Path(path).write_text(f"2\n{comment}\nH 0.0 0.0 0.0\nH 0.0 0.0 0.74\n")
+    return str(path)
+
+
+def _h2_molecule(charge=1, multiplicity=2):
+    return Molecule(
+        symbols=["H", "H"],
+        positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]],
+        charge=charge,
+        multiplicity=multiplicity,
+    )
+
+
+@pytest.fixture
+def isolated_redox_registry(monkeypatch):
+    from chemsmart.cli import redox as redox_cli
+
+    monkeypatch.setattr(redox_cli, "_REGISTRY", dict(redox_cli._REGISTRY))
+    return redox_cli._REGISTRY
+
+
+class TestRedoxReferenceRegistry:
+    def test_builtin_fc_fc_plus(self):
+        reference = get_redox_reference("fc_fc+")
+        assert reference.name == "fc_fc+"
+        assert reference.E_ref_V == 0.0
+        assert reference.n_electrons == 1
+        assert reference.scale == "Fc/Fc+"
+        assert reference.couple_label == "Fc/Fc+"
+        assert reference.ox_file is None
+        assert reference.red_file is None
+        names = [item.name for item in list_redox_references()]
+        assert "fc_fc+" in names
+
+    def test_unknown_reference_errors(self):
+        with pytest.raises(ValueError, match="Unknown redox reference"):
+            get_redox_reference("not_a_couple")
+
+    def test_register_rejects_duplicates(self):
+        with pytest.raises(ValueError, match="already registered"):
+            register_redox_reference(get_redox_reference("fc_fc+"))
+
+    def test_register_extension(self, isolated_redox_registry, tmp_path):
+        ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        custom = RedoxReference(
+            name="custom_she",
+            E_ref_V=0.40,
+            n_electrons=1,
+            scale="SHE",
+            couple_label="Custom/Custom+",
+            ox_file=ox,
+            red_file=red,
+            ox_charge=1,
+            ox_multiplicity=2,
+            red_charge=0,
+            red_multiplicity=1,
+        )
+        register_redox_reference(custom)
+        loaded = get_redox_reference("custom_she")
+        assert loaded is custom
+        assert loaded.E_ref_V == 0.40
+        assert loaded.scale == "SHE"
+
+    def test_invalid_n_electrons(self):
+        with pytest.raises(ValueError, match="positive integer"):
+            RedoxReference(
+                name="bad",
+                E_ref_V=0.0,
+                n_electrons=0,
+                scale="SHE",
+                couple_label="X/X+",
+            )
+
+
+class TestReducedChargeAndMultiplicity:
+    def test_odd_n_singlet_becomes_doublet(self):
+        assert reduced_charge_and_multiplicity(1, 1, 1) == (0, 2)
+
+    def test_odd_n_doublet_becomes_singlet(self):
+        assert reduced_charge_and_multiplicity(1, 2, 1) == (0, 1)
+
+    def test_even_n_keeps_multiplicity(self):
+        assert reduced_charge_and_multiplicity(2, 1, 2) == (0, 1)
+
+
+class TestComputeRedoxPotential:
+    def _install_fake_energies(self, monkeypatch, gas, solv):
+        def fake_gas(filepath, **kwargs):
+            return gas[Path(filepath).name]
+
+        def fake_solv(filepath):
+            return solv[Path(filepath).name]
+
+        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy", fake_solv
+        )
+
+    def _result_for_n(self, monkeypatch, tmp_path, n_electrons, e_ref):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        # E_gas, G_corr
+        gas = {
+            "ox_gas.log": (1.00, 0.01),
+            "red_gas.log": (1.10, 0.02),
+            "ref_ox_gas.log": (2.00, 0.03),
+            "ref_red_gas.log": (2.20, 0.04),
+        }
+        solv = {
+            "ox_solv.log": 0.90,
+            "red_solv.log": 1.00,
+            "ref_ox_solv.log": 1.80,
+            "ref_red_solv.log": 2.00,
+        }
+        self._install_fake_energies(monkeypatch, gas, solv)
+        name = f"test_n{n_electrons}"
+        register_redox_reference(
+            RedoxReference(
+                name=name,
+                E_ref_V=e_ref,
+                n_electrons=n_electrons,
+                scale="Fc/Fc+",
+                couple_label="Test/Test+",
+            )
+        )
+        return compute_redox_potential(
+            ox_gas_file=files["ox_gas.log"],
+            red_gas_file=files["red_gas.log"],
+            ref_ox_gas_file=files["ref_ox_gas.log"],
+            ref_red_gas_file=files["ref_red_gas.log"],
+            ox_solv_file=files["ox_solv.log"],
+            red_solv_file=files["red_solv.log"],
+            ref_ox_solv_file=files["ref_ox_solv.log"],
+            ref_red_solv_file=files["ref_red_solv.log"],
+            reference=name,
+        )
+
+    def test_n1_exchange_arithmetic(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        result = self._result_for_n(monkeypatch, tmp_path, 1, e_ref=0.0)
+        # G_soln = E_solv + G_corr
+        g_ox = 0.90 + 0.01
+        g_red = 1.00 + 0.02
+        g_ref_ox = 1.80 + 0.03
+        g_ref_red = 2.00 + 0.04
+        delta_g_au = g_red + g_ref_ox - g_ox - g_ref_red
+        assert result["delta_G_exchange_au"] == pytest.approx(delta_g_au)
+        assert result["delta_G_exchange_au"] == pytest.approx(-0.10)
+        delta_g_j = energy_conversion("hartree", "j/mol", delta_g_au)
+        expected_e = 0.0 - delta_g_j / (1 * FARADAY)
+        assert result["E_target_V"] == pytest.approx(expected_e)
+        assert result["E_ref_V"] == 0.0
+        assert result["n_electrons"] == 1
+        assert result["scale"] == "Fc/Fc+"
+        assert result["couple_label"] == "Test/Test+"
+        assert result["reference_name"] == "test_n1"
+        assert result["G_soln_ox_au"] == pytest.approx(g_ox)
+        assert result["G_soln_red_au"] == pytest.approx(g_red)
+
+    def test_n2_halves_potential_contribution(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        result = self._result_for_n(monkeypatch, tmp_path, 2, e_ref=0.25)
+        delta_g_j = energy_conversion("hartree", "j/mol", -0.10)
+        expected_e = 0.25 - delta_g_j / (2 * FARADAY)
+        assert result["n_electrons"] == 2
+        assert result["E_ref_V"] == 0.25
+        assert result["E_target_V"] == pytest.approx(expected_e)
+        n1_shift = delta_g_j / FARADAY
+        n2_shift = delta_g_j / (2 * FARADAY)
+        assert n2_shift == pytest.approx(n1_shift / 2)
+
+    def test_format_summary_includes_units(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        result = self._result_for_n(monkeypatch, tmp_path, 1, e_ref=0.0)
+        text = format_redox_summary(result)
+        assert "ΔG_exchange" in text
+        assert "kcal/mol" in text
+        assert "eV" in text
+        assert "J/mol" in text
+        assert "E_target" in text
+        assert "Fc/Fc+" in text
+
+    def test_missing_files_error(self):
+        with pytest.raises(ValueError, match="Missing required files"):
+            compute_redox_potential(
+                ox_gas_file="ox.log",
+                red_gas_file="red.log",
+                ref_ox_gas_file=None,
+                ref_red_gas_file="ref_red.log",
+                ox_solv_file="oxs.log",
+                red_solv_file="reds.log",
+                ref_ox_solv_file="refoxs.log",
+                ref_red_solv_file="refreds.log",
+            )
+
+    def test_n_mismatch_errors(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        self._install_fake_energies(
+            monkeypatch,
+            {Path(p).name: (0.0, 0.0) for p in files.values()},
+            {Path(p).name: 0.0 for p in files.values()},
+        )
+        with pytest.raises(ValueError, match="must match the reference"):
+            compute_redox_potential(
+                ox_gas_file=files["ox_gas.log"],
+                red_gas_file=files["red_gas.log"],
+                ref_ox_gas_file=files["ref_ox_gas.log"],
+                ref_red_gas_file=files["ref_red_gas.log"],
+                ox_solv_file=files["ox_solv.log"],
+                red_solv_file=files["red_solv.log"],
+                ref_ox_solv_file=files["ref_ox_solv.log"],
+                ref_red_solv_file=files["ref_red_solv.log"],
+                reference="fc_fc+",
+                n_electrons=2,
+            )
+
+    def test_output_class_wrappers(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        from chemsmart.io.gaussian.output import Gaussian16RedoxOutput
+        from chemsmart.io.orca.output import ORCARedoxOutput
+
+        result = self._result_for_n(monkeypatch, tmp_path, 1, e_ref=0.0)
+        text = Gaussian16RedoxOutput.format_redox_summary(result)
+        assert "E_target" in text
+        assert "E_target" in ORCARedoxOutput.format_redox_summary(result)
+
+
+def _redox_settings(tmp_path, **kwargs):
+    ref_ox = kwargs.pop("ref_ox_file", None) or _write_h2_xyz(
+        tmp_path / "ref_ox.xyz"
+    )
+    ref_red = kwargs.pop("ref_red_file", None) or _write_h2_xyz(
+        tmp_path / "ref_red.xyz"
+    )
+    defaults = dict(
+        functional="B3LYP",
+        basis="6-31G*",
+        charge=1,
+        multiplicity=2,
+        solvent_model="SMD",
+        solvent_id="acetonitrile",
+        ref_ox_file=ref_ox,
+        ref_red_file=ref_red,
+        ref_ox_charge=1,
+        ref_ox_multiplicity=2,
+        ref_red_charge=0,
+        ref_red_multiplicity=1,
+    )
+    defaults.update(kwargs)
+    return GaussianRedoxJobSettings(**defaults)
+
+
+class TestGaussianRedoxJob:
+    def test_creates_opt_and_ref_jobs(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        mol = _h2_molecule()
+        settings = _redox_settings(tmp_path)
+        job = GaussianRedoxJob(
+            molecule=mol,
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert isinstance(job, GaussianJob)
+        assert job.TYPE == "g16redox"
+        assert [phase.name for phase in job.phases] == [
+            "Opt",
+            "Ref Opt",
+            "SP",
+            "Ref SP",
+        ]
+        assert job.ox_job.label == "mol_redox_ox_opt"
+        assert job.red_job.label == "mol_redox_red_opt"
+        assert job.ref_ox_job.label == "mol_redox_RefOx_opt"
+        assert job.ref_red_job.label == "mol_redox_RefRed_opt"
+        assert isinstance(job.ox_job, GaussianOptJob)
+        assert job.ox_job.settings.charge == 1
+        assert job.ox_job.settings.multiplicity == 2
+        assert job.ox_job.settings.freq is True
+        assert job.ox_job.settings.solvent_model is None
+        assert job.red_job.settings.charge == 0
+        assert job.red_job.settings.multiplicity == 1
+        assert job.ref_ox_job.settings.charge == 1
+        assert job.ref_red_job.settings.charge == 0
+
+    def test_sp_jobs_use_solvent_and_labels(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(),
+            settings=_redox_settings(tmp_path),
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        sp_jobs = job._sp_jobs_for_phase()
+        ref_sp_jobs = job._ref_sp_jobs_for_phase()
+        assert [child.label for child in sp_jobs] == [
+            "mol_redox_ox_sp",
+            "mol_redox_red_sp",
+        ]
+        assert [child.label for child in ref_sp_jobs] == [
+            "mol_redox_RefOx_sp",
+            "mol_redox_RefRed_sp",
+        ]
+        assert isinstance(job.ox_sp_job, GaussianSinglePointJob)
+        assert job.ox_sp_job.settings.jobtype == "sp"
+        assert job.ox_sp_job.settings.freq is False
+        assert job.ox_sp_job.settings.solvent_model == "SMD"
+        assert job.ox_sp_job.settings.solvent_id == "acetonitrile"
+
+    def test_red_file_uses_separate_geometry(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        red_xyz = tmp_path / "red.xyz"
+        red_xyz.write_text("3\nred\nH 0 0 0\nH 0 0 0.74\nH 0 0 1.5\n")
+        settings = _redox_settings(tmp_path, red_file=str(red_xyz))
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert len(job.red_job.molecule) == 3
+        assert len(job.ox_job.molecule) == 2
+
+    def test_missing_reference_geometries_error(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        settings = GaussianRedoxJobSettings(
+            functional="B3LYP",
+            basis="6-31G*",
+            charge=1,
+            multiplicity=2,
+        )
+        with pytest.raises(ValueError, match="reference geometries"):
+            GaussianRedoxJob(
+                molecule=_h2_molecule(),
+                settings=settings,
+                label="mol_redox",
+                jobrunner=gaussian_jobrunner_no_scratch,
+            )
+
+    def test_invalid_settings_type(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        settings = GaussianJobSettings(functional="B3LYP", basis="6-31G*")
+        with pytest.raises(
+            ValueError, match="must be instance of GaussianRedoxJobSettings"
+        ):
+            GaussianRedoxJob(
+                molecule=_h2_molecule(),
+                settings=settings,
+                label="mol_redox",
+                jobrunner=gaussian_jobrunner_no_scratch,
+            )
+
+    def test_custom_reference_without_editing_job_class(
+        self,
+        isolated_redox_registry,
+        tmp_path,
+        gaussian_jobrunner_no_scratch,
+    ):
+        ox = _write_h2_xyz(tmp_path / "custom_ox.xyz")
+        red = _write_h2_xyz(tmp_path / "custom_red.xyz")
+        register_redox_reference(
+            RedoxReference(
+                name="n2_couple",
+                E_ref_V=0.55,
+                n_electrons=2,
+                scale="SHE",
+                couple_label="N2/N2+",
+                ox_file=ox,
+                red_file=red,
+                ox_charge=2,
+                ox_multiplicity=1,
+                red_charge=0,
+                red_multiplicity=1,
+            )
+        )
+        settings = GaussianRedoxJobSettings(
+            functional="B3LYP",
+            basis="6-31G*",
+            charge=2,
+            multiplicity=1,
+            reference="n2_couple",
+        )
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(charge=2, multiplicity=1),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert job.settings.reference.name == "n2_couple"
+        assert job.settings.n_electrons == 2
+        assert job.settings.reference.E_ref_V == 0.55
+        assert job.ox_job.settings.charge == 2
+        assert job.red_job.settings.charge == 0
+        assert job.ref_ox_job.settings.charge == 2
+        assert job.ref_red_job.settings.charge == 0
+
+    def test_jobtypes_includes_redox(self):
+        assert "g16redox" in GaussianJobRunner.JOBTYPES
+
+
+class TestORCARedoxJob:
+    def test_creates_opt_jobs(self, tmp_path, orca_jobrunner_no_scratch):
+        from chemsmart.jobs.orca.job import ORCAJob
+        from chemsmart.jobs.orca.opt import ORCAOptJob
+        from chemsmart.jobs.orca.redox import (
+            ORCARedoxJob,
+            ORCARedoxJobSettings,
+        )
+        from chemsmart.jobs.orca.runner import ORCAJobRunner
+
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        settings = ORCARedoxJobSettings(
+            functional="B3LYP",
+            basis="def2-SVP",
+            charge=1,
+            multiplicity=2,
+            solvent_model="CPCM",
+            solvent_id="acetonitrile",
+            ref_ox_file=ref_ox,
+            ref_red_file=ref_red,
+            ref_ox_charge=1,
+            ref_ox_multiplicity=2,
+            ref_red_charge=0,
+            ref_red_multiplicity=1,
+        )
+        job = ORCARedoxJob(
+            molecule=_h2_molecule(),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=orca_jobrunner_no_scratch,
+        )
+        assert isinstance(job, ORCAJob)
+        assert job.TYPE == "orcaredox"
+        assert [phase.name for phase in job.phases] == [
+            "Opt",
+            "Ref Opt",
+            "SP",
+            "Ref SP",
+        ]
+        assert isinstance(job.ox_job, ORCAOptJob)
+        assert job.ox_job.label == "mol_redox_ox_opt"
+        assert job.red_job.label == "mol_redox_red_opt"
+        assert job.ref_ox_job.label == "mol_redox_RefOx_opt"
+        assert job.ref_red_job.label == "mol_redox_RefRed_opt"
+        assert "orcaredox" in ORCAJobRunner.JOBTYPES

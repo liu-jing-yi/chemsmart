@@ -3481,3 +3481,19 @@ class Gaussian16pKaOutput(Gaussian16Output):
             scheme=scheme,
             delta_G_proton=delta_G_proton,
         )
+
+
+class Gaussian16RedoxOutput(Gaussian16Output):
+    """Thin wrapper for exchange redox analysis of Gaussian outputs."""
+
+    @staticmethod
+    def compute_redox_potential(**kwargs):
+        from chemsmart.cli.redox import compute_redox_potential
+
+        return compute_redox_potential(**kwargs)
+
+    @staticmethod
+    def format_redox_summary(result):
+        from chemsmart.cli.redox import format_redox_summary
+
+        return format_redox_summary(result)

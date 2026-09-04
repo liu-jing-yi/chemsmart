@@ -2,8 +2,8 @@
 
 ``ChainMixin`` adds phased child-job orchestration to a program job class.
 ``ChainJob`` is a minimal standalone ``Job`` for tests and generic chains.
-pKa and Fukui workflow jobs inherit ``(ChainMixin, GaussianJob)`` or
-``(ChainMixin, ORCAJob)``.
+pKa, Fukui, and redox workflow jobs inherit ``(ChainMixin, GaussianJob)``
+or ``(ChainMixin, ORCAJob)``.
 """
 
 import logging

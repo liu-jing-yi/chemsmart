@@ -489,7 +489,7 @@ def _register_redox(chain_group):
     @click.pass_context
     def analyze(ctx, **kwargs):
         """Compute redox potential from existing output files."""
-        from chemsmart.analysis.redox import (
+        from chemsmart.cli.redox import (
             compute_redox_potential,
             format_redox_summary,
         )

@@ -55,6 +55,7 @@ CHAIN_NESTED_ONLY_JOBS = {
         "modred",
         "qrc",
         "fukui",
+        "redox",
     ),
     "orca": (
         "pka",
@@ -67,6 +68,7 @@ CHAIN_NESTED_ONLY_JOBS = {
         "modred",
         "qrc",
         "fukui",
+        "redox",
     ),
 }
 

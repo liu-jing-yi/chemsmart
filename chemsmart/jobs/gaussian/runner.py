@@ -92,6 +92,7 @@ class GaussianJobRunner(JobRunner):
         "g16pka_analyze",
         "g16pka_thermo",
         "g16reaction",
+        "g16redox",
     ]
 
     PROGRAM = "gaussian"
