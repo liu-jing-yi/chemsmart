@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 
 import numpy as np
+
+from chemsmart.io.datasets import TabularDataset
 
 logger = logging.getLogger(__name__)
 
@@ -81,33 +82,8 @@ class PKaTableEntry:
             self._set_field(key, value)
 
     @staticmethod
-    def normalize_header(header):
-        """Normalize a table header into snake_case."""
-        header = str(header).strip().lower()
-        header = re.sub(r"[^0-9a-zA-Z]+", "_", header)
-        header = re.sub(r"_+", "_", header).strip("_")
-        return header
-
-    @staticmethod
-    def resolve_column(columns, candidates, required=True):
-        """Resolve a physical column name from logical candidates."""
-        normalized = {PKaTableEntry.normalize_header(c): c for c in columns}
-        for candidate in candidates:
-            key = PKaTableEntry.normalize_header(candidate)
-            if key in normalized:
-                return normalized[key]
-        if required:
-            raise ValueError(
-                "Could not resolve required column. Tried: "
-                + ", ".join(candidates)
-            )
-        return None
-
-    @staticmethod
     def parse_table(table_path, delimiter=None, comment="#"):
         """Backward-compatible shim for generic table parsing."""
-        from chemsmart.io.datasets import TabularDataset
-
         return TabularDataset.parse_table(
             table_path=table_path,
             delimiter=delimiter,
@@ -127,12 +103,12 @@ class PKaTableEntry:
 
     def _canonical_key(self, key):
         k = str(key)
-        nk = self.normalize_header(k)
+        nk = TabularDataset.normalize_header(k)
         for canonical, aliases in self._ALIASES.items():
-            if nk == self.normalize_header(canonical):
+            if nk == TabularDataset.normalize_header(canonical):
                 return canonical
             for alias in aliases:
-                if nk == self.normalize_header(alias):
+                if nk == TabularDataset.normalize_header(alias):
                     return canonical
         return None
 
@@ -292,8 +268,6 @@ class PKaTableEntry:
     @staticmethod
     def is_submission_table(table_path) -> bool:
         """Return True when *table_path* has pKa submission-table columns."""
-        from chemsmart.io.datasets import TabularDataset
-
         if not table_path:
             return False
         if str(table_path).lower().endswith((".cdx", ".cdxml")):
@@ -316,8 +290,6 @@ class PKaTableEntry:
         skip_header: bool = True,
     ) -> list:
         """Thin pKa adapter on top of the generic tabular parser layer."""
-        from chemsmart.io.datasets import TabularDataset
-
         dataset = TabularDataset.parse_table(
             table_path=table_path,
             delimiter=delimiter,
@@ -467,19 +439,19 @@ class ReactionTableEntry:
             self._set_field(key, value)
 
     def _canonical_key(self, key):
-        nk = PKaTableEntry.normalize_header(key)
+        nk = TabularDataset.normalize_header(key)
         for canonical, aliases in self._ALIASES.items():
-            if nk == PKaTableEntry.normalize_header(canonical):
+            if nk == TabularDataset.normalize_header(canonical):
                 return canonical
             for alias in aliases:
-                if nk == PKaTableEntry.normalize_header(alias):
+                if nk == TabularDataset.normalize_header(alias):
                     return canonical
         return None
 
     def _canonical_role(self, value):
         if value is None:
             return None
-        key = PKaTableEntry.normalize_header(value)
+        key = TabularDataset.normalize_header(value)
         return self._ROLE_ALIASES.get(key)
 
     def _set_field(self, key, value):
@@ -538,8 +510,6 @@ class ReactionTableEntry:
     @staticmethod
     def is_submission_table(table_path) -> bool:
         """Return True when *table_path* has reaction submission-table columns."""
-        from chemsmart.io.datasets import TabularDataset
-
         if not table_path:
             return False
         try:
@@ -556,8 +526,6 @@ class ReactionTableEntry:
     @staticmethod
     def parse_reaction_table(table_path: str, delimiter: str = None) -> list:
         """Parse a reaction submission table into :class:`ReactionTableEntry` rows."""
-        from chemsmart.io.datasets import TabularDataset
-
         dataset = TabularDataset.parse_table(
             table_path=table_path,
             delimiter=delimiter,
@@ -781,20 +749,13 @@ class PKaOutputTableEntry:
 
         self._derive_helper_fields()
 
-    @staticmethod
-    def _normalize_header(header):
-        header = str(header).strip().lower()
-        header = re.sub(r"[^0-9a-zA-Z]+", "_", header)
-        header = re.sub(r"_+", "_", header).strip("_")
-        return header
-
     def _canonical_key(self, key):
-        nk = self._normalize_header(key)
+        nk = TabularDataset.normalize_header(key)
         for canonical, aliases in self._ALIASES.items():
-            if nk == self._normalize_header(canonical):
+            if nk == TabularDataset.normalize_header(canonical):
                 return canonical
             for alias in aliases:
-                if nk == self._normalize_header(alias):
+                if nk == TabularDataset.normalize_header(alias):
                     return canonical
         return None
 
@@ -1074,8 +1035,6 @@ class PKaOutputTable:
     def parse_pka_output_table(table_path: str, delimiter: str = None) -> list:
         """Parse an output-table file into :class:`PKaOutputTableEntry` rows."""
         import pandas as pd
-
-        from chemsmart.io.datasets import TabularDataset
 
         dataset = TabularDataset.parse_table(
             table_path=table_path,
