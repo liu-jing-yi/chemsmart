@@ -27,6 +27,8 @@ from chemsmart.cli.reaction import (
     merge_reaction_options,
     store_reaction_shared,
 )
+from chemsmart.cli.redox import analyze as redox_analyze
+from chemsmart.cli.redox import click_redox_shared_options, store_redox_shared
 from chemsmart.cli.utils import (
     CHAIN_CLI_DEFAULTS_KEY,
     CHAIN_PROJECT_SETTINGS_KEY,
@@ -467,6 +469,7 @@ def _register_fukui(chain_group):
 def _register_redox(chain_group):
     @chain_group.group("redox", cls=MyGroup, invoke_without_command=True)
     @click_job_options
+    @click_redox_shared_options
     @click_workflow_program_option
     @click.pass_context
     def redox(ctx, program, skip_completed, **kwargs):
@@ -475,6 +478,7 @@ def _register_redox(chain_group):
         Submit uses the chain YAML alias for ``--program``. Analyze is
         backend-independent and does not need ``-p``, ``-f``, or ``--program``.
         """
+        store_redox_shared(ctx, kwargs)
         if ctx.invoked_subcommand is not None:
             return None
         program = _prepare_workflow_submit(ctx, program, job_name="redox")
@@ -485,19 +489,7 @@ def _register_redox(chain_group):
             extra_params={"skip_completed": skip_completed, **kwargs},
         )
 
-    @redox.command("analyze", cls=MyCommand)
-    @click.pass_context
-    def analyze(ctx, **kwargs):
-        """Compute redox potential from existing output files."""
-        from chemsmart.cli.redox import (
-            compute_redox_potential,
-            format_redox_summary,
-        )
-
-        result = compute_redox_potential(**kwargs)
-        click.echo(format_redox_summary(result))
-        return None
-
+    redox.add_command(redox_analyze)
     return redox
 
 

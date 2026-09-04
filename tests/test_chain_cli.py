@@ -12,8 +12,10 @@ from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
 from chemsmart.jobs.gaussian.fukui import GaussianFukuiJob
 from chemsmart.jobs.gaussian.pka import GaussianpKaJob
 from chemsmart.jobs.gaussian.reaction import GaussianReactionJob
+from chemsmart.jobs.gaussian.redox import GaussianRedoxJob
 from chemsmart.jobs.orca.fukui import ORCAFukuiJob
 from chemsmart.jobs.orca.reaction import ORCAReactionJob
+from chemsmart.jobs.orca.redox import ORCARedoxJob
 from chemsmart.settings.gaussian import GaussianProjectSettings
 from chemsmart.settings.user import CHEMSMARTUserSettings
 
@@ -351,6 +353,14 @@ def _combined_yaml(isolated_config_dir):
     )
 
 
+def _ref_xyz_pair(directory):
+    ox = directory / "ref_ox.xyz"
+    red = directory / "ref_red.xyz"
+    ox.write_text("2\nref ox\nH 0.0 0.0 0.0\nH 0.0 0.0 0.74\n")
+    red.write_text("2\nref red\nH 0.0 0.0 0.0\nH 0.0 0.0 0.74\n")
+    return str(ox), str(red)
+
+
 class TestChainWorkflows:
     def test_pka_program_gaussian_uses_chain_alias_project(
         self, isolated_config_dir
@@ -575,6 +585,67 @@ class TestChainWorkflows:
         assert result.exit_code == 2, result.output
         assert "--program is required for submit" in result.output
 
+    def test_redox_program_gaussian_builds_gaussian_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        ref_ox, ref_red = _ref_xyz_pair(isolated_config_dir)
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = _invoke_chain(
+                [
+                    "-p",
+                    "combined",
+                    "-f",
+                    single_molecule_xyz_file,
+                    "-c",
+                    "1",
+                    "-m",
+                    "2",
+                    "redox",
+                    "--program",
+                    "gaussian",
+                    "--ref-ox",
+                    ref_ox,
+                    "--ref-red",
+                    ref_red,
+                ],
+                standalone_mode=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, GaussianRedoxJob)
+        gaussian_from_project.assert_called_with("gas_solv")
+
+    def test_redox_program_orca_builds_orca_job(
+        self, isolated_config_dir, single_molecule_xyz_file
+    ):
+        _combined_yaml(isolated_config_dir)
+        ref_ox, ref_red = _ref_xyz_pair(isolated_config_dir)
+        result = _invoke_chain(
+            [
+                "-p",
+                "combined",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+                "--program",
+                "orca",
+                "--ref-ox",
+                ref_ox,
+                "--ref-red",
+                ref_red,
+            ],
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, ORCARedoxJob)
+
     def test_redox_analyze_is_registered_without_project(self):
         result = CliRunner().invoke(
             chain,
@@ -590,3 +661,16 @@ class TestChainWorkflows:
             obj={"jobrunner": MagicMock()},
         )
         assert analyze_help.exit_code == 0, analyze_help.output
+        assert "--ox-gas" in analyze_help.output
+        assert "--ref-red-solv" in analyze_help.output
+
+    def test_redox_analyze_works_without_project(self):
+        result = CliRunner().invoke(
+            chain,
+            ["redox", "analyze"],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "Missing option" in result.output
+        assert "--ox-gas" in result.output
+        assert "-p/--project" not in result.output

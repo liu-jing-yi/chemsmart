@@ -1,6 +1,8 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from click.testing import CliRunner
 
 from chemsmart.cli.redox import (
     RedoxReference,
@@ -10,6 +12,8 @@ from chemsmart.cli.redox import (
     list_redox_references,
     register_redox_reference,
 )
+from chemsmart.cli.run import run
+from chemsmart.cli.sub import sub
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
@@ -506,3 +510,266 @@ class TestORCARedoxJob:
         assert job.ref_ox_job.label == "mol_redox_RefOx_opt"
         assert job.ref_red_job.label == "mol_redox_RefRed_opt"
         assert "orcaredox" in ORCAJobRunner.JOBTYPES
+
+
+def _analyze_file_args(files):
+    return [
+        "--ox-gas",
+        files["ox_gas.log"],
+        "--red-gas",
+        files["red_gas.log"],
+        "--ref-ox-gas",
+        files["ref_ox_gas.log"],
+        "--ref-red-gas",
+        files["ref_red_gas.log"],
+        "--ox-solv",
+        files["ox_solv.log"],
+        "--red-solv",
+        files["red_solv.log"],
+        "--ref-ox-solv",
+        files["ref_ox_solv.log"],
+        "--ref-red-solv",
+        files["ref_red_solv.log"],
+    ]
+
+
+class TestRedoxCLI:
+    def test_run_help_lists_redox(self):
+        result = CliRunner().invoke(run, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  redox" in result.output
+
+    def test_sub_help_does_not_list_analysis_redox(self):
+        result = CliRunner().invoke(sub, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  redox" not in result.output
+
+    def test_gaussian_and_orca_help_list_redox_submit(self):
+        runner = CliRunner()
+        gaussian_help = runner.invoke(run, ["gaussian", "--help"])
+        assert gaussian_help.exit_code == 0, gaussian_help.output
+        assert "\n  redox" in gaussian_help.output
+        orca_help = runner.invoke(run, ["orca", "--help"])
+        assert orca_help.exit_code == 0, orca_help.output
+        assert "\n  redox" in orca_help.output
+
+    def test_gaussian_redox_help_is_submission_only(
+        self, single_molecule_xyz_file
+    ):
+        result = CliRunner().invoke(
+            run,
+            [
+                "--fake",
+                "gaussian",
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "redox",
+                "--help",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "--ref-ox" in result.output
+        assert "--ref-red" in result.output
+        assert "--red" in result.output
+        assert "\n  analyze" not in result.output
+
+    def test_orca_redox_help_is_submission_only(
+        self, single_molecule_xyz_file
+    ):
+        result = CliRunner().invoke(
+            run,
+            [
+                "--fake",
+                "orca",
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "redox",
+                "--help",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "--ref-ox" in result.output
+        assert "\n  analyze" not in result.output
+
+    def test_run_redox_help_keeps_analyze(self):
+        result = CliRunner().invoke(run, ["redox", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  analyze" in result.output
+
+    def test_gaussian_redox_builds_job(
+        self, tmp_path, single_molecule_xyz_file
+    ):
+        from chemsmart.cli.gaussian.gaussian import gaussian
+        from chemsmart.jobs.gaussian.redox import GaussianRedoxJob
+
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        result = CliRunner().invoke(
+            gaussian,
+            [
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+                "--ref-ox",
+                ref_ox,
+                "--ref-red",
+                ref_red,
+            ],
+            obj={"jobrunner": MagicMock()},
+            catch_exceptions=False,
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        job = result.return_value
+        assert isinstance(job, GaussianRedoxJob)
+        assert job.ox_job.settings.charge == 1
+        assert job.red_job.settings.charge == 0
+        assert job.ox_job.settings.solvent_model is None
+        assert job.settings.solvent_model == "smd"
+        assert job.settings.reference.name == "fc_fc+"
+
+    def test_orca_redox_builds_job(self, tmp_path, single_molecule_xyz_file):
+        from chemsmart.cli.orca.orca import orca
+        from chemsmart.jobs.orca.redox import ORCARedoxJob
+
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
+        result = CliRunner().invoke(
+            orca,
+            [
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+                "--ref-ox",
+                ref_ox,
+                "--ref-red",
+                ref_red,
+            ],
+            obj={"jobrunner": MagicMock()},
+            catch_exceptions=False,
+            standalone_mode=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert isinstance(result.return_value, ORCARedoxJob)
+
+    def test_gaussian_redox_requires_reference_geometries(
+        self, single_molecule_xyz_file
+    ):
+        from chemsmart.cli.gaussian.gaussian import gaussian
+
+        result = CliRunner().invoke(
+            gaussian,
+            [
+                "-p",
+                "gas_solv",
+                "-f",
+                single_molecule_xyz_file,
+                "-c",
+                "1",
+                "-m",
+                "2",
+                "redox",
+            ],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 2, result.output
+        assert "reference geometries" in result.output
+
+    def test_run_redox_analyze_arithmetic(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        gas = {
+            "ox_gas.log": (1.00, 0.01),
+            "red_gas.log": (1.10, 0.02),
+            "ref_ox_gas.log": (2.00, 0.03),
+            "ref_red_gas.log": (2.20, 0.04),
+        }
+        solv = {
+            "ox_solv.log": 0.90,
+            "red_solv.log": 1.00,
+            "ref_ox_solv.log": 1.80,
+            "ref_red_solv.log": 2.00,
+        }
+
+        def fake_gas(filepath, **kwargs):
+            return gas[Path(filepath).name]
+
+        def fake_solv(filepath):
+            return solv[Path(filepath).name]
+
+        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy", fake_solv
+        )
+        result = CliRunner().invoke(
+            run, ["redox", "analyze", *_analyze_file_args(files)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "E_target" in result.output
+        assert "Fc/Fc+" in result.output
+        assert "kcal/mol" in result.output
+        assert "J/mol" in result.output
+
+    def test_chain_redox_analyze_arithmetic(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        from chemsmart.cli.chain.chain import chain
+
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_gas_phase_data",
+            lambda filepath, **kwargs: (0.0, 0.0),
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            lambda filepath: 0.0,
+        )
+        result = CliRunner().invoke(
+            chain,
+            ["redox", "analyze", *_analyze_file_args(files)],
+            obj={"jobrunner": MagicMock()},
+        )
+        assert result.exit_code == 0, result.output
+        assert "E_target" in result.output
+        assert "-p/--project" not in result.output

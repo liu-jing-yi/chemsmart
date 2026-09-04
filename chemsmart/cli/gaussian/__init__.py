@@ -12,6 +12,7 @@ from .opt import opt
 from .pka import pka
 from .qrc import qrc
 from .reaction import reaction
+from .redox import redox
 from .resp import resp
 from .scan import scan
 from .singlepoint import sp
@@ -35,6 +36,7 @@ __all__ = [
     "pka",
     "qrc",
     "reaction",
+    "redox",
     "resp",
     "scan",
     "traj",

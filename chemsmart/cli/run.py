@@ -7,6 +7,7 @@ import click
 from chemsmart.cli.fukui import fukui
 from chemsmart.cli.jobrunner import click_jobrunner_options
 from chemsmart.cli.logger import logger_options
+from chemsmart.cli.redox import redox as redox_analyze
 from chemsmart.cli.subcommands import subcommands
 from chemsmart.jobs.job import Job
 from chemsmart.jobs.runner import JobRunner
@@ -144,6 +145,7 @@ def process_pipeline(ctx, *args, **kwargs):
 for subcommand in subcommands:
     run.add_command(subcommand)
 run.add_command(fukui)
+run.add_command(redox_analyze)
 
 
 if __name__ == "__main__":
