@@ -175,6 +175,43 @@ def click_pka_shared_options(f):
     return wrapper
 
 
+def store_pka_shared(ctx, kwargs):
+    """Record pKa CLI options on ``ctx.obj`` for submit and analyze."""
+    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+        kwargs.get("cutoff_entropy_grimme"),
+        kwargs.get("cutoff_entropy_truhlar"),
+    )
+    ctx.ensure_object(dict)
+    ctx.obj["pka_shared"] = dict(
+        scheme=kwargs["scheme"],
+        reference=kwargs["reference"],
+        reference_proton_index=kwargs["reference_proton_index"],
+        reference_color_code=kwargs["reference_color_code"],
+        reference_charge=kwargs["reference_charge"],
+        reference_multiplicity=kwargs["reference_multiplicity"],
+        reference_conjugate_base_charge=kwargs[
+            "reference_conjugate_base_charge"
+        ],
+        reference_conjugate_base_multiplicity=kwargs[
+            "reference_conjugate_base_multiplicity"
+        ],
+        delta_g_proton=kwargs["delta_g_proton"],
+        conjugate_base_charge=kwargs["conjugate_base_charge"],
+        conjugate_base_multiplicity=kwargs["conjugate_base_multiplicity"],
+        solvent_model=kwargs["solvent_model"],
+        solvent_id=kwargs["solvent_id"],
+        temperature=kwargs["temperature"],
+        concentration=kwargs["concentration"],
+        pressure=kwargs["pressure"],
+        cutoff_entropy_grimme=s_freq_cutoff,
+        cutoff_enthalpy=kwargs["cutoff_enthalpy"],
+        entropy_method=entropy_method,
+        skip_completed=kwargs["skip_completed"],
+    )
+    ctx.obj["pka_proton_index"] = kwargs.get("proton_index")
+    ctx.obj["pka_color_code"] = kwargs.get("color_code")
+
+
 def is_pka_cdxml_input(filename):
     """Return True when *filename* is a ChemDraw CDX/CDXML structure file."""
     return bool(filename) and str(filename).lower().endswith(

@@ -774,9 +774,9 @@ class TestPKa:
 
         assert result.exit_code == 0, result.output
         assert len(captured["submissions"]) == 2
-        # In "sub ... pka batch", jobs are not executed; only submission scripts are
-        # generated, so reference molecules are not built at this stage.
-        assert reference_pair_call_count["count"] == 0
+        # Only the first batch row keeps the shared reference; construction
+        # loads that pair once via the mixin cache.
+        assert reference_pair_call_count["count"] == 1
 
     def test_sub_orca_pka_batch_first_exchange_rest_direct(
         self, tmp_path, monkeypatch, captured
@@ -1657,13 +1657,18 @@ class TestPKa:
             "SP",
             "Ref SP",
         ]
+        for name in ("Opt", "Ref Opt", "SP", "Ref SP"):
+            phase = job.phase_by_name(name)
+            assert phase.stop_on_incomplete is True
+            assert phase.require_complete is True
         assert isinstance(job.protonated_job, ORCAOptJob)
         assert isinstance(job.conjugate_base_job, ORCAOptJob)
         assert job.protonated_job.label == "1a_pka_HA_opt"
         assert job.conjugate_base_job.label == "1a_pka_A_opt"
         assert job.conjugate_base_job.settings.charge == -1
 
-        assert len(job.sp_jobs) == 2
+        sp_jobs = job._sp_jobs_for_phase()
+        assert len(sp_jobs) == 2
         assert isinstance(job.protonated_sp_job, ORCASinglePointJob)
         assert isinstance(job.conjugate_base_sp_job, ORCASinglePointJob)
         assert job.protonated_sp_job.label == "1a_pka_HA_sp"

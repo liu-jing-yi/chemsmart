@@ -12,14 +12,14 @@ solvation free energy calculations.
 
 import os
 
-from chemsmart.jobs.chain import ChainMixin, JobPhase
 from chemsmart.jobs.orca.job import ORCAJob
 from chemsmart.jobs.orca.opt import ORCAOptJob
 from chemsmart.jobs.orca.settings import ORCApKaJobSettings
 from chemsmart.jobs.orca.singlepoint import ORCASinglePointJob
+from chemsmart.jobs.pka import PkaChainMixin
 
 
-class ORCApKaJob(ChainMixin, ORCAJob):
+class ORCApKaJob(PkaChainMixin, ORCAJob):
     """
     ORCA job class for pKa calculations using the dual-level proton exchange cycle.
 
@@ -40,42 +40,11 @@ class ORCApKaJob(ChainMixin, ORCAJob):
     """
 
     TYPE = "orcapka"
+    _opt_job_class = ORCAOptJob
+    _sp_job_class = ORCASinglePointJob
     _shared_reference_molecule_cache = {}
 
-    @classmethod
-    def _reference_cache_key(cls, settings):
-        if settings is None or not settings.has_reference_file:
-            return None
-        return (
-            settings.scheme,
-            os.path.abspath(settings.reference_file),
-            settings.reference_proton_index,
-            settings.reference_charge,
-            settings.reference_multiplicity,
-            settings.reference_conjugate_base_charge,
-            settings.reference_conjugate_base_multiplicity,
-        )
-
-    @classmethod
-    def _get_cached_reference_pair(cls, settings):
-        cache_key = cls._reference_cache_key(settings)
-        if cache_key is None:
-            return None
-        if cache_key not in cls._shared_reference_molecule_cache:
-            cls._shared_reference_molecule_cache[cache_key] = (
-                settings.reference_pair_molecules()
-            )
-        return cls._shared_reference_molecule_cache[cache_key]
-
-    def __init__(
-        self,
-        molecule,
-        settings=None,
-        label=None,
-        jobrunner=None,
-        skip_completed=True,
-        **kwargs,
-    ):
+    def __init__(self, molecule, settings=None, **kwargs):
         if not isinstance(settings, ORCApKaJobSettings):
             raise ValueError(
                 f"Settings must be instance of ORCApKaJobSettings, "
@@ -88,32 +57,15 @@ class ORCApKaJob(ChainMixin, ORCAJob):
                 "to identify which proton to remove for the conjugate base."
             )
 
-        super().__init__(
-            molecule=molecule,
-            settings=settings,
-            label=label,
-            jobrunner=jobrunner,
-            skip_completed=skip_completed,
-            **kwargs,
-        )
+        super().__init__(molecule=molecule, settings=settings, **kwargs)
 
-        self._opt_jobs = None
-        self._sp_jobs = None
-        self._ref_opt_jobs = None
-        self._ref_sp_jobs = None
-        self.phases = self._build_phases()
-
-    # ------------------------------------------------------------------
-    # Basename helpers for label derivation
-    # ------------------------------------------------------------------
+    @classmethod
+    def settings_class(cls):
+        return ORCApKaJobSettings
 
     @property
     def _ref_basename(self):
-        """Basename for the reference acid (Href), derived from the
-        reference geometry filename so it stays unique when multiple HA
-        share one Href."""
-        import os
-
+        """Basename for the reference acid, from the reference geometry file."""
         if not self.settings.has_reference_file:
             return None
         return os.path.splitext(
@@ -128,142 +80,26 @@ class ORCApKaJob(ChainMixin, ORCAJob):
             return None
         return f"{ref}_cb"
 
-    @classmethod
-    def settings_class(cls):
-        return ORCApKaJobSettings
+    def _href_opt_label(self):
+        return self._ref_basename
 
-    # ------------------------------------------------------------------
-    # Molecule properties
-    # ------------------------------------------------------------------
+    def _ref_opt_label(self):
+        return self._ref_conjugate_base_label
 
-    @property
-    def protonated_molecule(self):
-        """Get the protonated molecule (HA)."""
-        protonated_mol, _ = self.settings.conjugate_pair_molecules(
-            self.molecule
-        )
-        return protonated_mol
-
-    @property
-    def conjugate_base_molecule(self):
-        """Get the conjugate base molecule (A-)."""
-        _, conjugate_base_mol = self.settings.conjugate_pair_molecules(
-            self.molecule
-        )
-        return conjugate_base_mol
-
-    # ------------------------------------------------------------------
-    # Optimization jobs
-    # ------------------------------------------------------------------
-
-    @property
-    def opt_jobs(self):
-        """Get gas phase optimization jobs for HA and A-."""
-        if self._opt_jobs is None:
-            self._opt_jobs = self._prepare_opt_jobs()
-        return self._opt_jobs
-
-    @property
-    def protonated_job(self):
-        """Get gas phase optimization job for HA."""
-        return self.opt_jobs[0]
-
-    @property
-    def conjugate_base_job(self):
-        """Get gas phase optimization job for A-."""
-        return self.opt_jobs[1]
-
-    # ------------------------------------------------------------------
-    # Single-point jobs
-    # ------------------------------------------------------------------
-
-    @property
-    def sp_jobs(self):
-        """Get solution phase SP jobs for HA and A-."""
-        if self._sp_jobs is None:
-            self._sp_jobs = self._prepare_sp_jobs()
-        return self._sp_jobs
-
-    @property
-    def protonated_sp_job(self):
-        """Get solution phase SP job for HA."""
-        return self.sp_jobs[0]
-
-    @property
-    def conjugate_base_sp_job(self):
-        """Get solution phase SP job for A-."""
-        return self.sp_jobs[1]
-
-    # ------------------------------------------------------------------
-    # Reference acid jobs
-    # ------------------------------------------------------------------
-
-    @property
-    def has_reference_jobs(self):
-        """Check if reference acid jobs are configured."""
-        return self.settings.has_reference_file
-
-    @property
-    def reference_molecule(self):
-        """Get the reference acid molecule (Href)."""
-        reference_pair = self._get_cached_reference_pair(self.settings)
-        if reference_pair is None:
-            return self.settings.get_reference_molecule()
-        return reference_pair[0]
-
-    @property
-    def reference_conjugate_base_molecule(self):
-        """Get the reference conjugate base molecule (Ref-)."""
-        reference_pair = self._get_cached_reference_pair(self.settings)
-        if reference_pair is None:
-            return self.settings.get_reference_conjugate_base_molecule()
-        return reference_pair[1]
-
-    @property
-    def ref_opt_jobs(self):
-        """Get gas phase optimization jobs for Href and Ref-."""
-        if not self.has_reference_jobs:
+    def _href_sp_label(self):
+        ref = self._ref_basename
+        if ref is None:
             return None
-        if self._ref_opt_jobs is None:
-            self._ref_opt_jobs = self._prepare_ref_opt_jobs()
-        return self._ref_opt_jobs
+        return f"{ref}_sp"
 
-    @property
-    def ref_acid_job(self):
-        if not self.has_reference_jobs:
+    def _ref_sp_label(self):
+        ref_cb = self._ref_conjugate_base_label
+        if ref_cb is None:
             return None
-        return self.ref_opt_jobs[0]
+        return f"{ref_cb}_sp"
 
-    @property
-    def ref_conjugate_base_job(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_opt_jobs[1]
-
-    @property
-    def ref_sp_jobs(self):
-        """Get solution phase SP jobs for Href and Ref-."""
-        if not self.has_reference_jobs:
-            return None
-        if self._ref_sp_jobs is None:
-            self._ref_sp_jobs = self._prepare_ref_sp_jobs()
-        return self._ref_sp_jobs
-
-    @property
-    def ref_acid_sp_job(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_sp_jobs[0]
-
-    @property
-    def ref_conjugate_base_sp_job(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_sp_jobs[1]
-
-    # ------------------------------------------------------------------
-    # Job preparation
-    # ------------------------------------------------------------------
+    def _reference_pka(self):
+        return self.settings.reference_pka
 
     def _subjob_output_paths(self, job, legacy_label=None):
         """Candidate ORCA output files for a pKa sub-job."""
@@ -274,6 +110,7 @@ class ORCApKaJob(ChainMixin, ORCAJob):
             if runner_out:
                 paths.append(runner_out)
         paths.append(job.outputfile)
+        paths.append(os.path.join(self.folder, f"{job.label}.out"))
         if legacy_label is not None:
             paths.append(os.path.join(self.folder, f"{legacy_label}.out"))
         seen = set()
@@ -311,347 +148,16 @@ class ORCApKaJob(ChainMixin, ORCAJob):
                 return output
         return None
 
-    def _bind_subjob(self, job, legacy_label=None):
+    def _finalize_child_job(self, job, legacy_label=None):
         """Keep sub-jobs in the parent folder and resolve scratch/legacy outputs."""
         job.folder = self.folder
 
         def is_complete():
             return self._subjob_is_complete(job, legacy_label)
 
+        def _output():
+            return self._subjob_output(job, legacy_label)
+
         job.is_complete = is_complete
-
-    def _prepare_opt_jobs(self):
-        """Create gas phase optimization jobs for HA and A-."""
-        protonated_mol, conjugate_base_mol = (
-            self.settings.conjugate_pair_molecules(self.molecule)
-        )
-        protonated_settings, conjugate_base_settings = (
-            self.settings.conjugate_pair_job_settings(self.molecule)
-        )
-
-        protonated_job = ORCAOptJob(
-            molecule=protonated_mol,
-            settings=protonated_settings,
-            label=f"{self.label}_HA_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        conjugate_base_job = ORCAOptJob(
-            molecule=conjugate_base_mol,
-            settings=conjugate_base_settings,
-            label=f"{self.label}_A_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        self._bind_subjob(protonated_job, legacy_label=self.label)
-        self._bind_subjob(conjugate_base_job, legacy_label=f"{self.label}_cb")
-        return protonated_job, conjugate_base_job
-
-    def _prepare_sp_jobs(self):
-        """Create solution phase SP jobs for HA and A-."""
-        protonated_sp_settings, conjugate_base_sp_settings = (
-            self.settings._create_solution_phase_sp_settings(self.molecule)
-        )
-
-        # Use optimised geometry if available
-        prot_out = self._subjob_output(
-            self.protonated_job, legacy_label=self.label
-        )
-        if prot_out is not None:
-            protonated_mol = prot_out.molecule
-        else:
-            protonated_mol = self.protonated_molecule
-
-        cb_out = self._subjob_output(
-            self.conjugate_base_job, legacy_label=f"{self.label}_cb"
-        )
-        if cb_out is not None:
-            conjugate_base_mol = cb_out.molecule
-        else:
-            conjugate_base_mol = self.conjugate_base_molecule
-
-        protonated_sp_job = ORCASinglePointJob(
-            molecule=protonated_mol,
-            settings=protonated_sp_settings,
-            label=f"{self.label}_HA_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        conjugate_base_sp_job = ORCASinglePointJob(
-            molecule=conjugate_base_mol,
-            settings=conjugate_base_sp_settings,
-            label=f"{self.label}_A_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        self._bind_subjob(protonated_sp_job, legacy_label=f"{self.label}_sp")
-        self._bind_subjob(
-            conjugate_base_sp_job, legacy_label=f"{self.label}_cb_sp"
-        )
-        return protonated_sp_job, conjugate_base_sp_job
-
-    def _prepare_ref_opt_jobs(self):
-        """Create gas phase optimization jobs for Href and Ref-."""
-        reference_pair = self._get_cached_reference_pair(self.settings)
-        if reference_pair is None:
-            ref_acid_mol, ref_cb_mol = self.settings.reference_pair_molecules()
-        else:
-            ref_acid_mol, ref_cb_mol = reference_pair
-        ref_acid_settings, ref_cb_settings = (
-            self.settings.reference_pair_job_settings()
-        )
-
-        ref_acid_job = ORCAOptJob(
-            molecule=ref_acid_mol,
-            settings=ref_acid_settings,
-            label=self._ref_basename,
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        ref_cb_job = ORCAOptJob(
-            molecule=ref_cb_mol,
-            settings=ref_cb_settings,
-            label=self._ref_conjugate_base_label,
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        if self._ref_basename is not None:
-            self._bind_subjob(ref_acid_job, legacy_label=self._ref_basename)
-            self._bind_subjob(
-                ref_cb_job, legacy_label=self._ref_conjugate_base_label
-            )
-        else:
-            self._bind_subjob(ref_acid_job)
-            self._bind_subjob(ref_cb_job)
-        return ref_acid_job, ref_cb_job
-
-    def _prepare_ref_sp_jobs(self):
-        """Create solution phase SP jobs for Href and Ref-."""
-        ref_acid_sp_settings, ref_cb_sp_settings = (
-            self.settings.reference_pair_sp_job_settings()
-        )
-
-        ref_acid_out = self.ref_acid_job._output()
-        if ref_acid_out is not None and ref_acid_out.normal_termination:
-            ref_acid_mol = ref_acid_out.molecule
-        else:
-            ref_acid_mol = self.reference_molecule
-
-        ref_cb_out = self.ref_conjugate_base_job._output()
-        if ref_cb_out is not None and ref_cb_out.normal_termination:
-            ref_cb_mol = ref_cb_out.molecule
-        else:
-            ref_cb_mol = self.reference_conjugate_base_molecule
-
-        ref_acid_sp_job = ORCASinglePointJob(
-            molecule=ref_acid_mol,
-            settings=ref_acid_sp_settings,
-            label=f"{self._ref_basename}_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        ref_cb_sp_job = ORCASinglePointJob(
-            molecule=ref_cb_mol,
-            settings=ref_cb_sp_settings,
-            label=f"{self._ref_conjugate_base_label}_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        if self._ref_basename is not None:
-            self._bind_subjob(
-                ref_acid_sp_job, legacy_label=f"{self._ref_basename}_sp"
-            )
-            self._bind_subjob(
-                ref_cb_sp_job,
-                legacy_label=f"{self._ref_conjugate_base_label}_sp",
-            )
-        else:
-            self._bind_subjob(ref_acid_sp_job)
-            self._bind_subjob(ref_cb_sp_job)
-        return ref_acid_sp_job, ref_cb_sp_job
-
-    # ------------------------------------------------------------------
-    # Execution
-    # ------------------------------------------------------------------
-
-    def _build_phases(self):
-        """Return ordered opt and solution-phase SP phases for the pKa cycle."""
-        return [
-            JobPhase(
-                name="Opt",
-                jobs_factory=lambda: self.opt_jobs,
-                stop_on_incomplete=False,
-                require_complete=True,
-                stop_message="Opt jobs incomplete, halting serial execution.",
-            ),
-            JobPhase(
-                name="Ref Opt",
-                jobs_factory=lambda: self.ref_opt_jobs,
-                skip_if=lambda: not self.has_reference_jobs,
-                stop_on_incomplete=False,
-                require_complete=True,
-                stop_message=(
-                    "Ref Opt jobs incomplete, halting serial execution."
-                ),
-            ),
-            JobPhase(
-                name="SP",
-                jobs_factory=lambda: self.sp_jobs,
-                stop_on_incomplete=True,
-                require_complete=True,
-                before_run=self._reset_sp_jobs,
-                stop_message="SP jobs incomplete, halting serial execution.",
-            ),
-            JobPhase(
-                name="Ref SP",
-                jobs_factory=lambda: self.ref_sp_jobs,
-                skip_if=lambda: not self.has_reference_jobs,
-                stop_on_incomplete=True,
-                require_complete=True,
-                before_run=self._reset_ref_sp_jobs,
-                stop_message=(
-                    "Ref SP jobs incomplete, halting serial execution."
-                ),
-            ),
-        ]
-
-    def _reset_sp_jobs(self):
-        self._sp_jobs = None
-
-    def _reset_ref_sp_jobs(self):
-        self._ref_sp_jobs = None
-
-    # ------------------------------------------------------------------
-    # Output accessors
-    # ------------------------------------------------------------------
-
-    @property
-    def protonated_output(self):
-        return self.protonated_job._output()
-
-    @property
-    def conjugate_base_output(self):
-        return self.conjugate_base_job._output()
-
-    @property
-    def protonated_sp_output(self):
-        return self.protonated_sp_job._output()
-
-    @property
-    def conjugate_base_sp_output(self):
-        return self.conjugate_base_sp_job._output()
-
-    @property
-    def ref_acid_output(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_acid_job._output()
-
-    @property
-    def ref_conjugate_base_output(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_conjugate_base_job._output()
-
-    @property
-    def ref_acid_sp_output(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_acid_sp_job._output()
-
-    @property
-    def ref_conjugate_base_sp_output(self):
-        if not self.has_reference_jobs:
-            return None
-        return self.ref_conjugate_base_sp_job._output()
-
-    # ------------------------------------------------------------------
-    # Thermochemistry
-    # ------------------------------------------------------------------
-
-    def _opt_jobs_are_complete(self):
-        """Return True when both target gas-phase optimization jobs finished."""
-        if not self.opt_jobs:
-            return False
-        return all(job.is_complete() for job in self.opt_jobs)
-
-    def _ref_opt_jobs_are_complete(self):
-        """Return True when reference opt jobs finished or are not configured."""
-        if not self.has_reference_jobs:
-            return True
-        if not self.ref_opt_jobs:
-            return False
-        return all(job.is_complete() for job in self.ref_opt_jobs)
-
-    def _pka_output_files(self):
-        """Return (ha_file, a_file, href_file, ref_file) output-path tuple."""
-        ha_file = self.protonated_job.outputfile
-        a_file = self.conjugate_base_job.outputfile
-        href_file = None
-        ref_file = None
-        if self.has_reference_jobs and self._ref_opt_jobs_are_complete():
-            href_file = self.ref_acid_job.outputfile
-            ref_file = self.ref_conjugate_base_job.outputfile
-        return ha_file, a_file, href_file, ref_file
-
-    def compute_thermochemistry(self):
-        """Compute and return thermochemistry results for all species."""
-        from chemsmart.io.orca.output import ORCApKaOutput
-
-        if not self._opt_jobs_are_complete():
-            raise ValueError(
-                "Cannot compute thermochemistry: optimization jobs are not complete. "
-                "Run the pKa jobs first using job.run()."
-            )
-
-        ha_file, a_file, href_file, ref_file = self._pka_output_files()
-
-        return ORCApKaOutput.compute_pka_thermochemistry(
-            ha_file=ha_file,
-            a_file=a_file,
-            href_file=href_file,
-            ref_file=ref_file,
-            temperature=self.settings.temperature,
-            concentration=self.settings.concentration,
-            pressure=self.settings.pressure,
-            cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
-            cutoff_enthalpy=self.settings.cutoff_enthalpy,
-            energy_units=self.settings.energy_units,
-        )
-
-    def print_thermochemistry(self):
-        """Print formatted thermochemistry summary to stdout."""
-        from chemsmart.io.orca.output import ORCApKaOutput
-
-        if not self._opt_jobs_are_complete():
-            raise ValueError(
-                "Cannot print thermochemistry: optimization jobs are not complete. "
-                "Run the pKa jobs first using job.run()."
-            )
-
-        ha_gas, a_gas, href_gas, ref_gas = self._pka_output_files()
-        ha_solv = self.protonated_sp_job.outputfile
-        a_solv = self.conjugate_base_sp_job.outputfile
-        href_solv = ref_solv = None
-        if self.has_reference_jobs:
-            href_solv = self.ref_acid_sp_job.outputfile
-            ref_solv = self.ref_conjugate_base_sp_job.outputfile
-
-        ORCApKaOutput.print_pka_summary(
-            ha_gas_file=ha_gas,
-            a_gas_file=a_gas,
-            href_gas_file=href_gas,
-            ref_gas_file=ref_gas,
-            ha_solv_file=ha_solv,
-            a_solv_file=a_solv,
-            href_solv_file=href_solv,
-            ref_solv_file=ref_solv,
-            pka_reference=self.settings.reference_pka,
-            temperature=self.settings.temperature,
-            concentration=self.settings.concentration,
-            pressure=self.settings.pressure,
-            cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
-            cutoff_enthalpy=self.settings.cutoff_enthalpy,
-            scheme=self.settings.scheme,
-            delta_G_proton=getattr(self.settings, "delta_G_proton", None),
-        )
+        job._output = _output
+        return job
