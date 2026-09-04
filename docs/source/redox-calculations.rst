@@ -183,7 +183,8 @@ Provide all eight outputs:
        --ox-solv mol_redox_ox_sp.log \
        --red-solv mol_redox_red_sp.log \
        --ref-ox-solv mol_redox_RefOx_sp.log \
-       --ref-red-solv mol_redox_RefRed_sp.log
+       --ref-red-solv mol_redox_RefRed_sp.log \
+       -T 333.15 -c 1.0 -csg 100 -ch 100
 
 Pass ``-n`` / ``-r`` on the ``redox`` group **before** ``analyze``:
 
@@ -219,6 +220,8 @@ Submit Options
       -  Charge and multiplicity of the oxidized reference.
    -  -  ``-rrc, --ref-red-charge`` / ``-rrm, --ref-red-multiplicity``
       -  Charge and multiplicity of the reduced reference.
+   -  -  ``-T, --temperature`` / ``-c, --concentration`` / ``-csg`` / ``-ch``
+      -  Thermochemistry options stored on the job (same defaults as pKa analysis).
 
 Analyze Options
 ===============
@@ -237,9 +240,8 @@ Analyze Options
       -  Solution-phase SP outputs for the target couple.
    -  -  ``-ros, --ref-ox-solv`` / ``-rrs, --ref-red-solv``
       -  Solution-phase SP outputs for the reference couple.
-
-Thermochemistry options (``-T``, concentration, pressure, entropy/enthalpy cutoffs) match pKa analysis. See
-:ref:`pka-calculations`.
+   -  -  ``-T, --temperature`` / ``-c, --concentration`` / ``-csg`` / ``-ch``
+      -  Thermochemistry options for quasi-harmonic G (same defaults as pKa analysis).
 
 **********
  See Also

@@ -72,12 +72,12 @@ class TestChainHelp:
         assert "\n  xtb" not in result.output
         assert "\n  crest" not in result.output
 
-    def test_run_help_hides_chain_workflow_subcommands(self):
+    def test_run_help_lists_pka_fukui_and_redox_analysis(self):
         result = CliRunner().invoke(run, ["--help"])
         assert result.exit_code == 0, result.output
-        assert "\n  pka" not in result.output
-        assert "\n  fukui" not in result.output
-        assert "\n  redox" not in result.output
+        assert "\n  pka" in result.output
+        assert "\n  fukui" in result.output
+        assert "\n  redox" in result.output
         assert "\n  reaction" not in result.output
 
     def test_sub_help_hides_chain_workflow_subcommands(self):

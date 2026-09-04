@@ -537,7 +537,7 @@ class TestRedoxCLI:
     def test_run_help_lists_redox(self):
         result = CliRunner().invoke(run, ["--help"])
         assert result.exit_code == 0, result.output
-        assert "\n  redox" not in result.output
+        assert "\n  redox" in result.output
         result = CliRunner().invoke(run, ["chain", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  redox" in result.output
@@ -605,6 +605,8 @@ class TestRedoxCLI:
         result = CliRunner().invoke(run, ["redox", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  analyze" in result.output
+        assert "-T, --temperature" not in result.output
+        assert "-csg" not in result.output
 
     def test_run_redox_analyze_help_lists_short_flags(self):
         result = CliRunner().invoke(run, ["redox", "analyze", "--help"])
@@ -617,6 +619,10 @@ class TestRedoxCLI:
         assert "-rds" in result.output
         assert "-ros" in result.output
         assert "-rrs" in result.output
+        assert "-T, --temperature" in result.output
+        assert "-c, --concentration" in result.output
+        assert "-csg" in result.output
+        assert "-ch" in result.output
 
     def test_gaussian_redox_builds_job(
         self, tmp_path, single_molecule_xyz_file
@@ -841,6 +847,54 @@ class TestRedoxCLI:
         assert "Fc/Fc+" in result.output
         assert "kcal/mol" in result.output
         assert "J/mol" in result.output
+
+    def test_run_redox_analyze_accepts_thermochemistry_after_analyze(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        captured = {}
+
+        def fake_gas(filepath, **kwargs):
+            captured.update(kwargs)
+            return 0.0, 0.0
+
+        monkeypatch.setattr("chemsmart.cli.redox.pka_gas_phase_data", fake_gas)
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy", lambda filepath: 0.0
+        )
+        result = CliRunner().invoke(
+            run,
+            [
+                "redox",
+                "analyze",
+                *_analyze_file_args(files),
+                "-T",
+                "333.15",
+                "-c",
+                "1.0",
+                "-csg",
+                "100",
+                "-ch",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["temperature"] == 333.15
+        assert captured["concentration"] == 1.0
+        assert captured["cutoff_entropy_grimme"] == 100.0
+        assert captured["cutoff_enthalpy"] == 100.0
 
     def test_chain_redox_analyze_arithmetic(
         self, isolated_redox_registry, tmp_path, monkeypatch

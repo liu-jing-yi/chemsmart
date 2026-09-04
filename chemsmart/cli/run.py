@@ -146,10 +146,9 @@ def process_pipeline(ctx, *args, **kwargs):
 for subcommand in subcommands:
     run.add_command(subcommand)
 
-# Backend-independent workflow analysis; canonical path is ``run chain …``.
-for _hidden_cmd in (pka, fukui, redox_analyze):
-    _hidden_cmd.hidden = True
-    run.add_command(_hidden_cmd)
+run.add_command(pka)
+run.add_command(fukui)
+run.add_command(redox_analyze)
 
 
 if __name__ == "__main__":

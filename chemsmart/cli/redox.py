@@ -735,20 +735,9 @@ def register_redox_cli(parent_group, job_cls, settings_cls):
 
 
 @click.group(name="redox", cls=MyGroup)
-@click_pka_thermochemistry_options
 @click_redox_reference_options
 @click.pass_context
-def redox(
-    ctx,
-    temperature,
-    concentration,
-    pressure,
-    cutoff_entropy_grimme,
-    cutoff_entropy_truhlar,
-    cutoff_enthalpy,
-    reference,
-    n_electrons,
-):
+def redox(ctx, reference, n_electrons):
     """Backend-independent redox output analysis.
 
     Submit jobs with ``chemsmart run/sub gaussian|orca … redox`` or
@@ -757,12 +746,6 @@ def redox(
     store_redox_shared(
         ctx,
         dict(
-            temperature=temperature,
-            concentration=concentration,
-            pressure=pressure,
-            cutoff_entropy_grimme=cutoff_entropy_grimme,
-            cutoff_entropy_truhlar=cutoff_entropy_truhlar,
-            cutoff_enthalpy=cutoff_enthalpy,
             reference=reference,
             n_electrons=n_electrons,
         ),
@@ -771,6 +754,7 @@ def redox(
 
 @redox.command("analyze", cls=MyCommand)
 @click_redox_analyze_options
+@click_pka_thermochemistry_options
 @click.pass_context
 def analyze(
     ctx,
@@ -782,6 +766,12 @@ def analyze(
     red_solv_file,
     ref_ox_solv_file,
     ref_red_solv_file,
+    temperature,
+    concentration,
+    pressure,
+    cutoff_entropy_grimme,
+    cutoff_entropy_truhlar,
+    cutoff_enthalpy,
 ):
     """Compute the exchange redox potential from existing output files.
 
@@ -794,6 +784,9 @@ def analyze(
     shared = {}
     if ctx.obj is not None:
         shared = ctx.obj.get("redox_shared") or {}
+    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+        cutoff_entropy_grimme, cutoff_entropy_truhlar
+    )
     try:
         result = compute_redox_potential(
             ox_gas_file=ox_gas_file,
@@ -806,12 +799,12 @@ def analyze(
             ref_red_solv_file=ref_red_solv_file,
             reference=shared.get("reference"),
             n_electrons=shared.get("n_electrons"),
-            temperature=shared.get("temperature", 298.15),
-            concentration=shared.get("concentration", 1.0),
-            pressure=shared.get("pressure", 1.0),
-            cutoff_entropy_grimme=shared.get("cutoff_entropy_grimme", 100.0),
-            cutoff_enthalpy=shared.get("cutoff_enthalpy", 100.0),
-            entropy_method=shared.get("entropy_method") or "grimme",
+            temperature=temperature,
+            concentration=concentration,
+            pressure=pressure,
+            cutoff_entropy_grimme=s_freq_cutoff,
+            cutoff_enthalpy=cutoff_enthalpy,
+            entropy_method=entropy_method,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc

@@ -947,6 +947,9 @@ class TestPKa:
 
     def test_run_pka_help_keeps_output_analysis_commands(self):
         runner = CliRunner()
+        result = runner.invoke(run, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "\n  pka" in result.output
         result = runner.invoke(
             run, ["--no-scratch", "--fake", "pka", "--help"]
         )
