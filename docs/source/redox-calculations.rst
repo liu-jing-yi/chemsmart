@@ -184,7 +184,8 @@ Provide all eight outputs:
        --red-solv mol_redox_red_sp.log \
        --ref-ox-solv mol_redox_RefOx_sp.log \
        --ref-red-solv mol_redox_RefRed_sp.log \
-       -T 333.15 -c 1.0 -csg 100 -ch 100
+       -T 333.15 -c 1.0 -csg 100 -ch 100 \
+       -o redox.dat
 
 Pass ``-n`` / ``-r`` on the ``redox`` group **before** ``analyze``:
 
@@ -242,6 +243,8 @@ Analyze Options
       -  Solution-phase SP outputs for the reference couple.
    -  -  ``-T, --temperature`` / ``-c, --concentration`` / ``-csg`` / ``-ch``
       -  Thermochemistry options for quasi-harmonic G (same defaults as pKa analysis).
+   -  -  ``-o, --output``
+      -  Write the formatted summary to this file instead of printing it.
 
 **********
  See Also

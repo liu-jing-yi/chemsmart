@@ -11,6 +11,7 @@ import functools
 import inspect
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import click
 
@@ -508,6 +509,13 @@ def click_redox_shared_options(f):
 def click_redox_analyze_options(f):
     """Output-file options for exchange redox analysis."""
     f = click.option(
+        "-o",
+        "--output",
+        default=None,
+        type=str,
+        help="Write redox results to this file instead of printing them.",
+    )(f)
+    f = click.option(
         "-rrs",
         "--ref-red-solv",
         "ref_red_solv_file",
@@ -766,6 +774,7 @@ def analyze(
     red_solv_file,
     ref_ox_solv_file,
     ref_red_solv_file,
+    output,
     temperature,
     concentration,
     pressure,
@@ -808,5 +817,11 @@ def analyze(
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
-    click.echo(format_redox_summary(result))
+    summary = format_redox_summary(result)
+    if output is not None:
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(summary + "\n")
+    else:
+        click.echo(summary)
     return None

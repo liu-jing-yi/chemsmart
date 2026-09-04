@@ -623,6 +623,7 @@ class TestRedoxCLI:
         assert "-c, --concentration" in result.output
         assert "-csg" in result.output
         assert "-ch" in result.output
+        assert "-o, --output" in result.output
 
     def test_gaussian_redox_builds_job(
         self, tmp_path, single_molecule_xyz_file
@@ -895,6 +896,47 @@ class TestRedoxCLI:
         assert captured["concentration"] == 1.0
         assert captured["cutoff_entropy_grimme"] == 100.0
         assert captured["cutoff_enthalpy"] == 100.0
+
+    def test_run_redox_analyze_writes_output_file(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = {
+            name: _write_h2_xyz(tmp_path / name)
+            for name in (
+                "ox_gas.log",
+                "red_gas.log",
+                "ref_ox_gas.log",
+                "ref_red_gas.log",
+                "ox_solv.log",
+                "red_solv.log",
+                "ref_ox_solv.log",
+                "ref_red_solv.log",
+            )
+        }
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_gas_phase_data",
+            lambda filepath, **kwargs: (0.0, 0.0),
+        )
+        monkeypatch.setattr(
+            "chemsmart.cli.redox.pka_solvent_scf_energy",
+            lambda filepath: 0.0,
+        )
+        output_path = tmp_path / "subdir" / "redox.dat"
+        result = CliRunner().invoke(
+            run,
+            [
+                "redox",
+                "analyze",
+                *_analyze_file_args(files),
+                "-o",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "E_target" not in result.output
+        text = output_path.read_text()
+        assert "E_target" in text
+        assert "Fc/Fc+" in text
 
     def test_chain_redox_analyze_arithmetic(
         self, isolated_redox_registry, tmp_path, monkeypatch
