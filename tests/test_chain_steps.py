@@ -177,24 +177,12 @@ class TestChainStepRegistry:
                 spec = get_chain_step_spec(program, job)
                 assert spec.job_class is job_class
 
-    def test_nested_only_jobs_are_cli_commands_minus_pipeline(self):
-        from chemsmart.cli.crest import crest
-        from chemsmart.cli.gaussian import gaussian
-        from chemsmart.cli.orca import orca
-        from chemsmart.cli.xtb import xtb
-
-        groups = {
-            "crest": crest,
-            "xtb": xtb,
-            "gaussian": gaussian,
-            "orca": orca,
-        }
-        for program, group in groups.items():
-            pipeline = set(CHAIN_STEP_SPECS[program])
-            assert set(CHAIN_NESTED_ONLY_JOBS[program]) == (
-                set(group.commands) - pipeline
-            )
-            assert pipeline.isdisjoint(CHAIN_NESTED_ONLY_JOBS[program])
+    def test_nested_only_jobs_are_explicit_workflow_names(self):
+        assert CHAIN_NESTED_ONLY_JOBS == frozenset(
+            {"pka", "fukui", "redox", "reaction"}
+        )
+        for jobs in CHAIN_STEP_SPECS.values():
+            assert CHAIN_NESTED_ONLY_JOBS.isdisjoint(jobs)
 
     def test_nested_only_pka_errors(self):
         with pytest.raises(
@@ -202,10 +190,8 @@ class TestChainStepRegistry:
             match="do not support gaussian 'pka'",
         ):
             get_chain_step_spec("gaussian", "pka")
-        assert "pka" in CHAIN_NESTED_ONLY_JOBS["gaussian"]
-        assert "pka" in CHAIN_NESTED_ONLY_JOBS["orca"]
-        assert "redox" in CHAIN_NESTED_ONLY_JOBS["gaussian"]
-        assert "redox" in CHAIN_NESTED_ONLY_JOBS["orca"]
+        assert "pka" in CHAIN_NESTED_ONLY_JOBS
+        assert "redox" in CHAIN_NESTED_ONLY_JOBS
 
     def test_nested_only_redox_errors(self):
         with pytest.raises(
@@ -220,6 +206,18 @@ class TestChainStepRegistry:
             match="do not support gaussian 'fukui'",
         ):
             get_chain_step_spec("gaussian", "fukui")
+
+    def test_non_workflow_cli_job_is_unsupported_not_nested(self):
+        with pytest.raises(
+            ValueError,
+            match="Unsupported chain step job 'qmmm' for program 'gaussian'",
+        ):
+            get_chain_step_spec("gaussian", "qmmm")
+        with pytest.raises(
+            ValueError,
+            match="Unsupported chain step job 'irc' for program 'gaussian'",
+        ):
+            get_chain_step_spec("gaussian", "irc")
 
     def test_unknown_job_lists_supported_jobs(self):
         with pytest.raises(
