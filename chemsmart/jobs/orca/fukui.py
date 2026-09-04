@@ -8,21 +8,14 @@ Post-processing is backend-independent via ``chemsmart run fukui``
 (``chemsmart.analysis.fukui``).
 """
 
-import logging
-
-from chemsmart.analysis.fukui import (
-    ORCA_FUKUI_MODES,
-    radical_ion_charge_and_multiplicity,
-)
-from chemsmart.jobs.chain import ChainMixin, JobPhase
+from chemsmart.analysis.fukui import ORCA_FUKUI_MODES
+from chemsmart.jobs.fukui import FukuiChainMixin
 from chemsmart.jobs.orca.job import ORCAJob
 from chemsmart.jobs.orca.settings import ORCAJobSettings
 from chemsmart.jobs.orca.singlepoint import ORCASinglePointJob
 
-logger = logging.getLogger(__name__)
 
-
-class ORCAFukuiJob(ChainMixin, ORCAJob):
+class ORCAFukuiJob(FukuiChainMixin, ORCAJob):
     """
     ORCA job class for Fukui charge-state calculations.
 
@@ -46,163 +39,24 @@ class ORCAFukuiJob(ChainMixin, ORCAJob):
     """
 
     TYPE = "orcafukui"
+    _supported_modes_label = "ORCA modes"
 
-    def __init__(
-        self,
-        molecule,
-        settings=None,
-        label=None,
-        jobrunner=None,
-        skip_completed=True,
-        mode="mulliken",
-        radical_cation_charge=None,
-        radical_cation_multiplicity=None,
-        radical_anion_charge=None,
-        radical_anion_multiplicity=None,
-        **kwargs,
-    ):
+    def __init__(self, molecule, settings=None, **kwargs):
         if not isinstance(settings, ORCAJobSettings):
             raise ValueError(
                 f"Settings must be instance of ORCAJobSettings for "
                 f"{self.__class__.__name__}, but is {settings} instead!"
             )
+        super().__init__(molecule=molecule, settings=settings, **kwargs)
 
-        mode = mode.lower()
-        if mode not in ORCA_FUKUI_MODES:
-            raise ValueError(
-                f"Unknown Fukui mode {mode}. Supported ORCA modes are: "
-                f"{', '.join(ORCA_FUKUI_MODES)}."
-            )
+    def _allowed_modes(self):
+        return ORCA_FUKUI_MODES
 
-        super().__init__(
-            molecule=molecule,
-            settings=settings,
-            label=label,
-            jobrunner=jobrunner,
-            skip_completed=skip_completed,
-            **kwargs,
-        )
-
-        self.mode = mode
-        self.radical_cation_charge = radical_cation_charge
-        self.radical_cation_multiplicity = radical_cation_multiplicity
-        self.radical_anion_charge = radical_anion_charge
-        self.radical_anion_multiplicity = radical_anion_multiplicity
-
-        self.neutral_job = None
-        self.cation_job = None
-        self.anion_job = None
-        self.charge_jobs = []
-
-        self._prepare_fukui_jobs()
-        self.phases = [
-            JobPhase(
-                name="Fukui",
-                jobs_factory=lambda: self.charge_jobs,
-                stop_on_incomplete=True,
-                require_complete=True,
-                stop_message=(
-                    "Fukui charge-state jobs incomplete, "
-                    "halting serial execution."
-                ),
-            )
-        ]
-
-    def _prepare_fukui_jobs(self):
-        """Prepare charge-state population jobs."""
-        if self.settings is None:
-            return
-        self._create_charge_jobs(self.molecule)
-
-    def _population_route_extra(self):
-        if self.mode == "hirshfeld":
-            return "Hirshfeld"
-        return None
+    def _population_job_class(self):
+        return ORCASinglePointJob
 
     def _population_settings(self, charge, multiplicity):
-        settings = self.settings.copy()
-        settings.charge = charge
-        settings.multiplicity = multiplicity
-        settings.freq = False
-        settings.jobtype = "sp"
-        route_extra = self._population_route_extra()
-        if route_extra is not None:
-            current = settings.additional_route_parameters
-            if current:
-                settings.additional_route_parameters = (
-                    f"{current} {route_extra}"
-                )
-            else:
-                settings.additional_route_parameters = route_extra
+        settings = super()._population_settings(charge, multiplicity)
+        if self.mode == "hirshfeld":
+            self._append_route_parameter(settings, "Hirshfeld")
         return settings
-
-    def _create_charge_jobs(self, molecule):
-        """Create neutral / cation / anion population jobs at ``molecule``."""
-        charge = self.settings.charge
-        multiplicity = self.settings.multiplicity
-
-        self.neutral_job = ORCASinglePointJob(
-            molecule=molecule,
-            settings=self._population_settings(charge, multiplicity),
-            label=f"{self.label}_n",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-
-        cation_charge, cation_mult = radical_ion_charge_and_multiplicity(
-            charge, multiplicity, +1
-        )
-        if self.radical_cation_charge is not None:
-            cation_charge = self.radical_cation_charge
-        if self.radical_cation_multiplicity is not None:
-            cation_mult = self.radical_cation_multiplicity
-        self.cation_job = ORCASinglePointJob(
-            molecule=molecule,
-            settings=self._population_settings(cation_charge, cation_mult),
-            label=f"{self.label}_rc",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-
-        anion_charge, anion_mult = radical_ion_charge_and_multiplicity(
-            charge, multiplicity, -1
-        )
-        if self.radical_anion_charge is not None:
-            anion_charge = self.radical_anion_charge
-        if self.radical_anion_multiplicity is not None:
-            anion_mult = self.radical_anion_multiplicity
-        self.anion_job = ORCASinglePointJob(
-            molecule=molecule,
-            settings=self._population_settings(anion_charge, anion_mult),
-            label=f"{self.label}_ra",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-
-        self.charge_jobs = [
-            self.neutral_job,
-            self.cation_job,
-            self.anion_job,
-        ]
-        return self.charge_jobs
-
-    @property
-    def neutral_output(self):
-        """Parsed output for the neutral charge-state job."""
-        if self.neutral_job is None:
-            return None
-        return self.neutral_job._output()
-
-    @property
-    def cation_output(self):
-        """Parsed output for the radical-cation job."""
-        if self.cation_job is None:
-            return None
-        return self.cation_job._output()
-
-    @property
-    def anion_output(self):
-        """Parsed output for the radical-anion job."""
-        if self.anion_job is None:
-            return None
-        return self.anion_job._output()

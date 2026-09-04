@@ -139,6 +139,9 @@ class TestGaussianFukuiJob:
         assert isinstance(job, GaussianJob)
         assert job.TYPE == "g16fukui"
         assert [phase.name for phase in job.phases] == ["Fukui"]
+        fukui_phase = job.phase_by_name("Fukui")
+        assert fukui_phase.stop_on_incomplete is True
+        assert fukui_phase.require_complete is True
         assert isinstance(job.neutral_job, GaussianSinglePointJob)
         assert job.neutral_job.label == "phenol_fukui_n"
         assert job.cation_job.label == "phenol_fukui_rc"
@@ -231,6 +234,9 @@ class TestORCAFukuiJob:
         assert isinstance(job, ORCAJob)
         assert job.TYPE == "orcafukui"
         assert [phase.name for phase in job.phases] == ["Fukui"]
+        fukui_phase = job.phase_by_name("Fukui")
+        assert fukui_phase.stop_on_incomplete is True
+        assert fukui_phase.require_complete is True
         assert isinstance(job.neutral_job, ORCASinglePointJob)
         assert job.neutral_job.label == "phenol_fukui_n"
         assert job.cation_job.label == "phenol_fukui_rc"
