@@ -25,6 +25,8 @@ from chemsmart.cli.pka import (
     store_pka_shared,
 )
 from chemsmart.cli.reaction import (
+    build_reaction_batch_jobs,
+    build_reaction_job,
     click_reaction_shared_options,
     merge_reaction_options,
     store_reaction_shared,
@@ -35,7 +37,10 @@ from chemsmart.cli.utils import (
     CHAIN_CLI_DEFAULTS_KEY,
     CHAIN_PROJECT_SETTINGS_KEY,
 )
+from chemsmart.jobs.gaussian.reaction import GaussianReactionJob
+from chemsmart.jobs.orca.reaction import ORCAReactionJob
 from chemsmart.utils.cli import MyCommand, MyGroup
+from chemsmart.utils.datasets import ReactionTableEntry
 from chemsmart.utils.io import clean_label
 from chemsmart.utils.utils import return_objects_and_indices_from_string_index
 
@@ -214,8 +219,6 @@ def _import_program_workflow(program, workflow):
             return module.fukui
         if workflow == "redox":
             return module.redox
-        if workflow == "reaction":
-            return module.reaction
     except (ImportError, AttributeError) as exc:
         raise click.UsageError(
             f"No {program} {workflow} command is registered."
@@ -419,6 +422,48 @@ def _register_redox(chain_group):
     return redox
 
 
+_REACTION_JOB_CLS = {
+    "gaussian": GaussianReactionJob,
+    "orca": ORCAReactionJob,
+}
+
+
+def _run_chain_reaction_batch(ctx, program, **kwargs):
+    job_cls = _REACTION_JOB_CLS[program]
+    return build_reaction_batch_jobs(
+        ctx,
+        job_cls,
+        _resolved_skip_completed(ctx),
+        include_neb=job_cls.uses_neb,
+        **kwargs,
+    )
+
+
+def _run_chain_reaction_submit(
+    ctx, program, reactants, products, ts_guess, **kwargs
+):
+    skip_completed = _resolved_skip_completed(ctx)
+    if ReactionTableEntry.is_submission_table(ctx.obj.get("filename")):
+        return _run_chain_reaction_batch(ctx, program, **kwargs)
+    reactants, products, ts_guess = merge_reaction_options(
+        ctx,
+        reactants=reactants,
+        products=products,
+        ts_guess=ts_guess,
+    )
+    job_cls = _REACTION_JOB_CLS[program]
+    return build_reaction_job(
+        ctx,
+        job_cls,
+        skip_completed,
+        include_neb=job_cls.uses_neb,
+        reactants=reactants,
+        products=products,
+        ts_guess=ts_guess,
+        **kwargs,
+    )
+
+
 def _register_reaction(chain_group):
     @chain_group.group("reaction", cls=MyGroup, invoke_without_command=True)
     @click_job_options
@@ -448,11 +493,13 @@ def _register_reaction(chain_group):
         )
         program = _prepare_workflow_submit(ctx, program, job_name="reaction")
         if ctx.invoked_subcommand is None:
-            return _invoke_program_workflow(
+            return _run_chain_reaction_submit(
                 ctx,
                 program,
-                "reaction",
-                extra_params={"skip_completed": skip_completed, **kwargs},
+                reactants,
+                products,
+                ts_guess,
+                **kwargs,
             )
         return None
 
@@ -462,25 +509,14 @@ def _register_reaction(chain_group):
     @click.pass_context
     def submit(ctx, skip_completed, reactants, products, ts_guess, **kwargs):
         """Submit a single reaction workflow."""
-        reactants, products, ts_guess = merge_reaction_options(
-            ctx,
-            reactants=reactants,
-            products=products,
-            ts_guess=ts_guess,
-        )
         program = ctx.obj[_WORKFLOW_PROGRAM_KEY]
-        return _invoke_program_subcommand(
+        return _run_chain_reaction_submit(
             ctx,
             program,
-            "reaction",
-            "submit",
-            extra_params={
-                "skip_completed": skip_completed,
-                "reactants": reactants,
-                "products": products,
-                "ts_guess": ts_guess,
-                **kwargs,
-            },
+            reactants,
+            products,
+            ts_guess,
+            **kwargs,
         )
 
     @reaction.command("batch", cls=MyCommand)
@@ -489,13 +525,7 @@ def _register_reaction(chain_group):
     def batch(ctx, skip_completed, **kwargs):
         """Batch reaction submission from a CSV table grouped by reaction_id."""
         program = ctx.obj[_WORKFLOW_PROGRAM_KEY]
-        return _invoke_program_subcommand(
-            ctx,
-            program,
-            "reaction",
-            "batch",
-            extra_params={"skip_completed": skip_completed, **kwargs},
-        )
+        return _run_chain_reaction_batch(ctx, program, **kwargs)
 
     return reaction
 

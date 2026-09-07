@@ -5,11 +5,12 @@
 ################################
 
 This page covers **Gaussian reaction job submission** — endpoint optimization, QST2/QST3 path search on minimized
-reactant and product, TS opt+freq, and solvent single-points.
+reactant and product, TS opt+freq, and solvent single-points. Submit with ``chemsmart sub/run chain … reaction --program
+gaussian``.
 
 .. note::
 
-   Output-file analysis is not part of ``gaussian reaction``. After calculations finish, use ``chemsmart run
+   Output-file analysis is not part of ``chain … reaction``. After calculations finish, use ``chemsmart run
    thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
    analyze`` command is planned as a follow-up.
 
@@ -28,22 +29,16 @@ to optimize.
 
 .. code:: bash
 
-   chemsmart sub gaussian -p my_project -f ts_guess.xyz -c 0 -m 1 reaction
+   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program gaussian
 
 Where:
 
--  ``-p my_project``: Project settings (gas opt/TS theory and solv SP theory)
+-  ``-p combined``: Chain project (Gaussian theory from the ``gaussian:`` YAML alias)
 -  ``-f ts_guess.xyz``: TS guess (XYZ, LOG, COM, …)
 -  ``-c 0 -m 1``: Charge and multiplicity of the TS
 
 This runs TS opt+freq (``ts_settings()``) and a solvent single-point (``sp_settings()``).
-
-Chain submit uses the Gaussian alias from the chain YAML:
-
-.. code:: bash
-
-   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
-       reaction --program gaussian
 
 **Case 2 — reactant + product (QST2)**
 
@@ -53,8 +48,8 @@ the located TS.
 
 .. code:: bash
 
-   chemsmart sub gaussian -p my_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program gaussian --product product.xyz
 
 **Case 2 — QST3**
 
@@ -62,12 +57,12 @@ Pass a TS guess as well. Atom order must match across reactant, product, and TS 
 
 .. code:: bash
 
-   chemsmart sub gaussian -p my_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz --ts-guess ts.xyz
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program gaussian --product product.xyz --ts-guess ts.xyz
 
    # Equivalent: -f is the QST3 guess when both --reactant and --product are set
-   chemsmart sub gaussian -p my_project -f ts.xyz -c 0 -m 1 reaction \
-       --reactant reactant.xyz --product product.xyz
+   chemsmart sub chain -p combined -f ts.xyz -c 0 -m 1 \
+       reaction --program gaussian --reactant reactant.xyz --product product.xyz
 
 ``gaussian ts`` remains the single-structure TS search. See :doc:`gaussian-transition-state`.
 
@@ -96,12 +91,12 @@ batch is selected automatically when ``-f`` points to a submission table).
 
 .. code:: bash
 
-   chemsmart sub gaussian -p my_project -f reactions.csv reaction batch
+   chemsmart sub chain -p combined -f reactions.csv reaction --program gaussian batch
 
 .. note::
 
-   When ``-f`` is a submission table, the parent ``gaussian`` command does not require ``-c`` / ``-m``; charge and
-   multiplicity are read from each table row.
+   When ``-f`` is a submission table, chain ``-c`` / ``-m`` are not required; charge and multiplicity are read from each
+   table row.
 
 On HPC clusters, use ``chemsmart sub`` instead of ``chemsmart run``; each ``reaction_id`` receives its own scheduler
 script with a reconstructed ``reaction submit`` command. See :ref:`reaction-calculations`.
@@ -127,11 +122,11 @@ Reaction Options
       -  ``--reactant``
       -  Reactant geometry file. Repeatable for extra fragments. With ``--product``, parent ``-f`` is the TS guess.
 
-   -  -
+   -  -  ``-p``
       -  ``--product``
       -  Product geometry file. Repeatable. Presence selects path search (case 2) when no ``--reactant`` is given.
 
-   -  -
+   -  -  ``-ts``
       -  ``--ts-guess``
       -  QST3 intermediate when ``-f`` is the reactant. Requires ``--product``.
 
@@ -156,30 +151,31 @@ Example 1: TS Guess Only
 
 .. code:: bash
 
-   chemsmart sub gaussian -p b3lyp_project -f ts_guess.xyz -c 0 -m 1 reaction
+   chemsmart sub chain -p b3lyp_project -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program gaussian
 
 Example 2: QST2 from Reactant and Product
 =========================================
 
 .. code:: bash
 
-   chemsmart sub gaussian -p b3lyp_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz
+   chemsmart sub chain -p b3lyp_project -f reactant.xyz -c 0 -m 1 \
+       reaction --program gaussian --product product.xyz
 
 Example 3: QST3
 ===============
 
 .. code:: bash
 
-   chemsmart sub gaussian -p b3lyp_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz --ts-guess ts.xyz
+   chemsmart sub chain -p b3lyp_project -f reactant.xyz -c 0 -m 1 \
+       reaction --program gaussian --product product.xyz --ts-guess ts.xyz
 
 Example 4: Batch Submission from CSV
 ====================================
 
 .. code:: bash
 
-   chemsmart sub gaussian -p b3lyp_project -f reactions.csv reaction batch
+   chemsmart sub chain -p b3lyp_project -f reactions.csv reaction --program gaussian batch
 
 Example 5: Thermochemistry on Completed Outputs
 ===============================================

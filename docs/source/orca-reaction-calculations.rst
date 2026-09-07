@@ -4,12 +4,12 @@
  ORCA Reaction Calculations
 ############################
 
-This page covers **ORCA reaction job submission**. The command structure mirrors Gaussian reaction for a consistent
-experience. Path search uses project NEB-TS instead of QST.
+This page covers **ORCA reaction job submission**. Path search uses project NEB-TS instead of QST. Submit with
+``chemsmart sub/run chain … reaction --program orca``.
 
 .. note::
 
-   Output-file analysis is not part of ``orca reaction``. After calculations finish, use ``chemsmart run
+   Output-file analysis is not part of ``chain … reaction``. After calculations finish, use ``chemsmart run
    thermochemistry`` on the child outputs. See :ref:`reaction-calculations`. A dedicated ``chemsmart run reaction
    analyze`` command is planned as a follow-up.
 
@@ -27,23 +27,17 @@ experience. Path search uses project NEB-TS instead of QST.
 
 .. code:: bash
 
-   chemsmart sub orca -p my_project -f ts_guess.xyz -c 0 -m 1 reaction
+   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program orca
 
 Where:
 
--  ``-p my_project``: ORCA project settings
+-  ``-p combined``: Chain project (ORCA theory from the ``orca:`` YAML alias)
 -  ``-f ts_guess.xyz``: TS guess
 -  ``-c 0 -m 1``: Charge and multiplicity of the TS
 
 This runs OptTS + freq (``ts_settings()``) and a solvent single-point (``sp_settings()``). Hessian/ScanTS flags from
 ``orca ts`` are not re-exposed; TS children use project ``ts_settings()``.
-
-Chain submit uses the ORCA alias from the chain YAML:
-
-.. code:: bash
-
-   chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
-       reaction --program orca
 
 **Case 2 — reactant + product (NEB-TS)**
 
@@ -54,11 +48,11 @@ reaction chain (not ORCA ``preopt_ends``). Then OptTS characterization.
 
 .. code:: bash
 
-   chemsmart sub orca -p my_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program orca --product product.xyz
 
-   chemsmart sub orca -p my_project -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz --ts-guess ts.xyz
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program orca --product product.xyz --ts-guess ts.xyz
 
 ``orca ts`` remains the single-structure TS search and ``orca neb`` remains the standalone NEB command. See
 :doc:`orca-transition-state`.
@@ -86,11 +80,11 @@ For a job with label ``sn2``:
 
 .. code:: bash
 
-   chemsmart sub orca -p my_project -f reactions.csv reaction batch
+   chemsmart sub chain -p combined -f reactions.csv reaction --program orca batch
 
 .. note::
 
-   When ``-f`` is a submission table, the parent ``orca`` command does not require ``-c`` / ``-m``.
+   When ``-f`` is a submission table, chain ``-c`` / ``-m`` are not required.
 
 Table format is the same as Gaussian. See :ref:`reaction-calculations`.
 
@@ -139,30 +133,31 @@ Example 1: TS Guess Only
 
 .. code:: bash
 
-   chemsmart sub orca -p orca_b3lyp -f ts_guess.xyz -c 0 -m 1 reaction
+   chemsmart sub chain -p orca_b3lyp -f ts_guess.xyz -c 0 -m 1 \
+       reaction --program orca
 
 Example 2: NEB-TS then OptTS
 ============================
 
 .. code:: bash
 
-   chemsmart sub orca -p orca_b3lyp -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz
+   chemsmart sub chain -p orca_b3lyp -f reactant.xyz -c 0 -m 1 \
+       reaction --program orca --product product.xyz
 
 Example 3: NEB with TS Intermediate
 ===================================
 
 .. code:: bash
 
-   chemsmart sub orca -p orca_b3lyp -f reactant.xyz -c 0 -m 1 reaction \
-       --product product.xyz --ts-guess ts.xyz
+   chemsmart sub chain -p orca_b3lyp -f reactant.xyz -c 0 -m 1 \
+       reaction --program orca --product product.xyz --ts-guess ts.xyz
 
 Example 4: Batch Submission from CSV
 ====================================
 
 .. code:: bash
 
-   chemsmart sub orca -p orca_b3lyp -f reactions.csv reaction batch
+   chemsmart sub chain -p orca_b3lyp -f reactions.csv reaction --program orca batch
 
 Example 5: Thermochemistry on Completed Outputs
 ===============================================

@@ -4,23 +4,20 @@
  Reaction Workflow
 ###################
 
-CHEMSMART provides a program-first reaction chain nested under Gaussian and ORCA, and the same workflow as a ``chain``
-subcommand with ``--program``:
+CHEMSMART locates a transition state from a guess **or** from reactant + product (optimization + path search: Gaussian
+QST2/QST3 or ORCA NEB-TS), then runs TS opt+freq and dual-level solvent single-points on the optimized endpoints and TS.
+
+Submit lives only on the ``chain`` group:
 
 .. code:: bash
 
-   chemsmart sub gaussian [GAUSSIAN_OPTIONS] reaction [REACTION_OPTIONS]
-   chemsmart sub orca     [ORCA_OPTIONS]     reaction [REACTION_OPTIONS]
    chemsmart sub chain -p combined [CHAIN_OPTIONS] reaction --program {gaussian,orca} \
        [REACTION_OPTIONS]
 
-The chain locates a transition state from a guess **or** from optimized reactant + product (Gaussian QST2/QST3 or ORCA
-NEB-TS), then runs TS opt+freq and dual-level solvent single-points on the optimized endpoints and TS.
-
 .. note::
 
-   Output analysis is **not** part of this command. After jobs finish, use :doc:`thermochemistry-analysis` on the
-   individual opt/SP outputs. A dedicated reaction analysis command is planned as a follow-up.
+   After jobs finish, use :doc:`thermochemistry-analysis` on the individual opt/SP outputs. A dedicated reaction
+   analysis command is planned as a follow-up.
 
 .. toctree::
    :maxdepth: 2
@@ -39,15 +36,9 @@ NEB-TS), then runs TS opt+freq and dual-level solvent single-points on the optim
 
 **Job submission**
 
--  ``chemsmart run/sub gaussian ... reaction [submit|batch]`` — Gaussian QST (when locating a TS) after endpoint opt,
-   then TS opt and SP.
-
--  ``chemsmart run/sub orca ... reaction [submit|batch]`` — ORCA NEB-TS (when locating a TS) after endpoint opt, then TS
-   opt and SP.
-
--  ``chemsmart run/sub chain -p combined ... reaction --program {gaussian,orca} [submit|batch]`` — same jobs, with
-   theory and solvent from the chain YAML alias. ``--program gaussian`` builds ``GaussianReactionJob`` (QST);
-   ``--program orca`` builds ``ORCAReactionJob`` (NEB). See :ref:`chain-workflow-subcommands`.
+-  ``chemsmart run/sub chain -p combined ... reaction --program {gaussian,orca} [submit|batch]`` — theory and solvent
+   come from the chain YAML alias. ``--program gaussian`` builds ``GaussianReactionJob`` (QST); ``--program orca``
+   builds ``ORCAReactionJob`` (NEB). See :ref:`chain-workflow-subcommands`.
 
 -  Use ``chemsmart run`` for local preparation and execution; use ``chemsmart sub`` on HPC clusters to generate
    scheduler scripts.
@@ -55,15 +46,15 @@ NEB-TS), then runs TS opt+freq and dual-level solvent single-points on the optim
 -  When ``reaction`` is invoked without an explicit subcommand, a submission table triggers ``batch``; otherwise
    ``submit`` runs.
 
-``gaussian ts`` / ``orca ts`` remain single-structure TS searches. ``orca neb`` remains the standalone NEB command.
-``gaussian reaction`` / ``orca reaction`` are the R/TS/P workflow.
+``gaussian ts`` / ``orca ts`` remain single-structure TS searches. ``orca neb`` remains the standalone NEB command. The
+R/TS/P workflow is ``chain … reaction`` only.
 
 ******************
  Case 1 vs Case 2
 ******************
 
-The chain always ends in the same TS characterization (opt=ts / OptTS + freq, then SP). Case 2 first optimizes reactant
-and product endpoints, then locates the TS.
+The chain always ends in the same TS characterization (OptTS + freq, then SP). Case 2 first optimizes reactant and
+product endpoints, then locates the TS.
 
 **Case 1 — TS guess provided.** Skip Endpoint Opt and Guess. Parent ``-f`` is the TS structure. Optional ``--reactant``
 (without ``--product``) adds reactant minima to optimize; that is not a path search.
@@ -89,21 +80,20 @@ CLI dispatch
 .. code:: bash
 
    # Case 1
-   chemsmart sub gaussian -p proj -f ts_guess.xyz -c 0 -m 1 reaction
-
-   # Case 2 Gaussian QST2 / QST3
-   chemsmart sub gaussian -p proj -f reactant.xyz -c 0 -m 1 reaction --product product.xyz
-   chemsmart sub gaussian -p proj -f reactant.xyz reaction --product product.xyz --ts-guess ts.xyz
-
-   # Case 2 ORCA NEB then OptTS
-   chemsmart sub orca -p proj -f reactant.xyz -c 0 -m 1 reaction --product product.xyz
-   chemsmart sub orca -p proj -f reactant.xyz reaction --product product.xyz --ts-guess ts.xyz
-
-   # Chain submit
    chemsmart sub chain -p combined -f ts_guess.xyz -c 0 -m 1 \
        reaction --program gaussian
+
+   # Case 2 Gaussian QST2 / QST3
+   chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
+       reaction --program gaussian --product product.xyz
+   chemsmart sub chain -p combined -f reactant.xyz \
+       reaction --program gaussian --product product.xyz --ts-guess ts.xyz
+
+   # Case 2 ORCA NEB then OptTS
    chemsmart sub chain -p combined -f reactant.xyz -c 0 -m 1 \
        reaction --program orca --product product.xyz
+   chemsmart sub chain -p combined -f reactant.xyz \
+       reaction --program orca --product product.xyz --ts-guess ts.xyz
 
 **********************************
  What Happens After the TS Exists
@@ -112,8 +102,7 @@ CLI dispatch
 Roles:
 
 -  **ts** (required): TS job with ``freq=True``, project ``ts_settings()`` (gas-phase)
--  **reactant** / **product** (case 2): endpoint opt+freq before path search; case 1 optional fragments use
-   ``opt_settings()`` in the Opt phase
+-  **reactant** / **product** (optional): opt+freq, project ``opt_settings()``
 -  **SP**: solvent single-points on optimized geometries, project ``sp_settings()`` (solv) — a different level of theory
    than opt when ``gas`` / ``solv`` differ
 
@@ -174,21 +163,21 @@ without a reactant is case 1 (``-f`` is the TS).
 
 .. note::
 
-   When ``-f`` is a submission table, the parent ``gaussian`` / ``orca`` command does not require ``-c`` / ``-m``;
-   charge and multiplicity are read from each table row.
+   When ``-f`` is a submission table, chain ``-c`` / ``-m`` are not required; charge and multiplicity are read from each
+   table row.
 
-On HPC clusters, ``chemsmart sub ... reaction batch`` writes one scheduler script per ``reaction_id``. Each run wrapper
-is rewritten to a single-reaction ``reaction submit`` command (table path replaced by the parent structure, ``batch``
-replaced by ``submit``, ``--reactant`` / ``--product`` injected). See :doc:`cli-overview` and
-:doc:`configuration-server-settings`.
+On HPC clusters, ``chemsmart sub chain ... reaction --program {gaussian,orca} batch`` writes one scheduler script per
+``reaction_id``. Each run wrapper is rewritten to a single-reaction ``reaction submit`` command (table path replaced by
+the parent structure, ``batch`` replaced by ``submit``, ``--reactant`` / ``--product`` injected). See
+:doc:`cli-overview` and :doc:`configuration-server-settings`.
 
 **********
  Settings
 **********
 
 Child jobs copy project ``opt_settings()`` / ``ts_settings()`` / ``sp_settings()`` (and ORCA ``neb_settings()`` for
-Guess). Charge and multiplicity are set per structure. There is no new YAML job type: use an existing Gaussian or ORCA
-project.
+Guess). Charge and multiplicity are set per structure. There is no new YAML job type: point the chain YAML alias at an
+existing Gaussian or ORCA project.
 
 ORCA Hessian/ScanTS flags are not re-exposed on ``reaction``; TS children use project ``ts_settings()``. Guess-phase
 ORCA uses project ``neb_settings()`` (default ``NEB-TS``).

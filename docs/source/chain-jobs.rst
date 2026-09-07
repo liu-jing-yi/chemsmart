@@ -121,8 +121,9 @@ only.
      pka --program gaussian [pka options] [submit]
    chemsmart run chain pka analyze [pka analyze options]
 
-Program CLI remains ``chemsmart sub gaussian|orca -p <program-project> … pka|fukui|redox|reaction``. See
-:doc:`pka-calculations`, :ref:`fukui-jobs`, :doc:`redox-calculations`, and :doc:`reaction`.
+Program CLI remains ``chemsmart sub gaussian|orca -p <program-project> … pka|fukui|redox``. Reaction is ``chemsmart sub
+chain … reaction --program {gaussian,orca}`` only. See :doc:`pka-calculations`, :ref:`fukui-jobs`,
+:doc:`redox-calculations`, and :doc:`reaction`.
 
 ***************
  CLI Reference

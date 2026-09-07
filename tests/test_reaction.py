@@ -688,11 +688,14 @@ def _write_reaction_project(tmp_path, backend):
         "  solvent_model: smd\n"
         "  solvent_id: water\n"
     )
+    chain_dir = config_root / "chain"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "test.yaml").write_text(f"{backend}: test\n")
     return config_root
 
 
 def _setup_sub_reaction(tmp_path, monkeypatch, backend):
-    """Fake server capture for ``chemsmart sub ... reaction`` tests."""
+    """Fake server capture for ``chemsmart sub chain ... reaction`` tests."""
     monkeypatch.setenv(
         "CHEMSMART_CONFIG_DIR",
         str(_write_reaction_project(tmp_path, backend)),
@@ -709,6 +712,26 @@ def _setup_sub_reaction(tmp_path, monkeypatch, backend):
         lambda _name: fake_server,
     )
     return captured
+
+
+def _sub_chain_reaction_args(
+    backend, filename, *extra, charge=0, multiplicity=1
+):
+    args = [
+        "--test",
+        "--server",
+        "dummy",
+        "--no-scratch",
+        "chain",
+        "-p",
+        "test",
+        "-f",
+        str(filename),
+    ]
+    if charge is not None:
+        args.extend(["-c", str(charge), "-m", str(multiplicity)])
+    args.extend(["reaction", "--program", backend, *extra])
+    return args
 
 
 class TestReactionStructureDispatch:
@@ -909,45 +932,26 @@ class TestReactionCLI:
         from chemsmart.cli.run import run
 
         runner = CliRunner()
-        result = runner.invoke(run, ["gaussian", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "\n  reaction" in result.output
-        result = runner.invoke(run, ["orca", "--help"])
+        for program in ("gaussian", "orca"):
+            result = runner.invoke(run, [program, "--help"])
+            assert result.exit_code == 0, result.output
+            assert "\n  reaction" not in result.output
+        result = runner.invoke(run, ["chain", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  reaction" in result.output
 
-    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
-    def test_reaction_help_is_submission_only(
-        self, tmp_path, monkeypatch, backend
-    ):
+    def test_reaction_help_is_submission_only(self):
         from click.testing import CliRunner
 
         from chemsmart.cli.run import run
 
-        ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
-        monkeypatch.setenv(
-            "CHEMSMART_CONFIG_DIR",
-            str(_write_reaction_project(tmp_path, backend)),
-        )
         runner = CliRunner()
-        result = runner.invoke(
-            run,
-            [
-                "--no-scratch",
-                "--fake",
-                backend,
-                "-p",
-                "test",
-                "-f",
-                str(ts),
-                "reaction",
-                "--help",
-            ],
-        )
+        result = runner.invoke(run, ["chain", "reaction", "--help"])
         assert result.exit_code == 0, result.output
         assert "\n  submit" in result.output
         assert "\n  batch" in result.output
         assert "\n  analyze" not in result.output
+        assert "--program" in result.output
         assert "--reactant" in result.output
         assert "--product" in result.output
         assert "--ts-guess" in result.output
@@ -962,25 +966,8 @@ class TestReactionCLI:
 
         ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
-            sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(ts),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-            ],
+        result = CliRunner().invoke(
+            sub, _sub_chain_reaction_args("gaussian", ts)
         )
         assert result.exit_code == 0, result.output
         assert len(captured["submissions"]) == 1
@@ -1001,27 +988,11 @@ class TestReactionCLI:
         reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
         product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(reactant),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-                "--product",
-                str(product),
-            ],
+            _sub_chain_reaction_args(
+                "gaussian", reactant, "--product", str(product)
+            ),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1045,29 +1016,16 @@ class TestReactionCLI:
         product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
         ts_guess = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
+            _sub_chain_reaction_args(
                 "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(reactant),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
+                reactant,
                 "--product",
                 str(product),
                 "--ts-guess",
                 str(ts_guess),
-            ],
+            ),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1087,29 +1045,16 @@ class TestReactionCLI:
         reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
         product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
+            _sub_chain_reaction_args(
                 "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(ts),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
+                ts,
                 "--reactant",
                 str(reactant),
                 "--product",
                 str(product),
-            ],
+            ),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1131,27 +1076,9 @@ class TestReactionCLI:
         ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
         guess = _write_h2_xyz(tmp_path / "guess.xyz", 0.80)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(ts),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-                "--ts-guess",
-                str(guess),
-            ],
+            _sub_chain_reaction_args("gaussian", ts, "--ts-guess", str(guess)),
         )
         assert result.exit_code != 0
         assert "--ts-guess requires a product" in result.output
@@ -1170,27 +1097,11 @@ class TestReactionCLI:
             "3\nwater\nO 0.0 0.0 0.0\nH 0.96 0.0 0.0\nH -0.24 0.93 0.0\n"
         )
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(reactant),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-                "--product",
-                str(product),
-            ],
+            _sub_chain_reaction_args(
+                "gaussian", reactant, "--product", str(product)
+            ),
         )
         assert result.exit_code != 0
         assert "same number of atoms" in result.output
@@ -1208,29 +1119,16 @@ class TestReactionCLI:
         p1 = _write_h2_xyz(tmp_path / "p1.xyz", 0.90)
         p2 = _write_h2_xyz(tmp_path / "p2.xyz", 0.92)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
+            _sub_chain_reaction_args(
                 "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(reactant),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
+                reactant,
                 "--product",
                 str(p1),
                 "--product",
                 str(p2),
-            ],
+            ),
         )
         assert result.exit_code != 0
         assert "single reactant geometry" in result.output
@@ -1244,26 +1142,7 @@ class TestReactionCLI:
 
         ts = _write_h2_xyz(tmp_path / "ts.xyz", 0.82)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "orca")
-        runner = CliRunner()
-        result = runner.invoke(
-            sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "orca",
-                "-p",
-                "test",
-                "-f",
-                str(ts),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-            ],
-        )
+        result = CliRunner().invoke(sub, _sub_chain_reaction_args("orca", ts))
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
         assert isinstance(job, ORCAReactionJob)
@@ -1281,27 +1160,11 @@ class TestReactionCLI:
         reactant = _write_h2_xyz(tmp_path / "r.xyz", 0.74)
         product = _write_h2_xyz(tmp_path / "p.xyz", 0.90)
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "orca")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "orca",
-                "-p",
-                "test",
-                "-f",
-                str(reactant),
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-                "--product",
-                str(product),
-            ],
+            _sub_chain_reaction_args(
+                "orca", reactant, "--product", str(product)
+            ),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1324,22 +1187,9 @@ class TestReactionCLI:
             f"sn2,{product},product,0,1\n"
         )
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(table),
-                "reaction",
-                "batch",
-            ],
+            _sub_chain_reaction_args("gaussian", table, "batch", charge=None),
         )
         assert result.exit_code == 0, result.output
         assert len(captured["submissions"]) == 1
@@ -1373,22 +1223,9 @@ class TestReactionCLI:
             f"sn2,{product},product,-1,1\n"
         )
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(table),
-                "reaction",
-                "batch",
-            ],
+            _sub_chain_reaction_args("gaussian", table, "batch", charge=None),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1418,22 +1255,9 @@ class TestReactionCLI:
             f"sn2,{product},product,0,1\n"
         )
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(table),
-                "reaction",
-                "batch",
-            ],
+            _sub_chain_reaction_args("gaussian", table, "batch", charge=None),
         )
         assert result.exit_code != 0
         assert "single reactant geometry" in result.output
@@ -1450,22 +1274,9 @@ class TestReactionCLI:
             f"reaction_id,filepath,role,charge,multiplicity\nsn2,{ts},ts,0,1\n"
         )
         captured = _setup_sub_reaction(tmp_path, monkeypatch, "gaussian")
-        runner = CliRunner()
-        result = runner.invoke(
+        result = CliRunner().invoke(
             sub,
-            [
-                "--test",
-                "--server",
-                "dummy",
-                "--no-scratch",
-                "gaussian",
-                "-p",
-                "test",
-                "-f",
-                str(table),
-                "reaction",
-                "batch",
-            ],
+            _sub_chain_reaction_args("gaussian", table, "batch", charge=None),
         )
         assert result.exit_code == 0, result.output
         job = captured["submissions"][0][0]
@@ -1481,10 +1292,14 @@ class TestReactionCLI:
 
         rewritten = replace_reaction_batch_tokens(
             [
-                "gaussian",
+                "chain",
+                "-p",
+                "combined",
                 "-f",
                 "table.csv",
                 "reaction",
+                "--program",
+                "gaussian",
                 "batch",
             ],
             {
@@ -1503,6 +1318,7 @@ class TestReactionCLI:
         assert "submit" in rewritten
         assert "--reactant" in rewritten
         assert "--product" in rewritten
+        assert "--program" in rewritten
         assert "--no-path-search" not in rewritten
         assert "--no-sp" not in rewritten
         assert "--charge" in rewritten

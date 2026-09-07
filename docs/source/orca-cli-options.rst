@@ -517,8 +517,6 @@ Transition State Search
       -  Description
    -  -  ``ts``
       -  Transition state optimization
-   -  -  ``reaction``
-      -  R/TS/P workflow (optional NEB-TS, then opt and SP); see :doc:`orca-reaction-calculations`
    -  -  ``modred``
       -  Modified redundant coordinate optimization
    -  -  ``irc``
@@ -556,7 +554,7 @@ For detailed information on each job type:
 
 -  :doc:`orca-structure-optimization`
 -  :doc:`orca-transition-state`
--  :doc:`orca-reaction-calculations`
+-  :doc:`reaction`
 -  :doc:`orca-pka-calculations`
 -  :doc:`orca-redox-calculations`
 -  :doc:`orca-direct-input`

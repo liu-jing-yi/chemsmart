@@ -644,24 +644,29 @@ class TestChainWorkflows:
         self, isolated_config_dir, single_molecule_xyz_file
     ):
         _combined_yaml(isolated_config_dir)
-        result = _invoke_chain(
-            [
-                "-p",
-                "combined",
-                "-f",
-                single_molecule_xyz_file,
-                "-c",
-                "0",
-                "-m",
-                "1",
-                "reaction",
-                "--program",
-                "gaussian",
-            ],
-            standalone_mode=False,
-        )
+        with patch(
+            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
+            wraps=GaussianProjectSettings.from_project,
+        ) as gaussian_from_project:
+            result = _invoke_chain(
+                [
+                    "-p",
+                    "combined",
+                    "-f",
+                    single_molecule_xyz_file,
+                    "-c",
+                    "0",
+                    "-m",
+                    "1",
+                    "reaction",
+                    "--program",
+                    "gaussian",
+                ],
+                standalone_mode=False,
+            )
         assert result.exit_code == 0, result.output
         assert isinstance(result.return_value, GaussianReactionJob)
+        gaussian_from_project.assert_called_with("gas_solv")
 
     def test_reaction_program_orca_builds_orca_job(
         self, isolated_config_dir, single_molecule_xyz_file
@@ -1001,34 +1006,6 @@ class TestExistingProgramCLI:
             )
         assert result.exit_code == 0, result.output
         assert isinstance(result.return_value, GaussianpKaJob)
-        gaussian_from_project.assert_called_with("test")
-
-    def test_gaussian_reaction_still_uses_gaussian_project(
-        self, single_molecule_xyz_file
-    ):
-        with patch(
-            "chemsmart.settings.gaussian.GaussianProjectSettings.from_project",
-            wraps=GaussianProjectSettings.from_project,
-        ) as gaussian_from_project:
-            result = CliRunner().invoke(
-                gaussian,
-                [
-                    "-p",
-                    "test",
-                    "-f",
-                    single_molecule_xyz_file,
-                    "-c",
-                    "0",
-                    "-m",
-                    "1",
-                    "reaction",
-                ],
-                obj={"jobrunner": MagicMock()},
-                catch_exceptions=False,
-                standalone_mode=False,
-            )
-        assert result.exit_code == 0, result.output
-        assert isinstance(result.return_value, GaussianReactionJob)
         gaussian_from_project.assert_called_with("test")
 
     def test_run_pka_analyze_still_works(self, tmp_path, monkeypatch):

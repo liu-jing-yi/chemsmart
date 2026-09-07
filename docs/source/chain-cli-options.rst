@@ -22,13 +22,13 @@ list, including ``custom`` and the workflow subcommands ``pka``, ``fukui``, ``re
    chemsmart sub [OPTIONS] chain -p PROJECT -f FILE -c CHARGE -m MULT \
      pka|fukui|redox|reaction --program {gaussian,orca} [WORKFLOW_OPTIONS]
 
-**Workflow analyze** (pKa, Fukui, and redox only; no ``-p``, ``-f``, or ``--program``). Redox analyze requires
-``--e-ref``:
+**Workflow analyze** (pKa, Fukui, and redox only; no ``-p``, ``-f``, or ``--program``). Redox infers ``-r`` from
+Ref_ox/Ref_red formulas; pass ``-r`` to override:
 
 .. code:: bash
 
    chemsmart run chain pka|fukui analyze [ANALYZE_OPTIONS]
-   chemsmart run chain redox analyze --e-ref 0.0 [ANALYZE_OPTIONS]
+   chemsmart run chain redox analyze [ANALYZE_OPTIONS]
 
 ***************
  Chain Options
@@ -111,9 +111,9 @@ Workflow Submit Options
 
    -  ``-l`` and ``-a`` are mutually exclusive.
 
-   -  Workflow option tables (proton index, Fukui mode, redox reference files, reaction ``--product``, …) match the
-      corresponding program CLI. See :doc:`pka-calculations`, :ref:`fukui-jobs`, :doc:`redox-calculations`, and
-      :doc:`reaction`.
+   -  Workflow option tables (proton index, Fukui mode, redox reference files) match the corresponding program CLI.
+      Reaction options (``--product``, …) are on ``chain … reaction`` only. See :doc:`pka-calculations`,
+      :ref:`fukui-jobs`, :doc:`redox-calculations`, and :doc:`reaction`.
 
 Execution Control
 =================

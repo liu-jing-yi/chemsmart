@@ -1,18 +1,15 @@
 """Shared reaction-job submit options.
 
-Registered under ``chemsmart sub gaussian reaction`` and
-``chemsmart sub orca reaction``. Output analysis is not part of this
-command.
+Used by ``chemsmart sub/run chain … reaction``. Output analysis is not
+part of this command.
 """
 
 import logging
 
 import click
 
-from chemsmart.cli.job import click_job_options
 from chemsmart.io.molecules.structure import Molecule
 from chemsmart.jobs.reaction import PATH_SEARCH_SINGLE_STRUCTURE
-from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.datasets import ReactionTableEntry
 from chemsmart.utils.utils import check_charge_and_multiplicity
 
@@ -20,14 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 def click_reaction_shared_options(f):
-    """Submit options shared by Gaussian and ORCA ``reaction`` commands."""
+    """Submit options for ``chain … reaction``."""
     f = click.option(
+        "-ts",
         "--ts-guess",
         type=click.Path(exists=True, dir_okay=False),
         default=None,
         help="QST3/NEB intermediate when -f is the reactant.",
     )(f)
     f = click.option(
+        "-p",
         "--product",
         "products",
         multiple=True,
@@ -454,85 +453,3 @@ def replace_reaction_batch_tokens(cli_args, batch_entry):
     insert_idx = args.index("submit") if "submit" in args else len(args)
     args[insert_idx:insert_idx] = extra
     return args
-
-
-def register_reaction_cli(parent_group, job_cls):
-    """Attach ``reaction [submit|batch]`` to a Gaussian or ORCA Click group."""
-    include_neb = job_cls.uses_neb
-
-    @parent_group.group("reaction", cls=MyGroup, invoke_without_command=True)
-    @click_job_options
-    @click_reaction_shared_options
-    @click.pass_context
-    def reaction(
-        ctx,
-        skip_completed,
-        reactants,
-        products,
-        ts_guess,
-        **kwargs,
-    ):
-        """Reaction workflow: optional path search, then TS/R/P opt and SP.
-
-        \b
-        Case 1: -f is the TS guess (no product).
-        Case 2: reactant + product run QST (Gaussian) or NEB-TS (ORCA).
-        """
-        store_reaction_shared(
-            ctx,
-            reactants=reactants,
-            products=products,
-            ts_guess=ts_guess,
-        )
-        if ctx.invoked_subcommand is None:
-            if ReactionTableEntry.is_submission_table(ctx.obj.get("filename")):
-                return ctx.invoke(batch, skip_completed=skip_completed)
-            return ctx.invoke(submit, skip_completed=skip_completed)
-
-    @reaction.command("submit", cls=MyCommand)
-    @click_job_options
-    @click_reaction_shared_options
-    @click.pass_context
-    def submit(
-        ctx,
-        skip_completed,
-        reactants,
-        products,
-        ts_guess,
-        **kwargs,
-    ):
-        """Submit a single reaction workflow."""
-        filename = ctx.obj.get("filename")
-        if ReactionTableEntry.is_submission_table(filename):
-            return ctx.invoke(batch, skip_completed=skip_completed)
-        reactants, products, ts_guess = merge_reaction_options(
-            ctx,
-            reactants=reactants,
-            products=products,
-            ts_guess=ts_guess,
-        )
-        return build_reaction_job(
-            ctx,
-            job_cls,
-            skip_completed,
-            include_neb=include_neb,
-            reactants=reactants,
-            products=products,
-            ts_guess=ts_guess,
-            **kwargs,
-        )
-
-    @reaction.command("batch", cls=MyCommand)
-    @click_job_options
-    @click.pass_context
-    def batch(ctx, skip_completed, **kwargs):
-        """Batch reaction submission from a CSV table grouped by reaction_id."""
-        return build_reaction_batch_jobs(
-            ctx,
-            job_cls,
-            skip_completed,
-            include_neb=include_neb,
-            **kwargs,
-        )
-
-    return reaction

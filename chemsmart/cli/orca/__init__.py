@@ -18,7 +18,6 @@ from .orca import orca
 # from .qmmm import qmmm
 from .pka import pka
 from .qrc import qrc
-from .reaction import reaction
 from .redox import redox
 from .scan import scan
 from .singlepoint import sp
@@ -33,7 +32,6 @@ __all__ = [
     "orca",
     "pka",
     "qrc",
-    "reaction",
     "redox",
     "scan",
     "sp",
