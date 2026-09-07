@@ -532,6 +532,10 @@ class TestGaussianReactionJob:
 
 
 class TestORCAReactionJob:
+    @pytest.fixture(autouse=True)
+    def _chdir_tmp(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
     def test_case1_skips_guess_and_builds_ts_opt(
         self, orca_jobrunner_no_scratch
     ):
@@ -696,6 +700,7 @@ def _write_reaction_project(tmp_path, backend):
 
 def _setup_sub_reaction(tmp_path, monkeypatch, backend):
     """Fake server capture for ``chemsmart sub chain ... reaction`` tests."""
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(
         "CHEMSMART_CONFIG_DIR",
         str(_write_reaction_project(tmp_path, backend)),
