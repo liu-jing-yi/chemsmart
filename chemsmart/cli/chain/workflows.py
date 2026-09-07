@@ -13,7 +13,8 @@ import logging
 import click
 from click.core import ParameterSource
 
-from chemsmart.analysis.fukui import FUKUI_MODES, ORCA_FUKUI_MODES
+from chemsmart.analysis.fukui import ORCA_FUKUI_MODES
+from chemsmart.cli.fukui import click_fukui_submit_options
 from chemsmart.cli.fukui import fukui as fukui_analyze
 from chemsmart.cli.job import click_job_options
 from chemsmart.cli.pka import analyze as pka_analyze
@@ -57,63 +58,6 @@ def click_workflow_program_option(f):
         help=(
             "QC program for submit. Theory and solvent come from that "
             "program's alias in the chain project YAML."
-        ),
-    )
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        return f(*args, **kwargs)
-
-    return wrapper
-
-
-def click_fukui_submit_options(f):
-    """Fukui submit options shared by Gaussian and ORCA program commands."""
-
-    @click.option(
-        "--mode",
-        default="mulliken",
-        show_default=True,
-        type=click.Choice(list(FUKUI_MODES), case_sensitive=False),
-        help="Charges to be used for Fukui Indices calculations.",
-    )
-    @click.option(
-        "-rcc",
-        "--radical-cation-charge",
-        type=int,
-        default=None,
-        help=(
-            "Override charge for the radical-cation job. "
-            "Default is derived from the neutral charge."
-        ),
-    )
-    @click.option(
-        "-rcm",
-        "--radical-cation-multiplicity",
-        type=int,
-        default=None,
-        help=(
-            "Override multiplicity for the radical-cation job. "
-            "Default is derived from the neutral multiplicity."
-        ),
-    )
-    @click.option(
-        "-rac",
-        "--radical-anion-charge",
-        type=int,
-        default=None,
-        help=(
-            "Override charge for the radical-anion job. "
-            "Default is derived from the neutral charge."
-        ),
-    )
-    @click.option(
-        "-ram",
-        "--radical-anion-multiplicity",
-        type=int,
-        default=None,
-        help=(
-            "Override multiplicity for the radical-anion job. "
-            "Default is derived from the neutral multiplicity."
         ),
     )
     @functools.wraps(f)
@@ -225,27 +169,19 @@ def hydrate_program_ctx_from_chain(ctx, program, job_name=None):
 
 
 def _default_program_settings(program, project_name):
-    if program == "gaussian":
-        from chemsmart.jobs.gaussian.settings import GaussianJobSettings
-        from chemsmart.settings.gaussian import GaussianProjectSettings
-
-        return (
-            GaussianProjectSettings.from_project(project_name),
-            GaussianJobSettings.default(),
+    if program not in CHAIN_WORKFLOW_PROGRAMS:
+        allowed = ", ".join(CHAIN_WORKFLOW_PROGRAMS)
+        raise click.UsageError(
+            f"Unsupported workflow program {program!r}. "
+            f"Allowed programs: {allowed}."
         )
-    if program == "orca":
-        from chemsmart.jobs.orca.settings import ORCAJobSettings
-        from chemsmart.settings.orca import ORCAProjectSettings
+    from chemsmart.jobs.chain_steps import CHAIN_PROGRAM_SETTINGS
 
-        return (
-            ORCAProjectSettings.from_project(project_name),
-            ORCAJobSettings.default(),
-        )
-    allowed = ", ".join(CHAIN_WORKFLOW_PROGRAMS)
-    raise click.UsageError(
-        f"Unsupported workflow program {program!r}. "
-        f"Allowed programs: {allowed}."
+    project_settings = CHAIN_PROGRAM_SETTINGS[program].from_project(
+        project_name
     )
+    job_settings = type(project_settings.opt_settings()).default()
+    return project_settings, job_settings
 
 
 def _workflow_label(filename, label, append_label, job_name, chain_label):

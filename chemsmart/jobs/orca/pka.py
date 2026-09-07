@@ -7,7 +7,8 @@ calculations using ORCA with a proper thermodynamic cycle:
 2. Solution phase single point for both HA and A- at the same level of theory
 
 Using the same level of theory ensures proper error cancellation for
-solvation free energy calculations.
+solvation free energy calculations. Analyze completed outputs with
+``chemsmart run pka``.
 """
 
 import os
@@ -30,6 +31,8 @@ class ORCApKaJob(PkaChainMixin, ORCAJob):
     4. Run SP on optimized A- in solution
     5. (Optional) Same for reference acid Href and Ref-
 
+    Analyze completed outputs with ``chemsmart run pka``.
+
     Attributes:
         TYPE (str): Job type identifier ('orcapka').
         molecule (Molecule): Protonated molecular structure (HA).
@@ -42,7 +45,6 @@ class ORCApKaJob(PkaChainMixin, ORCAJob):
     TYPE = "orcapka"
     _opt_job_class = ORCAOptJob
     _sp_job_class = ORCASinglePointJob
-    _shared_reference_molecule_cache = {}
 
     def __init__(self, molecule, settings=None, **kwargs):
         if not isinstance(settings, ORCApKaJobSettings):
@@ -97,67 +99,3 @@ class ORCApKaJob(PkaChainMixin, ORCAJob):
         if ref_cb is None:
             return None
         return f"{ref_cb}_sp"
-
-    def _reference_pka(self):
-        return self.settings.reference_pka
-
-    def _subjob_output_paths(self, job, legacy_label=None):
-        """Candidate ORCA output files for a pKa sub-job."""
-        paths = []
-        runner = job.jobrunner
-        if runner is not None:
-            runner_out = getattr(runner, "job_outputfile", None)
-            if runner_out:
-                paths.append(runner_out)
-        paths.append(job.outputfile)
-        paths.append(os.path.join(self.folder, f"{job.label}.out"))
-        if legacy_label is not None:
-            paths.append(os.path.join(self.folder, f"{legacy_label}.out"))
-        seen = set()
-        ordered = []
-        for path in paths:
-            if path and path not in seen:
-                seen.add(path)
-                ordered.append(path)
-        return ordered
-
-    def _subjob_is_complete(self, job, legacy_label=None):
-        from chemsmart.io.orca.output import ORCAOutput
-
-        for path in self._subjob_output_paths(job, legacy_label):
-            if not path or not os.path.exists(path):
-                continue
-            try:
-                if ORCAOutput(path).normal_termination:
-                    return True
-            except Exception:
-                continue
-        return False
-
-    def _subjob_output(self, job, legacy_label=None):
-        from chemsmart.io.orca.output import ORCAOutput
-
-        for path in self._subjob_output_paths(job, legacy_label):
-            if not os.path.exists(path):
-                continue
-            try:
-                output = ORCAOutput(path)
-            except Exception:
-                continue
-            if output.normal_termination:
-                return output
-        return None
-
-    def _finalize_child_job(self, job, legacy_label=None):
-        """Keep sub-jobs in the parent folder and resolve scratch/legacy outputs."""
-        job.folder = self.folder
-
-        def is_complete():
-            return self._subjob_is_complete(job, legacy_label)
-
-        def _output():
-            return self._subjob_output(job, legacy_label)
-
-        job.is_complete = is_complete
-        job._output = _output
-        return job

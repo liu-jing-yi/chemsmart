@@ -24,9 +24,10 @@ from chemsmart.analysis.redox import (  # noqa: F401
     resolve_redox_reference,
 )
 from chemsmart.cli.job import click_job_options
-from chemsmart.cli.pka import (
-    click_pka_thermochemistry_options,
-    resolve_pka_entropy_cutoff,
+from chemsmart.cli.thermochemistry.thermochemistry import (
+    resolve_entropy_cutoff,
+    thermochemistry_cutoff_options,
+    thermochemistry_temp_pressure_conc_options,
 )
 from chemsmart.utils.cli import MyCommand, MyGroup
 from chemsmart.utils.utils import check_charge_and_multiplicity
@@ -162,11 +163,23 @@ def click_redox_submit_structure_options(f):
     return wrapper
 
 
+def _click_thermochemistry_options(f):
+    """T/P/c and quasi-RRHO cutoffs accepted by ``Thermochemistry``."""
+    f = thermochemistry_temp_pressure_conc_options(
+        f,
+        temperature_required=False,
+        temperature_default=298.15,
+        concentration_default=1.0,
+        pressure_default=1.0,
+    )
+    return thermochemistry_cutoff_options(f)
+
+
 def click_redox_shared_options(f):
     """Submit options shared by Gaussian, ORCA, and chain redox commands."""
     f = click_redox_submit_structure_options(f)
     f = click_redox_reference_options(f)
-    return click_pka_thermochemistry_options(f)
+    return _click_thermochemistry_options(f)
 
 
 def click_redox_analyze_options(f):
@@ -263,9 +276,21 @@ def click_redox_analyze_options(f):
     return f
 
 
+def _thermochemistry_kwargs_from_shared(shared):
+    keys = (
+        "temperature",
+        "concentration",
+        "pressure",
+        "cutoff_entropy_grimme",
+        "cutoff_enthalpy",
+        "entropy_method",
+    )
+    return {key: shared[key] for key in keys if shared.get(key) is not None}
+
+
 def store_redox_shared(ctx, kwargs):
     """Record redox CLI options on ``ctx.obj`` for submit and analyze."""
-    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+    s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
         kwargs.get("cutoff_entropy_grimme"),
         kwargs.get("cutoff_entropy_truhlar"),
     )
@@ -282,12 +307,16 @@ def store_redox_shared(ctx, kwargs):
         ref_ox_multiplicity=kwargs.get("ref_ox_multiplicity"),
         ref_red_charge=kwargs.get("ref_red_charge"),
         ref_red_multiplicity=kwargs.get("ref_red_multiplicity"),
-        temperature=kwargs.get("temperature", 298.15),
-        concentration=kwargs.get("concentration", 1.0),
-        pressure=kwargs.get("pressure", 1.0),
-        cutoff_entropy_grimme=s_freq_cutoff,
-        cutoff_enthalpy=kwargs.get("cutoff_enthalpy", 100.0),
-        entropy_method=entropy_method,
+        **_thermochemistry_kwargs_from_shared(
+            {
+                "temperature": kwargs.get("temperature"),
+                "concentration": kwargs.get("concentration"),
+                "pressure": kwargs.get("pressure"),
+                "cutoff_entropy_grimme": s_freq_cutoff,
+                "cutoff_enthalpy": kwargs.get("cutoff_enthalpy"),
+                "entropy_method": entropy_method,
+            }
+        ),
     )
 
 
@@ -372,11 +401,7 @@ def build_redox_job(ctx, job_cls, settings_cls, skip_completed, **kwargs):
         ref_ox_multiplicity=shared["ref_ox_multiplicity"],
         ref_red_charge=shared["ref_red_charge"],
         ref_red_multiplicity=shared["ref_red_multiplicity"],
-        temperature=shared["temperature"],
-        concentration=shared["concentration"],
-        pressure=shared["pressure"],
-        cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
-        cutoff_enthalpy=shared["cutoff_enthalpy"],
+        **_thermochemistry_kwargs_from_shared(shared),
     )
     settings_kwargs = {
         key: value
@@ -437,7 +462,7 @@ def redox(ctx):
 
 @redox.command("analyze", cls=MyCommand)
 @click_redox_analyze_options
-@click_pka_thermochemistry_options
+@_click_thermochemistry_options
 @click.pass_context
 def analyze(
     ctx,
@@ -469,7 +494,7 @@ def analyze(
 
     ``--e-ref`` is the reference potential in volts.
     """
-    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+    s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
         cutoff_entropy_grimme, cutoff_entropy_truhlar
     )
     try:
@@ -484,12 +509,16 @@ def analyze(
             ref_red_solv_file=ref_red_solv_file,
             e_ref=e_ref,
             n_electrons=n_electrons,
-            temperature=temperature,
-            concentration=concentration,
-            pressure=pressure,
-            cutoff_entropy_grimme=s_freq_cutoff,
-            cutoff_enthalpy=cutoff_enthalpy,
-            entropy_method=entropy_method,
+            **_thermochemistry_kwargs_from_shared(
+                {
+                    "temperature": temperature,
+                    "concentration": concentration,
+                    "pressure": pressure,
+                    "cutoff_entropy_grimme": s_freq_cutoff,
+                    "cutoff_enthalpy": cutoff_enthalpy,
+                    "entropy_method": entropy_method,
+                }
+            ),
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc

@@ -69,8 +69,10 @@ class TestChainProjectSettings:
         )
         assert settings.project_for("gaussian") == "gaussian_project2"
 
-    def test_steps_key_errors_with_cli_redirect(self, chain_tests_directory):
-        with pytest.raises(ValueError, match="-s/--steps"):
+    def test_unknown_steps_key_errors(self, chain_tests_directory):
+        with pytest.raises(
+            ValueError, match="Unknown chain project keys: steps"
+        ):
             ChainProjectSettings.from_project(
                 os.path.join(chain_tests_directory, "missing_step_alias")
             )

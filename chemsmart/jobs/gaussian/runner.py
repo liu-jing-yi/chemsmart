@@ -89,8 +89,6 @@ class GaussianJobRunner(JobRunner):
         "g16link",
         "g16qmmm",
         "g16pka",
-        "g16pka_analyze",
-        "g16pka_thermo",
         "g16reaction",
         "g16redox",
     ]

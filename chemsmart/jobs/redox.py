@@ -57,6 +57,7 @@ class RedoxJobSettingsMixin:
         pressure=1.0,
         cutoff_entropy_grimme=100.0,
         cutoff_enthalpy=100.0,
+        entropy_method=None,
         energy_units="hartree",
         **kwargs,
     ):
@@ -89,6 +90,7 @@ class RedoxJobSettingsMixin:
         self.pressure = pressure
         self.cutoff_entropy_grimme = cutoff_entropy_grimme
         self.cutoff_enthalpy = cutoff_enthalpy
+        self.entropy_method = entropy_method
         self.energy_units = energy_units
 
     @property
@@ -400,14 +402,22 @@ class RedoxChainMixin(ChainMixin):
         """Compute the exchange redox potential from completed child outputs."""
         from chemsmart.analysis.redox import compute_redox_potential
 
+        thermo_kwargs = {
+            "cutoff_entropy_grimme": self.settings.cutoff_entropy_grimme,
+            "cutoff_enthalpy": self.settings.cutoff_enthalpy,
+            "entropy_method": self.settings.entropy_method,
+        }
         return compute_redox_potential(
             reference=self.settings.reference,
             n_electrons=self.settings.n_electrons,
             temperature=self.settings.temperature,
             concentration=self.settings.concentration,
             pressure=self.settings.pressure,
-            cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
-            cutoff_enthalpy=self.settings.cutoff_enthalpy,
+            **{
+                key: value
+                for key, value in thermo_kwargs.items()
+                if value is not None
+            },
             **self._redox_output_files(),
         )
 

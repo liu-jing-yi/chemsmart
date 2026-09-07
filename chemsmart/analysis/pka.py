@@ -81,12 +81,10 @@ def compute_pka(
         entropy_method=entropy_method,
     )
 
-    E_gas_HA_au, G_corr_HA_au = pka_gas_phase_data(
-        ha_gas_file, **thermo_kwargs
-    )
-    E_gas_A_au, G_corr_A_au = pka_gas_phase_data(a_gas_file, **thermo_kwargs)
-    E_solv_HA_au = pka_solvent_scf_energy(ha_solv_file)
-    E_solv_A_au = pka_solvent_scf_energy(a_solv_file)
+    E_gas_HA_au, G_corr_HA_au = gas_phase_data(ha_gas_file, **thermo_kwargs)
+    E_gas_A_au, G_corr_A_au = gas_phase_data(a_gas_file, **thermo_kwargs)
+    E_solv_HA_au = solvent_scf_energy(ha_solv_file)
+    E_solv_A_au = solvent_scf_energy(a_solv_file)
     G_soln_HA_au = E_solv_HA_au + G_corr_HA_au
     G_soln_A_au = E_solv_A_au + G_corr_A_au
 
@@ -118,14 +116,12 @@ def compute_pka(
             "E_gas_A_au": E_gas_A_au,
         }
 
-    E_gas_HRef_au, G_corr_HRef_au = pka_gas_phase_data(
+    E_gas_HRef_au, G_corr_HRef_au = gas_phase_data(
         href_gas_file, **thermo_kwargs
     )
-    E_gas_Ref_au, G_corr_Ref_au = pka_gas_phase_data(
-        ref_gas_file, **thermo_kwargs
-    )
-    E_solv_HRef_au = pka_solvent_scf_energy(href_solv_file)
-    E_solv_Ref_au = pka_solvent_scf_energy(ref_solv_file)
+    E_gas_Ref_au, G_corr_Ref_au = gas_phase_data(ref_gas_file, **thermo_kwargs)
+    E_solv_HRef_au = solvent_scf_energy(href_solv_file)
+    E_solv_Ref_au = solvent_scf_energy(ref_solv_file)
     G_soln_HRef_au = E_solv_HRef_au + G_corr_HRef_au
     G_soln_Ref_au = E_solv_Ref_au + G_corr_Ref_au
 

@@ -19,6 +19,30 @@ from chemsmart.utils.constants import FARADAY, energy_conversion
 _REGISTRY: dict[str, RedoxReference] = {}
 
 
+def require_positive_n_electrons(n_electrons):
+    """Return ``n_electrons`` after requiring a positive integer."""
+    if n_electrons < 1:
+        raise ValueError("n_electrons must be a positive integer.")
+    return n_electrons
+
+
+def resolve_n_electrons(n_electrons, reference=None, default=None):
+    """Resolve electron count from an explicit value, couple, or default."""
+    if n_electrons is None:
+        if reference is not None:
+            n_electrons = reference.n_electrons
+        elif default is not None:
+            n_electrons = default
+        else:
+            raise ValueError("n_electrons is required.")
+    elif reference is not None and n_electrons != reference.n_electrons:
+        raise ValueError(
+            f"n_electrons ({n_electrons}) must match the reference "
+            f"couple {reference.name!r} (n={reference.n_electrons})."
+        )
+    return require_positive_n_electrons(n_electrons)
+
+
 @dataclass(frozen=True)
 class RedoxReference:
     """One experimental or computational redox reference couple.
@@ -54,8 +78,7 @@ class RedoxReference:
     def __post_init__(self):
         if not self.name:
             raise ValueError("RedoxReference.name is required.")
-        if self.n_electrons < 1:
-            raise ValueError("n_electrons must be a positive integer.")
+        require_positive_n_electrons(self.n_electrons)
 
 
 def register_redox_reference(reference):
@@ -228,15 +251,9 @@ def compute_redox_potential(
         resolve_redox_reference(reference) if reference is not None else None
     )
     e_ref_v = resolved.E_ref_V if e_ref is None else float(e_ref)
-    if n_electrons is None:
-        n_electrons = resolved.n_electrons if resolved is not None else 1
-    elif resolved is not None and n_electrons != resolved.n_electrons:
-        raise ValueError(
-            f"n_electrons ({n_electrons}) must match the reference couple "
-            f"{resolved.name!r} (n={resolved.n_electrons})."
-        )
-    if n_electrons < 1:
-        raise ValueError("n_electrons must be a positive integer.")
+    n_electrons = resolve_n_electrons(
+        n_electrons, reference=resolved, default=1
+    )
 
     thermo_kwargs = dict(
         temperature=temperature,

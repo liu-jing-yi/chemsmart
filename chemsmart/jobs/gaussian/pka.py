@@ -7,18 +7,15 @@ calculations using Gaussian with a proper thermodynamic cycle:
 2. Solution phase single point for both HA and A- at the same level of theory
 
 Using the same level of theory ensures proper error cancellation for
-solvation free energy calculations.
+solvation free energy calculations. Analyze completed outputs with
+``chemsmart run pka``.
 """
-
-import logging
 
 from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
 from chemsmart.jobs.pka import PkaChainMixin
-
-logger = logging.getLogger(__name__)
 
 
 class GaussianpKaJob(PkaChainMixin, GaussianJob):
@@ -30,7 +27,8 @@ class GaussianpKaJob(PkaChainMixin, GaussianJob):
     2. Optimize A- in gas phase (opt + freq)
     3. Run SP on optimized HA in solution
     4. Run SP on optimized A- in solution
-    5. Calculate solvation free energies and pKa
+
+    Analyze completed outputs with ``chemsmart run pka``.
 
     Attributes:
         TYPE (str): Job type identifier ('g16pka').
@@ -44,7 +42,6 @@ class GaussianpKaJob(PkaChainMixin, GaussianJob):
     TYPE = "g16pka"
     _opt_job_class = GaussianOptJob
     _sp_job_class = GaussianSinglePointJob
-    _shared_reference_molecule_cache = {}
 
     def __init__(self, molecule, settings=None, **kwargs):
         if not isinstance(settings, GaussianpKaJobSettings):
@@ -66,36 +63,3 @@ class GaussianpKaJob(PkaChainMixin, GaussianJob):
             return self.conjugate_base_job.molecule
         _, conj_mol = self.settings.conjugate_pair_molecules(self.molecule)
         return conj_mol
-
-
-class GaussianpKaAnalyzeJob(GaussianpKaJob):
-    """
-    Gaussian job class for analyzing pKa calculation results.
-    """
-
-    TYPE = "g16pka_analyze"
-
-    def __init__(self, input_file, **kwargs):
-        """
-        Initialize the analyze job.
-
-        Args:
-            input_file (Molecule): The molecule object.
-            **kwargs: Additional arguments.
-        """
-        super().__init__(molecule=input_file, **kwargs)
-
-    def _run(self, **kwargs):
-        """Run the analysis (print thermochemistry)."""
-        try:
-            self.print_thermochemistry()
-        except Exception as e:
-            logger.error(f"Analysis failed for {self.label}: {e}")
-
-
-class GaussianpKaThermoJob(GaussianpKaAnalyzeJob):
-    """
-    Gaussian job class for computing pKa thermochemistry (alias for analyze).
-    """
-
-    TYPE = "g16pka_thermo"

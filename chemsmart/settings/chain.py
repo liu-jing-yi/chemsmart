@@ -87,11 +87,6 @@ class ChainProjectSettings:
 
     @classmethod
     def _from_config(cls, config, project_name):
-        if "steps" in config:
-            raise ValueError(
-                "Chain project YAML no longer supports 'steps'; "
-                "specify the pipeline with -s/--steps."
-            )
         unknown_keys = sorted(set(config) - set(cls.PROGRAMS))
         if unknown_keys:
             allowed = ", ".join(cls.PROGRAMS)

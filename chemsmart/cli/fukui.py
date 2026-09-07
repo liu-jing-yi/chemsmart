@@ -1,12 +1,11 @@
-"""Backend-independent Fukui output analysis.
-
-Registered as ``chemsmart run fukui`` — post-processing only; does not invoke
-Gaussian, ORCA, or any other QC backend.
+"""Fukui submit options, job builder, and backend-independent analysis.
 
 Job submission lives under ``chemsmart sub … gaussian … fukui`` or
-``chemsmart sub … orca … fukui``.
+``chemsmart sub … orca … fukui`` via ``register_fukui_cli``. Analysis is
+``chemsmart run fukui`` (also ``chemsmart run chain fukui analyze``).
 """
 
+import functools
 import logging
 
 import click
@@ -16,9 +15,159 @@ from chemsmart.analysis.fukui import (
     analyze_fukui,
     discover_fukui_companion_outputs,
 )
+from chemsmart.cli.job import click_job_options
 from chemsmart.utils.cli import MyCommand
+from chemsmart.utils.utils import check_charge_and_multiplicity
 
 logger = logging.getLogger(__name__)
+
+
+def click_fukui_submit_options(f=None, *, modes=None):
+    """Fukui submit options shared by Gaussian and ORCA program commands."""
+    if modes is None:
+        modes = FUKUI_MODES
+
+    def decorator(func):
+        @click.option(
+            "--mode",
+            default="mulliken",
+            show_default=True,
+            type=click.Choice(list(modes), case_sensitive=False),
+            help="Charges to be used for Fukui Indices calculations.",
+        )
+        @click.option(
+            "-rcc",
+            "--radical-cation-charge",
+            type=int,
+            default=None,
+            help=(
+                "Override charge for the radical-cation job. "
+                "Default is derived from the neutral charge."
+            ),
+        )
+        @click.option(
+            "-rcm",
+            "--radical-cation-multiplicity",
+            type=int,
+            default=None,
+            help=(
+                "Override multiplicity for the radical-cation job. "
+                "Default is derived from the neutral multiplicity."
+            ),
+        )
+        @click.option(
+            "-rac",
+            "--radical-anion-charge",
+            type=int,
+            default=None,
+            help=(
+                "Override charge for the radical-anion job. "
+                "Default is derived from the neutral charge."
+            ),
+        )
+        @click.option(
+            "-ram",
+            "--radical-anion-multiplicity",
+            type=int,
+            default=None,
+            help=(
+                "Override multiplicity for the radical-anion job. "
+                "Default is derived from the neutral multiplicity."
+            ),
+        )
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    if f is None:
+        return decorator
+    return decorator(f)
+
+
+def build_fukui_job(
+    ctx,
+    job_cls,
+    skip_completed,
+    mode,
+    radical_cation_charge,
+    radical_cation_multiplicity,
+    radical_anion_charge,
+    radical_anion_multiplicity,
+    nbo_uses_wbi=False,
+    **kwargs,
+):
+    """Create one Fukui job from parent ``-f`` and shared Fukui options."""
+    jobrunner = ctx.obj["jobrunner"]
+    project_settings = ctx.obj["project_settings"]
+    job_settings = ctx.obj["job_settings"]
+    keywords = ctx.obj["keywords"]
+
+    if nbo_uses_wbi and mode.lower() == "nbo":
+        pop_settings = project_settings.wbi_settings()
+    else:
+        pop_settings = project_settings.sp_settings()
+    pop_settings = pop_settings.merge(job_settings, keywords=keywords)
+    check_charge_and_multiplicity(pop_settings)
+
+    molecule = ctx.obj["molecules"][-1]
+    label = ctx.obj["label"]
+    logger.info("Creating %s job: mode=%s", job_cls.__name__, mode)
+    return job_cls(
+        molecule=molecule,
+        settings=pop_settings,
+        label=label,
+        jobrunner=jobrunner,
+        mode=mode,
+        radical_cation_charge=radical_cation_charge,
+        radical_cation_multiplicity=radical_cation_multiplicity,
+        radical_anion_charge=radical_anion_charge,
+        radical_anion_multiplicity=radical_anion_multiplicity,
+        skip_completed=skip_completed,
+        **kwargs,
+    )
+
+
+def register_fukui_cli(
+    parent_group, job_cls, *, modes=FUKUI_MODES, nbo_uses_wbi=False
+):
+    """Attach ``fukui`` submit to a Gaussian or ORCA Click group."""
+
+    @parent_group.command("fukui", cls=MyCommand)
+    @click_job_options
+    @click_fukui_submit_options(modes=modes)
+    @click.pass_context
+    def fukui(
+        ctx,
+        skip_completed,
+        mode,
+        radical_cation_charge,
+        radical_cation_multiplicity,
+        radical_anion_charge,
+        radical_anion_multiplicity,
+        **kwargs,
+    ):
+        """Submit Fukui charge-state calculations.
+
+        Always runs neutral, radical-cation, and radical-anion population
+        jobs from the parent ``-f`` structure. Analyze completed outputs
+        with ``chemsmart run fukui``.
+        """
+        return build_fukui_job(
+            ctx,
+            job_cls,
+            skip_completed,
+            mode,
+            radical_cation_charge,
+            radical_cation_multiplicity,
+            radical_anion_charge,
+            radical_anion_multiplicity,
+            nbo_uses_wbi=nbo_uses_wbi,
+            **kwargs,
+        )
+
+    return fukui
 
 
 @click.command(name="fukui", cls=MyCommand)

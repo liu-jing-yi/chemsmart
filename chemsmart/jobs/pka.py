@@ -93,21 +93,14 @@ class PkaChainMixin(ChainMixin):
     def _ref_sp_label(self):
         return f"{self.label}_Ref_sp"
 
-    def _finalize_child_job(self, job, legacy_label=None):
-        return job
-
-    def _child_job(
-        self, job_class, molecule, settings, label, legacy_label=None
-    ):
-        job = job_class(
+    def _child_job(self, job_class, molecule, settings, label):
+        return job_class(
             molecule=molecule,
             settings=settings,
             label=label,
             jobrunner=self.jobrunner,
             skip_completed=self.skip_completed,
         )
-        self._finalize_child_job(job, legacy_label=legacy_label)
-        return job
 
     def _prepare_pka_jobs(self):
         if self.settings is None:
@@ -125,14 +118,12 @@ class PkaChainMixin(ChainMixin):
             prot_mol,
             prot_opt_settings,
             self._ha_opt_label(),
-            legacy_label=self.label,
         )
         self.conjugate_base_job = self._child_job(
             self._opt_job_class,
             conj_mol,
             conj_opt_settings,
             self._a_opt_label(),
-            legacy_label=f"{self.label}_cb",
         )
         self.opt_jobs = [self.protonated_job, self.conjugate_base_job]
 
@@ -157,14 +148,12 @@ class PkaChainMixin(ChainMixin):
             ref_acid_mol,
             ref_acid_settings,
             href_label,
-            legacy_label=href_label,
         )
         ref_cb_job = self._child_job(
             self._opt_job_class,
             ref_cb_mol,
             ref_cb_settings,
             ref_label,
-            legacy_label=ref_label,
         )
         return [ref_acid_job, ref_cb_job]
 
@@ -234,14 +223,12 @@ class PkaChainMixin(ChainMixin):
             prot_opt_mol,
             prot_sp_settings,
             self._ha_sp_label(),
-            legacy_label=f"{self.label}_sp",
         )
         self.conjugate_base_sp_job = self._child_job(
             self._sp_job_class,
             conj_opt_mol,
             conj_sp_settings,
             self._a_sp_label(),
-            legacy_label=f"{self.label}_cb_sp",
         )
         self.sp_jobs = [self.protonated_sp_job, self.conjugate_base_sp_job]
 
@@ -263,31 +250,17 @@ class PkaChainMixin(ChainMixin):
             ref_acid_opt_mol,
             ref_acid_sp_settings,
             href_sp_label,
-            legacy_label=href_sp_label,
         )
         self.ref_conjugate_base_sp_job = self._child_job(
             self._sp_job_class,
             ref_cb_opt_mol,
             ref_cb_sp_settings,
             ref_sp_label,
-            legacy_label=ref_sp_label,
         )
         self.ref_sp_jobs = [
             self.ref_acid_sp_job,
             self.ref_conjugate_base_sp_job,
         ]
-
-    def _opt_jobs_are_complete(self):
-        if not self.opt_jobs:
-            return False
-        return all(job.is_complete() for job in self.opt_jobs)
-
-    def _ref_opt_jobs_are_complete(self):
-        if not self.has_reference_jobs:
-            return True
-        if not self.ref_opt_jobs:
-            return False
-        return all(job.is_complete() for job in self.ref_opt_jobs)
 
     @property
     def protonated_output(self):
@@ -339,106 +312,3 @@ class PkaChainMixin(ChainMixin):
         ):
             return None
         return self.ref_conjugate_base_sp_job._output()
-
-    def _pka_output_files(self):
-        ha_file = (
-            self.protonated_job.outputfile if self.protonated_job else None
-        )
-        a_file = (
-            self.conjugate_base_job.outputfile
-            if self.conjugate_base_job
-            else None
-        )
-        href_file = None
-        ref_file = None
-        if self.has_reference_jobs and self._ref_opt_jobs_are_complete():
-            href_file = (
-                self.ref_acid_job.outputfile if self.ref_acid_job else None
-            )
-            ref_file = (
-                self.ref_conjugate_base_job.outputfile
-                if self.ref_conjugate_base_job
-                else None
-            )
-        return ha_file, a_file, href_file, ref_file
-
-    def _reference_pka(self):
-        return None
-
-    def _thermo_kwargs(self):
-        return dict(
-            temperature=self.settings.temperature,
-            concentration=self.settings.concentration,
-            pressure=self.settings.pressure,
-            cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
-            cutoff_enthalpy=self.settings.cutoff_enthalpy,
-        )
-
-    def compute_thermochemistry(self):
-        """Compute and return thermochemistry results for all species."""
-        from chemsmart.analysis.pka import compute_pka_thermochemistry
-
-        if not self._opt_jobs_are_complete():
-            raise ValueError(
-                "Cannot compute thermochemistry: optimization jobs are not complete. "
-                "Run the pKa jobs first using job.run()."
-            )
-
-        ha_file, a_file, href_file, ref_file = self._pka_output_files()
-        return compute_pka_thermochemistry(
-            ha_file=ha_file,
-            a_file=a_file,
-            href_file=href_file,
-            ref_file=ref_file,
-            energy_units=self.settings.energy_units,
-            **self._thermo_kwargs(),
-        )
-
-    def print_thermochemistry(self):
-        """Print formatted thermochemistry summary to stdout."""
-        from chemsmart.analysis.pka import print_pka_summary
-
-        if not self._opt_jobs_are_complete():
-            raise ValueError(
-                "Cannot print thermochemistry: optimization jobs are not complete. "
-                "Run the pKa jobs first using job.run()."
-            )
-
-        ha_gas, a_gas, href_gas, ref_gas = self._pka_output_files()
-        ha_solv = (
-            self.protonated_sp_job.outputfile
-            if self.protonated_sp_job
-            else None
-        )
-        a_solv = (
-            self.conjugate_base_sp_job.outputfile
-            if self.conjugate_base_sp_job
-            else None
-        )
-        href_solv = ref_solv = None
-        if self.has_reference_jobs:
-            href_solv = (
-                self.ref_acid_sp_job.outputfile
-                if self.ref_acid_sp_job
-                else None
-            )
-            ref_solv = (
-                self.ref_conjugate_base_sp_job.outputfile
-                if self.ref_conjugate_base_sp_job
-                else None
-            )
-
-        print_pka_summary(
-            ha_gas_file=ha_gas,
-            a_gas_file=a_gas,
-            href_gas_file=href_gas,
-            ref_gas_file=ref_gas,
-            ha_solv_file=ha_solv,
-            a_solv_file=a_solv,
-            href_solv_file=href_solv,
-            ref_solv_file=ref_solv,
-            pka_reference=self._reference_pka(),
-            scheme=self.settings.scheme,
-            delta_G_proton=self.settings.delta_G_proton,
-            **self._thermo_kwargs(),
-        )

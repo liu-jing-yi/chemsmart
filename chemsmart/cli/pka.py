@@ -19,8 +19,6 @@ import click
 from chemsmart.analysis.pka import (  # noqa: F401
     compute_pka,
     compute_pka_thermochemistry,
-    pka_gas_phase_data,
-    pka_solvent_scf_energy,
     print_pka_summary,
 )
 from chemsmart.cli.thermochemistry.thermochemistry import (
@@ -35,34 +33,20 @@ from chemsmart.utils.io import get_program_type_from_file
 logger = logging.getLogger(__name__)
 
 
-def resolve_pka_entropy_cutoff(cutoff_entropy_grimme, cutoff_entropy_truhlar):
-    """Resolve pKa entropy cutoff; default to Grimme 100 cm⁻¹ when unset."""
-    s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
-        cutoff_entropy_grimme, cutoff_entropy_truhlar
-    )
-    if s_freq_cutoff is None:
-        return 100.0, "grimme"
-    return s_freq_cutoff, entropy_method
-
-
-def click_pka_thermochemistry_options(f):
-    """Thermochemistry options reused by pKa submission and analysis."""
+def _click_thermochemistry_options(f):
+    """T/P/c and quasi-RRHO cutoffs accepted by ``Thermochemistry``."""
     f = thermochemistry_temp_pressure_conc_options(
         f,
         temperature_required=False,
         temperature_default=298.15,
         concentration_default=1.0,
         pressure_default=1.0,
-        concentration_short="-c",
     )
-    return thermochemistry_cutoff_options(
-        f,
-        enthalpy_default=100.0,
-    )
+    return thermochemistry_cutoff_options(f)
 
 
 def click_pka_shared_options(f):
-    f = click_pka_thermochemistry_options(f)
+    f = _click_thermochemistry_options(f)
 
     @click.option(
         "-s",
@@ -175,9 +159,21 @@ def click_pka_shared_options(f):
     return wrapper
 
 
+def _thermochemistry_kwargs_from_shared(shared):
+    keys = (
+        "temperature",
+        "concentration",
+        "pressure",
+        "cutoff_entropy_grimme",
+        "cutoff_enthalpy",
+        "entropy_method",
+    )
+    return {key: shared[key] for key in keys if shared.get(key) is not None}
+
+
 def store_pka_shared(ctx, kwargs):
     """Record pKa CLI options on ``ctx.obj`` for submit and analyze."""
-    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+    s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
         kwargs.get("cutoff_entropy_grimme"),
         kwargs.get("cutoff_entropy_truhlar"),
     )
@@ -200,13 +196,17 @@ def store_pka_shared(ctx, kwargs):
         conjugate_base_multiplicity=kwargs["conjugate_base_multiplicity"],
         solvent_model=kwargs["solvent_model"],
         solvent_id=kwargs["solvent_id"],
-        temperature=kwargs["temperature"],
-        concentration=kwargs["concentration"],
-        pressure=kwargs["pressure"],
-        cutoff_entropy_grimme=s_freq_cutoff,
-        cutoff_enthalpy=kwargs["cutoff_enthalpy"],
-        entropy_method=entropy_method,
         skip_completed=kwargs["skip_completed"],
+        **_thermochemistry_kwargs_from_shared(
+            {
+                "temperature": kwargs.get("temperature"),
+                "concentration": kwargs.get("concentration"),
+                "pressure": kwargs.get("pressure"),
+                "cutoff_entropy_grimme": s_freq_cutoff,
+                "cutoff_enthalpy": kwargs.get("cutoff_enthalpy"),
+                "entropy_method": entropy_method,
+            }
+        ),
     )
     ctx.obj["pka_proton_index"] = kwargs.get("proton_index")
     ctx.obj["pka_color_code"] = kwargs.get("color_code")
@@ -765,7 +765,7 @@ def _auto_discover_pka_files(ha_gas_path, href_gas_path, program=None):
 
 
 @click.group(name="pka", cls=MyGroup)
-@click_pka_thermochemistry_options
+@_click_thermochemistry_options
 @click_pka_analysis_scheme_options
 @click.pass_context
 def pka(
@@ -780,20 +780,24 @@ def pka(
     delta_g_proton,
 ):
     """Backend-independent pKa output analysis."""
-    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+    s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
         cutoff_entropy_grimme, cutoff_entropy_truhlar
     )
 
     ctx.ensure_object(dict)
     ctx.obj["pka_shared"] = dict(
-        temperature=temperature,
-        concentration=concentration,
-        pressure=pressure,
-        cutoff_entropy_grimme=s_freq_cutoff,
-        cutoff_enthalpy=cutoff_enthalpy,
-        entropy_method=entropy_method,
         scheme=scheme,
         delta_g_proton=delta_g_proton,
+        **_thermochemistry_kwargs_from_shared(
+            {
+                "temperature": temperature,
+                "concentration": concentration,
+                "pressure": pressure,
+                "cutoff_entropy_grimme": s_freq_cutoff,
+                "cutoff_enthalpy": cutoff_enthalpy,
+                "entropy_method": entropy_method,
+            }
+        ),
     )
 
 
@@ -877,12 +881,7 @@ def analyze(
             a_solv_file=a_solv,
             scheme="direct",
             delta_G_proton=shared["delta_g_proton"],
-            temperature=shared["temperature"],
-            concentration=shared["concentration"],
-            pressure=shared["pressure"],
-            cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
-            cutoff_enthalpy=shared["cutoff_enthalpy"],
-            entropy_method=shared["entropy_method"],
+            **_thermochemistry_kwargs_from_shared(shared),
         )
         return None
 
@@ -925,12 +924,7 @@ def analyze(
         ref_solv_file=ref_solv,
         pka_reference=reference_pka,
         scheme=scheme,
-        temperature=shared["temperature"],
-        concentration=shared["concentration"],
-        pressure=shared["pressure"],
-        cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
-        cutoff_enthalpy=shared["cutoff_enthalpy"],
-        entropy_method=shared["entropy_method"],
+        **_thermochemistry_kwargs_from_shared(shared),
     )
 
     # Return None so process_pipeline skips jobrunner execution.
@@ -1001,24 +995,19 @@ def batch_analyze(ctx, output_table, output_results, program, **kwargs):
     logger.info(
         f"Computing pKa ({_scheme_display_name(scheme)}) "
         f"for {len(pka_output_table)} systems "
-        f"(T={shared['temperature']}K, program={program_label})"
+        f"(T={shared.get('temperature')}K, program={program_label})"
     )
     results = pka_output_table.run_pka(
         output_cls=compute_pka,
-        temperature=shared["temperature"],
-        concentration=shared["concentration"],
-        pressure=shared["pressure"],
-        cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
-        cutoff_enthalpy=shared["cutoff_enthalpy"],
-        entropy_method=shared["entropy_method"],
         scheme=scheme,
         delta_G_proton=shared.get("delta_g_proton"),
+        **_thermochemistry_kwargs_from_shared(shared),
     )
     output_string = pka_output_table.echo_pka_output_table_results(
         results=results,
         output_results=output_results,
-        temperature=shared["temperature"],
-        pressure=shared["pressure"],
+        temperature=shared.get("temperature"),
+        pressure=shared.get("pressure"),
         scheme=scheme,
     )
     click.echo(output_string)

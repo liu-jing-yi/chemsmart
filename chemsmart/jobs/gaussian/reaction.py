@@ -34,11 +34,6 @@ _QST3 = "qst3"
 _OPT_JOB_TOKENS = ("ts", "qst2", "qst3")
 
 
-def validate_qst_structures(reactant, product, ts_guess=None):
-    """Require matching atom counts and atom order across QST blocks."""
-    validate_path_search_structures(reactant, product, ts_guess=ts_guess)
-
-
 def make_qst_com_job(
     reactant,
     product,
@@ -54,7 +49,7 @@ def make_qst_com_job(
             "settings must be a GaussianJobSettings instance, "
             f"got {type(settings).__name__}."
         )
-    validate_qst_structures(reactant, product, ts_guess=ts_guess)
+    validate_path_search_structures(reactant, product, ts_guess=ts_guess)
 
     settings = settings.copy()
     qst_kind = _QST3 if ts_guess is not None else _QST2
