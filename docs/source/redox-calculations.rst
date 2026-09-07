@@ -199,6 +199,68 @@ Provide all eight outputs and ``--e-ref`` (the reference potential in volts used
 
    chemsmart run redox analyze --e-ref 0.2 -n 1 --ox-gas ...
 
+Output Format
+=============
+
+``chemsmart run redox analyze`` prints a detailed summary to stdout (or writes it with ``-o``). The report lists
+gas-phase energies, thermal corrections, solvent single-point energies, solution free energies, and the exchange redox
+potential on the scale implied by ``--e-ref``.
+
+.. code:: text
+
+   ==============================================================================
+   Redox Potential - Dual-level Exchange Scheme
+   ==============================================================================
+   Reaction: Ox + Ref_red → Red + Ref_ox
+   Reference: fc_fc+ (Fc/Fc+, Fc/Fc+)
+   n = 1
+   Temperature: 298.15 K
+
+   Method:
+     G_corr = qh-G(T) - E_gas  (from gas-phase freq calculation)
+     G_soln = E_solv + G_corr  (solution free energy)
+     ΔG_exchange = G(Red) + G(Ref_ox) − G(Ox) − G(Ref_red)
+     E_target = E_ref − ΔG_exchange / (n F)
+   ------------------------------------------------------------------------------
+
+   Gas-Phase Electronic Energies (E_gas, au):
+     Ox:      1.0000000000
+     Red:     1.1000000000
+     Ref_ox:  2.0000000000
+     Ref_red: 2.2000000000
+
+   Thermal Corrections (G_corr = qh-G - E_gas, au):
+     Ox:      0.0100000000
+     Red:     0.0200000000
+     Ref_ox:  0.0300000000
+     Ref_red: 0.0400000000
+
+   Solvent Single-Point Energies (E_solv, au):
+     Ox:      0.9000000000
+     Red:     1.0000000000
+     Ref_ox:  1.8000000000
+     Ref_red: 2.0000000000
+
+   Solution Free Energies (G_soln = E_solv + G_corr, au):
+     Ox:      0.9100000000
+     Red:     1.0200000000
+     Ref_ox:  1.8300000000
+     Ref_red: 2.0400000000
+   ------------------------------------------------------------------------------
+
+   Redox Potential:
+     ΔG_exchange = -0.1000000000 au
+                 = -62.7509 kcal/mol
+                 = -2.7211 eV
+                 = -262549.9452 J/mol
+     E_ref = 0.0000 V (Fc/Fc+)
+
+     *** E_target = 2.7211 V (Fc/Fc+) ***
+   ==============================================================================
+
+When ``--e-ref`` is supplied without a registry couple during analyze, the reference line reads ``Reference: E_ref =
+<value> V`` instead of the registry name. The scale suffix after ``E_ref`` and ``E_target`` is omitted in that case.
+
 *************
  CLI Options
 *************
