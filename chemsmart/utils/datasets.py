@@ -1488,6 +1488,109 @@ def discover_pka_reference_companion_outputs(href_gas_path, program=None):
     }
 
 
+REDOX_OUTPUT_SUFFIX_CANDIDATES = {
+    "ox_gas": ["_redox_ox_opt", "_ox_opt"],
+    "red_gas": ["_redox_red_opt", "_red_opt"],
+    "ox_sp": ["_redox_ox_sp", "_ox_sp"],
+    "red_sp": ["_redox_red_sp", "_red_sp"],
+    "ref_ox_gas": ["_redox_RefOx_opt", "_RefOx_opt"],
+    "ref_red_gas": ["_redox_RefRed_opt", "_RefRed_opt"],
+    "ref_ox_sp": ["_redox_RefOx_sp", "_RefOx_sp"],
+    "ref_red_sp": ["_redox_RefRed_sp", "_RefRed_sp"],
+}
+
+REDOX_TARGET_SUFFIX_HELP = (
+    "  <basename>_redox_red_opt.<ext>  (reduced target gas-phase)\n"
+    "  <basename>_redox_ox_sp.<ext>     (oxidized target solvent SP)\n"
+    "  <basename>_redox_red_sp.<ext>    (reduced target solvent SP)"
+)
+
+REDOX_REFERENCE_SUFFIX_HELP = (
+    "  <basename>_redox_RefRed_opt.<ext>  (reduced reference gas-phase)\n"
+    "  <basename>_redox_RefOx_sp.<ext>    (oxidized reference solvent SP)\n"
+    "  <basename>_redox_RefRed_sp.<ext>   (reduced reference solvent SP)"
+)
+
+
+def redox_output_basename_from_path(filepath, role):
+    """Strip a known gas-phase suffix to recover the redox job basename."""
+    stem = os.path.splitext(os.path.basename(str(filepath)))[0]
+    for suffix in REDOX_OUTPUT_SUFFIX_CANDIDATES.get(role, []):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def discover_redox_output_path(
+    basename,
+    directory,
+    role,
+    program=None,
+    filepath_hint=None,
+):
+    """Return the first existing companion output path for *role*."""
+    from chemsmart.utils.io import (
+        get_program_output_extensions,
+        get_program_type_from_file,
+    )
+
+    if program is None and filepath_hint is not None:
+        program = get_program_type_from_file(filepath_hint)
+    extensions = get_program_output_extensions(program)
+    suffixes = REDOX_OUTPUT_SUFFIX_CANDIDATES[role]
+    directory = directory or "."
+    for suffix in suffixes:
+        for ext in extensions:
+            candidate = os.path.join(directory, f"{basename}{suffix}{ext}")
+            if os.path.isfile(candidate):
+                return candidate
+    return os.path.join(directory, f"{basename}{suffixes[0]}{extensions[0]}")
+
+
+def discover_redox_target_companion_outputs(ox_gas_path, program=None):
+    """Infer reduced target and solvent SP paths from an Ox gas-phase file."""
+    from chemsmart.utils.io import get_program_type_from_file
+
+    ox_gas_path = str(ox_gas_path)
+    directory = os.path.dirname(ox_gas_path) or "."
+    if program is None:
+        program = get_program_type_from_file(ox_gas_path)
+    basename = redox_output_basename_from_path(ox_gas_path, "ox_gas")
+    return {
+        "red_gas": discover_redox_output_path(
+            basename, directory, "red_gas", program=program
+        ),
+        "ox_solv": discover_redox_output_path(
+            basename, directory, "ox_sp", program=program
+        ),
+        "red_solv": discover_redox_output_path(
+            basename, directory, "red_sp", program=program
+        ),
+    }
+
+
+def discover_redox_reference_companion_outputs(ref_ox_gas_path, program=None):
+    """Infer Ref_red and reference solvent SP paths from a Ref_ox gas file."""
+    from chemsmart.utils.io import get_program_type_from_file
+
+    ref_ox_gas_path = str(ref_ox_gas_path)
+    directory = os.path.dirname(ref_ox_gas_path) or "."
+    if program is None:
+        program = get_program_type_from_file(ref_ox_gas_path)
+    basename = redox_output_basename_from_path(ref_ox_gas_path, "ref_ox_gas")
+    return {
+        "ref_red_gas": discover_redox_output_path(
+            basename, directory, "ref_red_gas", program=program
+        ),
+        "ref_ox_solv": discover_redox_output_path(
+            basename, directory, "ref_ox_sp", program=program
+        ),
+        "ref_red_solv": discover_redox_output_path(
+            basename, directory, "ref_red_sp", program=program
+        ),
+    }
+
+
 PKA_OUTPUT_SUFFIX_CANDIDATES = PKaOutputTableEntry._OUTPUT_SUFFIX_CANDIDATES
 PKA_TARGET_SUFFIX_HELP = PKaOutputTableEntry.TARGET_SUFFIX_HELP
 PKA_REFERENCE_SUFFIX_HELP = PKaOutputTableEntry.REFERENCE_SUFFIX_HELP

@@ -49,8 +49,10 @@ geometries.
 
 **Output analysis**
 
--  ``chemsmart run redox analyze`` — single-system analysis from eight output files. The reference couple is inferred
-   from Ref_ox/Ref_red formulas; ``-r`` overrides.
+-  ``chemsmart run redox analyze`` — single-system analysis. Only ``--ox-gas`` and ``--ref-ox-gas`` are required; the
+   other six outputs are auto-discovered from CHEMSMART redox job labels (same convention as submit). The reference
+   couple is inferred from Ref_ox/Ref_red formulas; ``-r`` overrides.
+
 -  Analysis never invokes ``gaussian`` or ``orca`` job submission — only reads completed output files.
 
 ********
@@ -177,7 +179,18 @@ volts).
 
 All post-processing lives under ``chemsmart run redox analyze``. No Gaussian or ORCA backend is invoked during analysis.
 
-Provide all eight outputs and ``--e-ref`` (the reference potential in volts used as :math:`E_{\mathrm{ref}}`):
+Only ``--ox-gas`` and ``--ref-ox-gas`` are required. The remaining six outputs are auto-discovered when they follow
+CHEMSMART redox labels (``<basename>_redox_red_opt``, ``<basename>_redox_ox_sp``, ``<basename>_redox_RefRed_opt``, and
+so on). Override any path with the corresponding flag. ``--e-ref`` is the reference potential in volts used as
+:math:`E_{\mathrm{ref}}`.
+
+.. code:: bash
+
+   chemsmart run redox analyze --e-ref 0.0 \
+       --ox-gas mol_redox_ox_opt.log \
+       --ref-ox-gas mol_redox_RefOx_opt.log
+
+All eight outputs can still be given explicitly:
 
 .. code:: bash
 

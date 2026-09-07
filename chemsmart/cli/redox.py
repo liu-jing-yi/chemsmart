@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import os
 from pathlib import Path
 
 import click
@@ -30,6 +31,7 @@ from chemsmart.cli.thermochemistry.thermochemistry import (
     thermochemistry_temp_pressure_conc_options,
 )
 from chemsmart.utils.cli import MyCommand, MyGroup
+from chemsmart.utils.io import get_program_type_from_file
 from chemsmart.utils.utils import check_charge_and_multiplicity
 
 logger = logging.getLogger(__name__)
@@ -216,7 +218,7 @@ def click_redox_analyze_options(f):
         "--ref-red-solv",
         "ref_red_solv_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Solution-phase SP output for the reduced reference.",
     )(f)
     f = click.option(
@@ -224,7 +226,7 @@ def click_redox_analyze_options(f):
         "--ref-ox-solv",
         "ref_ox_solv_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Solution-phase SP output for the oxidized reference.",
     )(f)
     f = click.option(
@@ -232,7 +234,7 @@ def click_redox_analyze_options(f):
         "--red-solv",
         "red_solv_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Solution-phase SP output for the reduced target.",
     )(f)
     f = click.option(
@@ -240,7 +242,7 @@ def click_redox_analyze_options(f):
         "--ox-solv",
         "ox_solv_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Solution-phase SP output for the oxidized target.",
     )(f)
     f = click.option(
@@ -248,7 +250,7 @@ def click_redox_analyze_options(f):
         "--ref-red-gas",
         "ref_red_gas_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Gas-phase opt+freq output for the reduced reference.",
     )(f)
     f = click.option(
@@ -256,7 +258,7 @@ def click_redox_analyze_options(f):
         "--ref-ox-gas",
         "ref_ox_gas_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Gas-phase opt+freq output for the oxidized reference.",
     )(f)
     f = click.option(
@@ -264,7 +266,7 @@ def click_redox_analyze_options(f):
         "--red-gas",
         "red_gas_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Gas-phase opt+freq output for the reduced target.",
     )(f)
     f = click.option(
@@ -272,10 +274,44 @@ def click_redox_analyze_options(f):
         "--ox-gas",
         "ox_gas_file",
         type=click.Path(exists=True, dir_okay=False),
-        required=True,
+        default=None,
         help="Gas-phase opt+freq output for the oxidized target.",
     )(f)
     return f
+
+
+def _auto_discover_redox_files(ox_gas_path, ref_ox_gas_path, program=None):
+    """Infer companion output paths from Ox and Ref_ox gas-phase paths."""
+    from chemsmart.utils.datasets import (
+        REDOX_REFERENCE_SUFFIX_HELP,
+        REDOX_TARGET_SUFFIX_HELP,
+        discover_redox_reference_companion_outputs,
+        discover_redox_target_companion_outputs,
+    )
+
+    if program is None:
+        program = get_program_type_from_file(ox_gas_path)
+
+    results = discover_redox_target_companion_outputs(
+        ox_gas_path, program=program
+    )
+    results.update(discover_redox_reference_companion_outputs(ref_ox_gas_path))
+
+    missing = [
+        f"  {key}: {path}"
+        for key, path in results.items()
+        if not os.path.isfile(path)
+    ]
+    if missing:
+        raise click.UsageError(
+            "Auto-discovery could not find some companion output files.\n"
+            "Missing files:\n" + "\n".join(missing) + "\n\n"
+            "Provide them explicitly or ensure output files follow:\n"
+            + REDOX_TARGET_SUFFIX_HELP
+            + "\n"
+            + REDOX_REFERENCE_SUFFIX_HELP
+        )
+    return results
 
 
 def _thermochemistry_kwargs_from_shared(shared):
@@ -497,7 +533,49 @@ def analyze(
     ``E_target = E_ref − ΔG_exchange / (n F)``
 
     ``--e-ref`` is the reference potential in volts.
+
+    Only ``--ox-gas`` and ``--ref-ox-gas`` are required. The remaining six
+    files are auto-discovered from the CHEMSMART redox naming convention:
+      <basename>_redox_red_opt.<ext>   reduced target gas-phase
+      <basename>_redox_ox_sp.<ext>      oxidized target solvent SP
+      <basename>_redox_red_sp.<ext>     reduced target solvent SP
+      (and the corresponding ``_redox_Ref*`` files for the reference couple)
+    Override any auto-discovered path with the corresponding flag.
     """
+    if ox_gas_file is None:
+        raise click.UsageError("--ox-gas is required for redox analysis.")
+    if ref_ox_gas_file is None:
+        raise click.UsageError("--ref-ox-gas is required for redox analysis.")
+
+    optional = {
+        "red_gas_file": red_gas_file,
+        "ox_solv_file": ox_solv_file,
+        "red_solv_file": red_solv_file,
+        "ref_red_gas_file": ref_red_gas_file,
+        "ref_ox_solv_file": ref_ox_solv_file,
+        "ref_red_solv_file": ref_red_solv_file,
+    }
+    if any(value is None for value in optional.values()):
+        discovered = _auto_discover_redox_files(ox_gas_file, ref_ox_gas_file)
+        discovery_map = {
+            "red_gas_file": "red_gas",
+            "ox_solv_file": "ox_solv",
+            "red_solv_file": "red_solv",
+            "ref_red_gas_file": "ref_red_gas",
+            "ref_ox_solv_file": "ref_ox_solv",
+            "ref_red_solv_file": "ref_red_solv",
+        }
+        for param, key in discovery_map.items():
+            if optional[param] is None:
+                optional[param] = discovered[key]
+                logger.info("Auto-discovered %s: %s", param, discovered[key])
+        red_gas_file = optional["red_gas_file"]
+        ox_solv_file = optional["ox_solv_file"]
+        red_solv_file = optional["red_solv_file"]
+        ref_red_gas_file = optional["ref_red_gas_file"]
+        ref_ox_solv_file = optional["ref_ox_solv_file"]
+        ref_red_solv_file = optional["ref_red_solv_file"]
+
     s_freq_cutoff, entropy_method = resolve_entropy_cutoff(
         cutoff_entropy_grimme, cutoff_entropy_truhlar
     )

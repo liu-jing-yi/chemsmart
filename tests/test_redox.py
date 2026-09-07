@@ -714,6 +714,26 @@ def _analyze_cli_args(files, *extra):
     return ["analyze", "--e-ref", "0.0", *_analyze_file_args(files), *extra]
 
 
+def _write_chem_smart_redox_outputs(tmp_path, basename="mol_redox"):
+    """Create eight redox outputs using CHEMSMART job labels."""
+    names = (
+        f"{basename}_ox_opt.log",
+        f"{basename}_red_opt.log",
+        f"{basename}_RefOx_opt.log",
+        f"{basename}_RefRed_opt.log",
+        f"{basename}_ox_sp.log",
+        f"{basename}_red_sp.log",
+        f"{basename}_RefOx_sp.log",
+        f"{basename}_RefRed_sp.log",
+    )
+    files = {}
+    for name in names:
+        path = tmp_path / name
+        path.write_text("Gaussian, Inc.\n")
+        files[name] = str(path)
+    return files
+
+
 class TestRedoxCLI:
     def test_run_help_lists_redox(self):
         result = CliRunner().invoke(run, ["--help"])
@@ -1131,6 +1151,77 @@ class TestRedoxCLI:
         assert "E_ref = 0.0000 V" in result.output
         assert "kcal/mol" in result.output
         assert "J/mol" in result.output
+
+    def test_run_redox_analyze_auto_discover_companion_outputs(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = _write_chem_smart_redox_outputs(tmp_path)
+        gas = {
+            "mol_redox_ox_opt.log": (1.00, 0.01),
+            "mol_redox_red_opt.log": (1.10, 0.02),
+            "mol_redox_RefOx_opt.log": (2.00, 0.03),
+            "mol_redox_RefRed_opt.log": (2.20, 0.04),
+        }
+        solv = {
+            "mol_redox_ox_sp.log": 0.90,
+            "mol_redox_red_sp.log": 1.00,
+            "mol_redox_RefOx_sp.log": 1.80,
+            "mol_redox_RefRed_sp.log": 2.00,
+        }
+
+        def fake_gas(filepath, **kwargs):
+            return gas[Path(filepath).name]
+
+        def fake_solv(filepath):
+            return solv[Path(filepath).name]
+
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.gas_phase_data", fake_gas
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.solvent_scf_energy", fake_solv
+        )
+        result = CliRunner().invoke(
+            run,
+            [
+                "redox",
+                "analyze",
+                "--e-ref",
+                "0.0",
+                "--ox-gas",
+                files["mol_redox_ox_opt.log"],
+                "--ref-ox-gas",
+                files["mol_redox_RefOx_opt.log"],
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "E_target" in result.output
+
+    def test_run_redox_analyze_requires_ox_and_ref_ox_gas(
+        self, isolated_redox_registry, tmp_path, monkeypatch
+    ):
+        files = _write_chem_smart_redox_outputs(tmp_path)
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.gas_phase_data",
+            lambda filepath, **kwargs: (0.0, 0.0),
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.redox.solvent_scf_energy",
+            lambda filepath: 0.0,
+        )
+        result = CliRunner().invoke(
+            run,
+            [
+                "redox",
+                "analyze",
+                "--e-ref",
+                "0.0",
+                "--ref-ox-gas",
+                files["mol_redox_RefOx_opt.log"],
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "--ox-gas is required" in result.output
 
     def test_run_redox_analyze_accepts_thermochemistry_after_analyze(
         self, isolated_redox_registry, tmp_path, monkeypatch
