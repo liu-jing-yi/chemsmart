@@ -21,9 +21,9 @@ class ORCARedoxJob(RedoxChainMixin, ORCAJob):
 
     Phases: Opt (Ox, Red) → Ref Opt → SP → Ref SP. The oxidized target
     comes from ``molecule``; the reduced target uses the same geometry
-    or ``settings.red_file`` with charge ``ox − n``. Reference geometries
-    come from the :class:`~chemsmart.analysis.redox.RedoxReference`
-    and ``ref_ox_file`` / ``ref_red_file``.
+    or ``settings.red_file`` with charge ``ox − n``. The oxidized reference
+    comes from ``ref_ox_file`` or the registry; the reduced reference uses
+    the same geometry (or ``ref_red_file``) with charge ``ox − n``.
     """
 
     TYPE = "orcaredox"

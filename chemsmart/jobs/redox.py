@@ -107,10 +107,7 @@ class RedoxJobSettingsMixin:
 
     @property
     def has_reference_files(self):
-        return (
-            self.resolved_ref_ox_file is not None
-            and self.resolved_ref_red_file is not None
-        )
+        return self.resolved_ref_ox_file is not None
 
     def ox_charge_and_multiplicity(self, molecule):
         """Charge and multiplicity of the oxidized target."""
@@ -199,28 +196,53 @@ class RedoxJobSettingsMixin:
             multiplicity = default_mult
         return charge, multiplicity
 
+    def _derived_ref_red_charge_and_multiplicity(self, ox_charge, ox_mult):
+        default_charge, default_mult = reduced_charge_and_multiplicity(
+            ox_charge, ox_mult, self.n_electrons
+        )
+        if self.ref_red_charge is not None:
+            charge = self.ref_red_charge
+        elif self.reference.red_charge is not None:
+            charge = self.reference.red_charge
+        else:
+            charge = default_charge
+        if self.ref_red_multiplicity is not None:
+            multiplicity = self.ref_red_multiplicity
+        elif self.reference.red_multiplicity is not None:
+            multiplicity = self.reference.red_multiplicity
+        else:
+            multiplicity = default_mult
+        return charge, multiplicity
+
+    def ref_red_molecule(self, ox_mol, ox_charge, ox_mult):
+        """Reduced reference from ``ref_red_file`` or the oxidized geometry."""
+        if self.resolved_ref_red_file is not None:
+            red_mol = Molecule.from_filepath(self.resolved_ref_red_file)
+            red_charge, red_mult = self._ref_red_charge_and_multiplicity(
+                red_mol, ox_charge, ox_mult
+            )
+            return _molecule_with_charge(red_mol, red_charge, red_mult)
+        red_charge, red_mult = self._derived_ref_red_charge_and_multiplicity(
+            ox_charge, ox_mult
+        )
+        return _molecule_with_charge(ox_mol, red_charge, red_mult)
+
     def reference_pair_molecules(self):
         """Load oxidized and reduced reference molecules.
 
         Raises:
-            ValueError: If either reference geometry path is missing.
+            ValueError: If the oxidized reference geometry path is missing.
         """
         if not self.has_reference_files:
             raise ValueError(
-                "Redox exchange calculations require oxidized and reduced "
-                "reference geometries (registry files or ref_ox_file / "
-                "ref_red_file)."
+                "Redox exchange calculations require an oxidized reference "
+                "geometry (registry ox_file or ref_ox_file)."
             )
         ox_mol = Molecule.from_filepath(self.resolved_ref_ox_file)
-        red_mol = Molecule.from_filepath(self.resolved_ref_red_file)
         ox_charge, ox_mult = self._ref_ox_charge_and_multiplicity(ox_mol)
-        red_charge, red_mult = self._ref_red_charge_and_multiplicity(
-            red_mol, ox_charge, ox_mult
-        )
-        return (
-            _molecule_with_charge(ox_mol, ox_charge, ox_mult),
-            _molecule_with_charge(red_mol, red_charge, red_mult),
-        )
+        ref_ox_mol = _molecule_with_charge(ox_mol, ox_charge, ox_mult)
+        ref_red_mol = self.ref_red_molecule(ox_mol, ox_charge, ox_mult)
+        return ref_ox_mol, ref_red_mol
 
 
 class RedoxChainMixin(ChainMixin):
@@ -236,9 +258,8 @@ class RedoxChainMixin(ChainMixin):
         super().__init__(*args, **kwargs)
         if not self.settings.has_reference_files:
             raise ValueError(
-                "Redox exchange calculations require oxidized and reduced "
-                "reference geometries (registry files or ref_ox_file / "
-                "ref_red_file)."
+                "Redox exchange calculations require an oxidized reference "
+                "geometry (registry ox_file or ref_ox_file)."
             )
         self.ox_job = None
         self.red_job = None

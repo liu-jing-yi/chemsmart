@@ -389,12 +389,13 @@ class TestComputeRedoxPotential:
 
 
 def _redox_settings(tmp_path, **kwargs):
-    ref_ox = kwargs.pop("ref_ox_file", None) or _write_h2_xyz(
-        tmp_path / "ref_ox.xyz"
-    )
-    ref_red = kwargs.pop("ref_red_file", None) or _write_h2_xyz(
-        tmp_path / "ref_red.xyz"
-    )
+    ref_ox = kwargs.pop("ref_ox_file", None)
+    if ref_ox is None:
+        ref_ox = _write_h2_xyz(tmp_path / "ref_ox.xyz")
+    include_ref_red = "ref_red_file" in kwargs
+    ref_red = kwargs.pop("ref_red_file", None)
+    if not include_ref_red:
+        ref_red = _write_h2_xyz(tmp_path / "ref_red.xyz")
     defaults = dict(
         functional="B3LYP",
         basis="6-31G*",
@@ -403,12 +404,13 @@ def _redox_settings(tmp_path, **kwargs):
         solvent_model="SMD",
         solvent_id="acetonitrile",
         ref_ox_file=ref_ox,
-        ref_red_file=ref_red,
         ref_ox_charge=1,
         ref_ox_multiplicity=2,
         ref_red_charge=0,
         ref_red_multiplicity=1,
     )
+    if ref_red is not None:
+        defaults["ref_red_file"] = ref_red
     defaults.update(kwargs)
     return GaussianRedoxJobSettings(**defaults)
 
@@ -487,6 +489,42 @@ class TestGaussianRedoxJob:
         assert len(job.red_job.molecule) == 3
         assert len(job.ox_job.molecule) == 2
 
+    def test_ref_ox_only_derives_reduced_reference(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        ref_ox_xyz = tmp_path / "ref_ox.xyz"
+        ref_ox_xyz.write_text("3\nref\nH 0 0 0\nH 0 0 0.74\nH 0 0 1.5\n")
+        settings = _redox_settings(
+            tmp_path, ref_ox_file=str(ref_ox_xyz), ref_red_file=None
+        )
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert len(job.ref_ox_job.molecule) == 3
+        assert len(job.ref_red_job.molecule) == 3
+        assert job.ref_ox_job.settings.charge == 1
+        assert job.ref_red_job.settings.charge == 0
+        assert job.ref_ox_job.settings.multiplicity == 2
+        assert job.ref_red_job.settings.multiplicity == 1
+
+    def test_ref_red_file_uses_separate_geometry(
+        self, tmp_path, gaussian_jobrunner_no_scratch
+    ):
+        ref_red_xyz = tmp_path / "ref_red.xyz"
+        ref_red_xyz.write_text("2\nref\nH 0 0 0\nH 0 0 0.74\n")
+        settings = _redox_settings(tmp_path, ref_red_file=str(ref_red_xyz))
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert len(job.ref_ox_job.molecule) == 2
+        assert len(job.ref_red_job.molecule) == 2
+
     def test_missing_reference_geometries_error(
         self, tmp_path, gaussian_jobrunner_no_scratch
     ):
@@ -496,7 +534,7 @@ class TestGaussianRedoxJob:
             charge=1,
             multiplicity=2,
         )
-        with pytest.raises(ValueError, match="reference geometries"):
+        with pytest.raises(ValueError, match="oxidized reference"):
             GaussianRedoxJob(
                 molecule=_h2_molecule(),
                 settings=settings,
@@ -560,6 +598,43 @@ class TestGaussianRedoxJob:
         assert job.ox_job.settings.charge == 2
         assert job.red_job.settings.charge == 0
         assert job.ref_ox_job.settings.charge == 2
+        assert job.ref_red_job.settings.charge == 0
+
+    def test_registry_ox_file_only_derives_reduced_reference(
+        self,
+        isolated_redox_registry,
+        tmp_path,
+        gaussian_jobrunner_no_scratch,
+    ):
+        ox = _write_h2_xyz(tmp_path / "registry_ox.xyz")
+        register_redox_reference(
+            RedoxReference(
+                name="ox_only",
+                E_ref_V=0.25,
+                n_electrons=1,
+                scale="SHE",
+                couple_label="OxOnly/OxOnly+",
+                ox_file=ox,
+                ox_charge=1,
+                ox_multiplicity=2,
+            )
+        )
+        settings = GaussianRedoxJobSettings(
+            functional="B3LYP",
+            basis="6-31G*",
+            charge=1,
+            multiplicity=2,
+            reference="ox_only",
+        )
+        job = GaussianRedoxJob(
+            molecule=_h2_molecule(),
+            settings=settings,
+            label="mol_redox",
+            jobrunner=gaussian_jobrunner_no_scratch,
+        )
+        assert len(job.ref_ox_job.molecule) == 2
+        assert len(job.ref_red_job.molecule) == 2
+        assert job.ref_ox_job.settings.charge == 1
         assert job.ref_red_job.settings.charge == 0
 
     def test_jobtypes_includes_redox(self):
@@ -909,7 +984,7 @@ class TestRedoxCLI:
             obj={"jobrunner": MagicMock()},
         )
         assert result.exit_code == 2, result.output
-        assert "reference geometries" in result.output
+        assert "oxidized reference geometry" in result.output
 
     def test_run_redox_analyze_requires_e_ref(
         self, isolated_redox_registry, tmp_path, monkeypatch

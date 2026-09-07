@@ -112,8 +112,9 @@ def click_redox_submit_structure_options(f):
         type=click.Path(exists=True, dir_okay=False),
         default=None,
         help=(
-            "Reduced reference geometry. Required unless the registered "
-            "couple provides red_file."
+            "Reduced reference geometry. Defaults to the oxidized reference "
+            "structure from --ref-ox (or the registry ox_file) with charge "
+            "ox − n."
         ),
     )
     @click.option(
@@ -123,7 +124,8 @@ def click_redox_submit_structure_options(f):
         default=None,
         help=(
             "Oxidized reference geometry. Required unless the registered "
-            "couple provides ox_file."
+            "couple provides ox_file. The reduced reference defaults to "
+            "this geometry with charge ox − n."
         ),
     )
     @click.option(
@@ -436,8 +438,10 @@ def register_redox_cli(parent_group, job_cls, settings_cls):
         """Submit a dual-level exchange redox calculation.
 
         Oxidized target comes from parent ``-f``; reduced target uses the
-        same geometry (or ``--red``) with charge ``ox − n``. Reference
-        geometries come from the registry and/or ``--ref-ox`` / ``--ref-red``.
+        same geometry (or ``--red``) with charge ``ox − n``. The oxidized
+        reference comes from ``--ref-ox`` (or registry ``ox_file``); the
+        reduced reference uses the same geometry (or ``--ref-red``) with
+        charge ``ox − n``.
 
         Analyze completed outputs with ``chemsmart run redox analyze``.
         """

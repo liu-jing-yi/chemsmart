@@ -21,27 +21,27 @@ experience.
  Quick Start
 *************
 
-``-f`` is the oxidized target. Built-in ``fc_fc+`` does not bundle geometries, so ``--ref-ox`` and ``--ref-red`` are
-required.
+``-f`` is the oxidized target. Built-in ``fc_fc+`` does not bundle geometries, so ``--ref-ox`` is required.
+``--ref-red`` defaults to the same geometry with charge ``ox − n``.
 
 .. code:: bash
 
    chemsmart run orca -p my_project -f ox.xyz -c 1 -m 2 redox \
-       --ref-ox ref_ox.xyz --ref-red ref_red.xyz
+       --ref-ox ref_ox.xyz
 
 Chain submit uses the ORCA alias from the chain YAML:
 
 .. code:: bash
 
    chemsmart sub chain -p combined -f ox.xyz -c 1 -m 2 \
-       redox --program orca --ref-ox ref_ox.xyz --ref-red ref_red.xyz
+       redox --program orca --ref-ox ref_ox.xyz
 
 Where:
 
 -  ``-p my_project``: ORCA project settings
 -  ``-f ox.xyz``: Oxidized target geometry
 -  ``-c 1 -m 2``: Charge and multiplicity of Ox
--  ``--ref-ox`` / ``--ref-red``: Reference couple geometries
+-  ``--ref-ox``: Oxidized reference geometry (``--ref-red`` optional)
 
 This runs Opt (Ox, Red) → Ref Opt → SP → Ref SP.
 

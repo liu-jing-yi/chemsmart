@@ -34,13 +34,18 @@ geometries.
 **Job submission**
 
 -  ``chemsmart run/sub gaussian ... redox`` — prepare and run Gaussian redox calculations.
+
 -  ``chemsmart run/sub orca ... redox`` — prepare and run ORCA redox calculations.
+
 -  ``chemsmart run/sub chain -p combined ... redox --program {gaussian,orca}`` — same jobs, with theory and solvent from
    the chain YAML alias for ``--program``. See :ref:`chain-workflow-subcommands`.
+
 -  Use ``chemsmart run`` for local preparation and execution; use ``chemsmart sub`` on HPC clusters to generate
    scheduler scripts.
+
 -  The oxidized target comes from parent ``-f``. The reduced target uses the same geometry (or ``--red``) with charge
-   ``ox − n``. Reference geometries come from the registry and/or ``--ref-ox`` / ``--ref-red``.
+   ``ox − n``. The oxidized reference comes from ``--ref-ox`` (or registry ``ox_file``); the reduced reference uses the
+   same geometry (or ``--ref-red``) with charge ``ox − n``.
 
 **Output analysis**
 
@@ -107,18 +112,19 @@ Job submission is backend-specific. Use the dedicated pages for full examples:
 **Commands**
 
 The built-in ``fc_fc+`` couple has :math:`E_{\mathrm{ref}} = 0.0` V and :math:`n = 1` on the Fc/Fc+ scale. It does not
-bundle geometries, so ``--ref-ox`` and ``--ref-red`` are required unless another registered couple supplies them.
+bundle geometries, so ``--ref-ox`` is required unless another registered couple supplies ``ox_file``. ``--ref-red``
+defaults to the same geometry with charge ``ox − n``.
 
 .. code:: bash
 
    chemsmart run gaussian -p my_project -f ox.xyz -c 1 -m 2 redox \
-       --ref-ox ref_ox.xyz --ref-red ref_red.xyz
+       --ref-ox ref_ox.xyz
 
    chemsmart run orca -p my_project -f ox.xyz -c 1 -m 2 redox \
-       --ref-ox ref_ox.xyz --ref-red ref_red.xyz
+       --ref-ox ref_ox.xyz
 
    chemsmart run chain -p combined -f ox.xyz -c 1 -m 2 \
-       redox --program gaussian --ref-ox ref_ox.xyz --ref-red ref_red.xyz
+       redox --program gaussian --ref-ox ref_ox.xyz
 
 Phases: Opt (Ox, Red) → Ref Opt → SP → Ref SP. Child labels for a job labelled ``mol_redox``:
 
@@ -206,20 +212,29 @@ Submit Options
 
    -  -  Option
       -  Description
+
    -  -  ``-r, --reference``
       -  Registry name of the reference couple (default ``fc_fc+``).
+
    -  -  ``-n, --n-electrons``
       -  Electrons transferred. Defaults to the reference couple; must match it when given.
+
    -  -  ``-rd, --red``
       -  Reduced target geometry. Defaults to the oxidized structure from parent ``-f`` with charge ``ox − n``.
+
    -  -  ``-rdc, --red-charge`` / ``-rdm, --red-multiplicity``
       -  Charge and multiplicity of the reduced target.
+
    -  -  ``-ro, --ref-ox`` / ``-rr, --ref-red``
-      -  Oxidized and reduced reference geometries. Required unless the registered couple provides them.
+      -  Oxidized reference geometry (required unless the registry provides ``ox_file``). Reduced reference defaults to
+         the same structure with charge ``ox − n`` (or use ``--ref-red``).
+
    -  -  ``-roc, --ref-ox-charge`` / ``-rom, --ref-ox-multiplicity``
       -  Charge and multiplicity of the oxidized reference.
+
    -  -  ``-rrc, --ref-red-charge`` / ``-rrm, --ref-red-multiplicity``
       -  Charge and multiplicity of the reduced reference.
+
    -  -  ``-T, --temperature`` / ``-c, --concentration`` / ``-csg`` / ``-ch``
       -  Thermochemistry options stored on the job (same defaults as pKa analysis).
 
