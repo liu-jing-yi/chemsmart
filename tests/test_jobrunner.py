@@ -260,12 +260,13 @@ class TestScratchCLI:
         monkeypatch,
         single_molecule_xyz_file,
         gaussian_project_config_dir,
+        captured,
     ):
         monkeypatch.setenv(
             "CHEMSMART_CONFIG_DIR", str(gaussian_project_config_dir)
         )
         fake_server = Server(name="dummy")
-        captured = {"cli_args": None}
+        captured["cli_args"] = None
         fake_server.submit = (
             lambda job, test=False, cli_args=None, **kw: captured.update(
                 cli_args=cli_args
@@ -476,6 +477,31 @@ class TestScratchYamlOverride:
         )
         assert runner.scratch is False
 
+    def test_missing_scratch_dir_falls_back_to_job_folder(
+        self, pbs_server, tmp_path, monkeypatch
+    ):
+        runner = FakeGaussianJobRunner(
+            server=pbs_server, scratch=False, fake=True
+        )
+        runner.scratch = True
+        runner._scratch_dir = None
+        runner._set_scratch.cache_clear()
+        fake_exe = SimpleNamespace(
+            scratch_dir=str(tmp_path / "does_not_exist"),
+            local_run=None,
+        )
+        monkeypatch.setattr(
+            type(runner),
+            "executable",
+            property(lambda self: fake_exe),
+        )
+        runner._set_scratch()
+        job = DummyGaussianJob(folder=tmp_path, label="gaussian_opt")
+        runner._assign_variables(job)
+
+        assert runner.scratch is False
+        assert runner.running_directory == job.folder
+
 
 class TestSubResourceOverrides:
     def test_cli_resources_reach_submission_server(
@@ -483,6 +509,7 @@ class TestSubResourceOverrides:
         monkeypatch,
         single_molecule_xyz_file,
         gaussian_project_config_dir,
+        captured,
     ):
         monkeypatch.setenv(
             "CHEMSMART_CONFIG_DIR", str(gaussian_project_config_dir)
@@ -495,7 +522,6 @@ class TestSubResourceOverrides:
             NUM_HOURS=1,
             QUEUE_NAME="normal",
         )
-        captured = {}
 
         def _capture_script(self, job, cli_args, **kwargs):
             captured.update(
