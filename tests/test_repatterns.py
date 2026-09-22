@@ -1,6 +1,7 @@
 import re
 
 from chemsmart.utils.repattern import (
+    conformer_index_suffix_pattern,
     gaussian_dias_filename_point_with_fragment1,
     gaussian_dias_filename_point_with_fragment2,
     gaussian_dias_filename_point_without_fragment_without_reactant,
@@ -9,6 +10,27 @@ from chemsmart.utils.repattern import (
     gaussian_opt_keywords_pattern,
     multiple_spaces_pattern,
 )
+
+
+def test_conformer_index_suffix_pattern():
+    """Match `_cN` at the end of a filename stem."""
+    pattern = re.compile(conformer_index_suffix_pattern)
+
+    match = pattern.search("crest_conformers_c1")
+    assert match is not None
+    assert match.group(1) == "1"
+
+    match = pattern.search("crest_conformers_c10")
+    assert match is not None
+    assert match.group(1) == "10"
+
+    match = pattern.search("mol_pka_HA_opt_c12")
+    assert match is not None
+    assert match.group(1) == "12"
+
+    assert pattern.search("crest_conformers") is None
+    assert pattern.search("crest_conformers_c1_opt") is None
+    assert pattern.sub("", "crest_conformers_c1") == "crest_conformers"
 
 
 def test_gaussian_opt_keywords_pattern():

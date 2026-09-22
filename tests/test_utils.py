@@ -1933,6 +1933,105 @@ class TestPKaTableParsing:
         assert discovered["ha_solv"] == str(tmp_path / "acid1_pka_HA_sp.log")
         assert discovered["a_solv"] == str(tmp_path / "acid1_pka_A_sp.log")
 
+    def test_discover_pka_target_companion_outputs_prefers_ensemble(
+        self, tmp_path
+    ):
+        """``_c*`` ensemble files are used when present, sorted by index."""
+        from chemsmart.utils.datasets import (
+            pka_output_basename_from_path,
+        )
+        from chemsmart.utils.io import discover_pka_target_companion_outputs
+
+        for name in (
+            "acid1_pka_HA_opt.log",
+            "acid1_pka_HA_opt_c1.log",
+            "acid1_pka_HA_opt_c2.log",
+            "acid1_pka_HA_opt_c10.log",
+            "acid1_pka_A_opt.log",
+            "acid1_pka_A_opt_c1.log",
+            "acid1_pka_A_opt_c2.log",
+            "acid1_pka_A_opt_c10.log",
+            "acid1_pka_HA_sp.log",
+            "acid1_pka_HA_sp_c1.log",
+            "acid1_pka_HA_sp_c2.log",
+            "acid1_pka_HA_sp_c10.log",
+            "acid1_pka_A_sp.log",
+            "acid1_pka_A_sp_c1.log",
+            "acid1_pka_A_sp_c2.log",
+            "acid1_pka_A_sp_c10.log",
+        ):
+            (tmp_path / name).write_text("Gaussian, Inc.\n")
+
+        ha_c2 = tmp_path / "acid1_pka_HA_opt_c2.log"
+        assert pka_output_basename_from_path(str(ha_c2), "ha_gas") == "acid1"
+        discovered = discover_pka_target_companion_outputs(str(ha_c2))
+
+        assert discovered["a"] == [
+            str(tmp_path / "acid1_pka_A_opt_c1.log"),
+            str(tmp_path / "acid1_pka_A_opt_c2.log"),
+            str(tmp_path / "acid1_pka_A_opt_c10.log"),
+        ]
+        assert discovered["ha_solv"] == [
+            str(tmp_path / "acid1_pka_HA_sp_c1.log"),
+            str(tmp_path / "acid1_pka_HA_sp_c2.log"),
+            str(tmp_path / "acid1_pka_HA_sp_c10.log"),
+        ]
+        assert discovered["a_solv"] == [
+            str(tmp_path / "acid1_pka_A_sp_c1.log"),
+            str(tmp_path / "acid1_pka_A_sp_c2.log"),
+            str(tmp_path / "acid1_pka_A_sp_c10.log"),
+        ]
+
+    def test_pka_output_table_entry_resolve_filenames_ensemble(
+        self, tmp_path, monkeypatch
+    ):
+        """Blank result-file cells resolve to sorted ``_c*`` ensembles."""
+        from chemsmart.utils.datasets import PKaOutputTableEntry
+
+        monkeypatch.chdir(tmp_path)
+        for suffix in (
+            "_pka_HA_opt_c1",
+            "_pka_HA_opt_c2",
+            "_pka_A_opt_c1",
+            "_pka_A_opt_c2",
+            "_pka_HA_sp_c1",
+            "_pka_HA_sp_c2",
+            "_pka_A_sp_c1",
+            "_pka_A_sp_c2",
+        ):
+            (tmp_path / f"acid1{suffix}.log").write_text(
+                "Entering Gaussian System\n"
+            )
+
+        entry = PKaOutputTableEntry(
+            {
+                "basename": "acid1",
+                "ha_gas": None,
+                "a_gas": None,
+                "ha_sp": None,
+                "a_sp": None,
+            },
+            row_number=1,
+        )
+        entry.validate(check_file_exists=True, scheme="direct")
+
+        assert entry["ha_gas"] == [
+            "acid1_pka_HA_opt_c1.log",
+            "acid1_pka_HA_opt_c2.log",
+        ]
+        assert entry["a_gas"] == [
+            "acid1_pka_A_opt_c1.log",
+            "acid1_pka_A_opt_c2.log",
+        ]
+        assert entry["ha_sp"] == [
+            "acid1_pka_HA_sp_c1.log",
+            "acid1_pka_HA_sp_c2.log",
+        ]
+        assert entry["a_sp"] == [
+            "acid1_pka_A_sp_c1.log",
+            "acid1_pka_A_sp_c2.log",
+        ]
+
     def test_discover_pka_reference_companion_outputs(self, tmp_path):
         """analyze should discover HRef companion files from the HRef gas output."""
         from chemsmart.utils.datasets import (

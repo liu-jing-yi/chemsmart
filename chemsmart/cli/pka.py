@@ -211,6 +211,84 @@ def warn_if_default_pks_non_aqueous(pks_defaulted, solvent_id):
     )
 
 
+def ensemble_effective_free_energy(g_values, temperature):
+    """Return the ensemble effective free energy in Hartree.
+
+    ``G_eff = -RT ln Σ exp(-G_i / RT)``, evaluated with a log-sum-exp
+    shift for numerical stability. ``g_values`` and the return value are
+    in Hartree; ``temperature`` is in Kelvin.
+    """
+    if temperature is None or temperature <= 0:
+        raise ValueError("temperature must be a positive value in Kelvin.")
+    energies = [float(g) for g in g_values]
+    if not energies:
+        raise ValueError("g_values must contain at least one free energy.")
+    if len(energies) == 1:
+        return energies[0]
+    rt_hartree = energy_conversion("j/mol", "hartree", R * temperature)
+    g_min = min(energies)
+    log_sum = math.log(
+        sum(math.exp(-(g - g_min) / rt_hartree) for g in energies)
+    )
+    return g_min - rt_hartree * log_sum
+
+
+def _normalize_pka_file_arg(value):
+    """Return a non-empty list of filesystem paths, or ``None``."""
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, os.PathLike)):
+        return [os.fspath(value)]
+    try:
+        paths = [os.fspath(path) for path in value]
+    except TypeError as exc:
+        raise TypeError(
+            f"Expected a path or sequence of paths, got {type(value)!r}."
+        ) from exc
+    if not paths:
+        raise ValueError("File list must be non-empty.")
+    return paths
+
+
+def _species_solution_free_energy(
+    gas_files, solv_files, thermo_kwargs, temperature, label
+):
+    """Return G_soln (or G_eff), component energies, and conformer count."""
+    gas_files = _normalize_pka_file_arg(gas_files)
+    solv_files = _normalize_pka_file_arg(solv_files)
+    if gas_files is None or solv_files is None:
+        raise ValueError(f"Missing required files for {label}.")
+    if len(gas_files) != len(solv_files):
+        raise ValueError(
+            f"{label} gas-phase and solvent file counts must match "
+            f"({len(gas_files)} vs {len(solv_files)})."
+        )
+    e_gas_values = []
+    g_corr_values = []
+    e_solv_values = []
+    g_soln_values = []
+    for gas_file, solv_file in zip(gas_files, solv_files):
+        e_gas, g_corr = pka_gas_phase_data(gas_file, **thermo_kwargs)
+        e_solv = pka_solvent_scf_energy(solv_file)
+        e_gas_values.append(e_gas)
+        g_corr_values.append(g_corr)
+        e_solv_values.append(e_solv)
+        g_soln_values.append(e_solv + g_corr)
+    n_conformers = len(g_soln_values)
+    g_soln = (
+        ensemble_effective_free_energy(g_soln_values, temperature)
+        if n_conformers > 1
+        else g_soln_values[0]
+    )
+    return {
+        "E_gas": e_gas_values[0],
+        "G_corr": g_corr_values[0],
+        "E_solv": e_solv_values[0],
+        "G_soln": g_soln,
+        "num_conformers": n_conformers,
+    }
+
+
 def compute_pka(
     ha_gas_file,
     a_gas_file,
@@ -231,6 +309,11 @@ def compute_pka(
     delta_G_proton=None,
 ):
     """Compute pKa from output files using program-independent thermochemistry.
+
+    Each species file argument may be a path or a sequence of paths. For a
+    species with more than one conformer, ``G_soln,i = E_solv,i + G_corr,i``
+    is computed per conformer and replaced by the ensemble effective free
+    energy ``G_eff = -RT ln Σ exp(-G_i / RT)``.
 
     For ``scheme='direct'``, ``delta_G_proton`` is G_soln(H+) in kcal/mol.
     If omitted, a T-dependent aqueous default is computed from Kelly,
@@ -278,14 +361,20 @@ def compute_pka(
         entropy_method=entropy_method,
     )
 
-    E_gas_HA_au, G_corr_HA_au = pka_gas_phase_data(
-        ha_gas_file, **thermo_kwargs
+    ha_data = _species_solution_free_energy(
+        ha_gas_file, ha_solv_file, thermo_kwargs, temperature, "HA"
     )
-    E_gas_A_au, G_corr_A_au = pka_gas_phase_data(a_gas_file, **thermo_kwargs)
-    E_solv_HA_au = pka_solvent_scf_energy(ha_solv_file)
-    E_solv_A_au = pka_solvent_scf_energy(a_solv_file)
-    G_soln_HA_au = E_solv_HA_au + G_corr_HA_au
-    G_soln_A_au = E_solv_A_au + G_corr_A_au
+    a_data = _species_solution_free_energy(
+        a_gas_file, a_solv_file, thermo_kwargs, temperature, "A-"
+    )
+    G_soln_HA_au = ha_data["G_soln"]
+    G_soln_A_au = a_data["G_soln"]
+    E_gas_HA_au = ha_data["E_gas"]
+    E_gas_A_au = a_data["E_gas"]
+    G_corr_HA_au = ha_data["G_corr"]
+    G_corr_A_au = a_data["G_corr"]
+    E_solv_HA_au = ha_data["E_solv"]
+    E_solv_A_au = a_data["E_solv"]
 
     R_kcal = 0.001987204
     ln10 = 2.302585093
@@ -314,18 +403,24 @@ def compute_pka(
             "G_corr_A_au": G_corr_A_au,
             "E_gas_HA_au": E_gas_HA_au,
             "E_gas_A_au": E_gas_A_au,
+            "num_conformers_HA": ha_data["num_conformers"],
+            "num_conformers_A": a_data["num_conformers"],
         }
 
-    E_gas_HRef_au, G_corr_HRef_au = pka_gas_phase_data(
-        href_gas_file, **thermo_kwargs
+    href_data = _species_solution_free_energy(
+        href_gas_file, href_solv_file, thermo_kwargs, temperature, "HRef"
     )
-    E_gas_Ref_au, G_corr_Ref_au = pka_gas_phase_data(
-        ref_gas_file, **thermo_kwargs
+    ref_data = _species_solution_free_energy(
+        ref_gas_file, ref_solv_file, thermo_kwargs, temperature, "Ref-"
     )
-    E_solv_HRef_au = pka_solvent_scf_energy(href_solv_file)
-    E_solv_Ref_au = pka_solvent_scf_energy(ref_solv_file)
-    G_soln_HRef_au = E_solv_HRef_au + G_corr_HRef_au
-    G_soln_Ref_au = E_solv_Ref_au + G_corr_Ref_au
+    G_soln_HRef_au = href_data["G_soln"]
+    G_soln_Ref_au = ref_data["G_soln"]
+    E_gas_HRef_au = href_data["E_gas"]
+    E_gas_Ref_au = ref_data["E_gas"]
+    G_corr_HRef_au = href_data["G_corr"]
+    G_corr_Ref_au = ref_data["G_corr"]
+    E_solv_HRef_au = href_data["E_solv"]
+    E_solv_Ref_au = ref_data["E_solv"]
 
     delta_G_soln_au = (G_soln_A_au + G_soln_HRef_au) - (
         G_soln_HA_au + G_soln_Ref_au
@@ -356,6 +451,10 @@ def compute_pka(
         "E_gas_A_au": E_gas_A_au,
         "E_gas_HRef_au": E_gas_HRef_au,
         "E_gas_Ref_au": E_gas_Ref_au,
+        "num_conformers_HA": ha_data["num_conformers"],
+        "num_conformers_A": a_data["num_conformers"],
+        "num_conformers_HRef": href_data["num_conformers"],
+        "num_conformers_Ref": ref_data["num_conformers"],
     }
 
 
@@ -474,6 +573,34 @@ def _print_computed_pka_pkb(pka, pkb=False, pks=None, solvent_id=None):
     print(f"  *** Computed pKa(HA) = {pka:.2f} ***")
 
 
+def _pka_result_uses_ensemble(result):
+    keys = (
+        "num_conformers_HA",
+        "num_conformers_A",
+        "num_conformers_HRef",
+        "num_conformers_Ref",
+    )
+    return any(result.get(key, 1) > 1 for key in keys)
+
+
+def _format_pka_g_soln_line(label, value, num_conformers):
+    if num_conformers is not None and num_conformers > 1:
+        return (
+            f"  {label} ({num_conformers} conformers, G_eff):  "
+            f"{value:.10f}"
+        )
+    return f"  {label}:  {value:.10f}"
+
+
+def _print_pka_g_soln_method_lines(result):
+    print("  G_soln = E_solv + G_corr  (solution free energy)")
+    if _pka_result_uses_ensemble(result):
+        print(
+            "  For multiple conformers, G_soln is replaced by "
+            "G_eff = -RT ln Σ exp(-G_i/RT)"
+        )
+
+
 def print_pka_summary(
     ha_gas_file,
     a_gas_file,
@@ -526,7 +653,7 @@ def print_pka_summary(
         print()
         print("Method:")
         print("  G_corr = qh-G(T) - E_gas  (from gas-phase freq calculation)")
-        print("  G_soln = E_solv + G_corr  (solution free energy)")
+        _print_pka_g_soln_method_lines(result)
         print("  ΔG_diss = G_soln(A⁻) + G_soln(H⁺) - G_soln(HA)")
         print("  pKa = ΔG_diss / (2.303 × R × T)")
         print("-" * 78)
@@ -544,8 +671,20 @@ def print_pka_summary(
         print(f"  A⁻:  {result['E_solv_A_au']:.10f}")
         print()
         print("Solution Free Energies (G_soln = E_solv + G_corr, au):")
-        print(f"  HA:  {result['G_soln_HA_au']:.10f}")
-        print(f"  A⁻:  {result['G_soln_A_au']:.10f}")
+        print(
+            _format_pka_g_soln_line(
+                "HA",
+                result["G_soln_HA_au"],
+                result.get("num_conformers_HA", 1),
+            )
+        )
+        print(
+            _format_pka_g_soln_line(
+                "A⁻",
+                result["G_soln_A_au"],
+                result.get("num_conformers_A", 1),
+            )
+        )
         print("-" * 78)
         print()
         print("pKa Calculation:")
@@ -575,7 +714,7 @@ def print_pka_summary(
     print()
     print("Method:")
     print("  G_corr = qh-G(T) - E_gas  (from gas-phase freq calculation)")
-    print("  G_soln = E_solv + G_corr  (solution free energy)")
+    _print_pka_g_soln_method_lines(result)
     print(
         "  ΔG_soln = [G(A⁻)_soln + G(HRef)_soln] - [G(HA)_soln + G(Ref⁻)_soln]"
     )
@@ -601,10 +740,34 @@ def print_pka_summary(
     print(f"  Ref⁻:  {result['E_solv_Ref_au']:.10f}")
     print()
     print("Solution Free Energies (G_soln = E_solv + G_corr, au):")
-    print(f"  HA:  {result['G_soln_HA_au']:.10f}")
-    print(f"  A⁻:  {result['G_soln_A_au']:.10f}")
-    print(f"  HRef:  {result['G_soln_HRef_au']:.10f}")
-    print(f"  Ref⁻:  {result['G_soln_Ref_au']:.10f}")
+    print(
+        _format_pka_g_soln_line(
+            "HA",
+            result["G_soln_HA_au"],
+            result.get("num_conformers_HA", 1),
+        )
+    )
+    print(
+        _format_pka_g_soln_line(
+            "A⁻",
+            result["G_soln_A_au"],
+            result.get("num_conformers_A", 1),
+        )
+    )
+    print(
+        _format_pka_g_soln_line(
+            "HRef",
+            result["G_soln_HRef_au"],
+            result.get("num_conformers_HRef", 1),
+        )
+    )
+    print(
+        _format_pka_g_soln_line(
+            "Ref⁻",
+            result["G_soln_Ref_au"],
+            result.get("num_conformers_Ref", 1),
+        )
+    )
     print("-" * 78)
     print()
     print("pKa Calculation:")
@@ -1401,6 +1564,27 @@ def _scheme_display_name(scheme):
     return names.get(scheme, scheme)
 
 
+def _maybe_discover_ha_ensemble(ha_gas_path, program=None):
+    """Return the HA ``_c*`` ensemble list, or ``None`` if none exist."""
+    from chemsmart.utils.datasets import (
+        discover_pka_output_path,
+        pka_output_basename_from_path,
+    )
+
+    directory = os.path.dirname(str(ha_gas_path)) or "."
+    basename = pka_output_basename_from_path(ha_gas_path, "ha_gas")
+    ha_discovered = discover_pka_output_path(
+        basename,
+        directory,
+        "ha_gas",
+        program=program,
+        filepath_hint=ha_gas_path,
+    )
+    if isinstance(ha_discovered, (list, tuple)):
+        return list(ha_discovered)
+    return None
+
+
 def validate_direct_analyze_files(ha, a, ha_solv, a_solv):
     """Validate required files for direct-cycle pKa analysis."""
     required = [
@@ -1415,22 +1599,28 @@ def validate_direct_analyze_files(ha, a, ha_solv, a_solv):
             "For direct-cycle pKa analysis all four output files are required.\n"
             f"Missing: {', '.join(f'--{name}' for name in missing)}"
         )
-    for name, path in required:
-        if not os.path.isfile(path):
-            raise click.UsageError(f"File not found for --{name}: {path}")
+    _require_pka_analysis_files(required)
 
 
 def _auto_discover_direct_pka_files(ha_gas_path, program=None):
     """Infer A- and solvent SP paths from the HA gas-phase output path."""
-    from chemsmart.utils.datasets import PKA_TARGET_SUFFIX_HELP
+    from chemsmart.utils.datasets import (
+        PKA_TARGET_SUFFIX_HELP,
+        pka_field_paths_exist,
+    )
     from chemsmart.utils.io import discover_pka_target_companion_outputs
 
     results = discover_pka_target_companion_outputs(
         ha_gas_path, program=program
     )
+    ha_ensemble = _maybe_discover_ha_ensemble(ha_gas_path, program=program)
+    if ha_ensemble is not None:
+        results["ha"] = ha_ensemble
 
     missing = [
-        f"  {k}: {v}" for k, v in results.items() if not os.path.isfile(v)
+        f"  {k}: {v}"
+        for k, v in results.items()
+        if not pka_field_paths_exist(v)
     ]
     if missing:
         raise click.UsageError(
@@ -1559,6 +1749,8 @@ def validate_reference_options(shared):
 
 def _validate_pka_table_program(pka_table, program):
     """Ensure explicit -p matches every output file in the table."""
+    from chemsmart.utils.datasets import pka_field_paths
+
     output_fields = (
         "ha_gas",
         "a_gas",
@@ -1571,25 +1763,35 @@ def _validate_pka_table_program(pka_table, program):
     )
     for entry in pka_table.entries:
         for field in output_fields:
-            path = entry.get(field)
-            if not _is_existing_output_path(path):
-                continue
-            detected = get_program_type_from_file(str(path))
-            if detected != program:
-                raise click.UsageError(
-                    f"File '{path}' was detected as {detected!r}, but "
-                    f"batch-analyze was run with -p {program}."
-                )
+            for path in pka_field_paths(entry.get(field)):
+                if not os.path.isfile(path):
+                    continue
+                detected = get_program_type_from_file(path)
+                if detected != program:
+                    raise click.UsageError(
+                        f"File '{path}' was detected as {detected!r}, but "
+                        f"batch-analyze was run with -p {program}."
+                    )
 
 
-def _is_existing_output_path(value):
-    """Return True when *value* is a non-empty path to an existing file."""
-    from chemsmart.utils.datasets import normalize_table_cell
+def _require_pka_analysis_files(named_paths):
+    """Raise UsageError if any named analysis path is missing on disk."""
+    from chemsmart.utils.datasets import pka_field_paths
 
-    path = normalize_table_cell(value)
-    if path is None:
-        return False
-    return os.path.isfile(str(path))
+    missing_files = []
+    for name, path in named_paths:
+        paths = pka_field_paths(path)
+        if not paths:
+            missing_files.append(f"  --{name}: {path}")
+            continue
+        for filepath in paths:
+            if not os.path.isfile(filepath):
+                missing_files.append(f"  --{name}: {filepath}")
+    if missing_files:
+        raise click.UsageError(
+            "One or more pKa analysis files do not exist:\n"
+            + "\n".join(missing_files)
+        )
 
 
 def validate_analyze_files(
@@ -1622,18 +1824,10 @@ def validate_analyze_files(
         )
 
     solv_names = [f"{name}-solv" for name in file_names]
-    missing_files = []
-    for name, path in zip(file_names, required_gas):
-        if path is not None and not os.path.isfile(path):
-            missing_files.append(f"  --{name}: {path}")
-    for name, path in zip(solv_names, required_solv):
-        if path is not None and not os.path.isfile(path):
-            missing_files.append(f"  --{name}: {path}")
-    if missing_files:
-        raise click.UsageError(
-            "One or more pKa analysis files do not exist:\n"
-            + "\n".join(missing_files)
-        )
+    named_paths = list(zip(file_names, required_gas)) + list(
+        zip(solv_names, required_solv)
+    )
+    _require_pka_analysis_files(named_paths)
 
 
 def _auto_discover_pka_files(ha_gas_path, href_gas_path, program=None):
@@ -1642,6 +1836,7 @@ def _auto_discover_pka_files(ha_gas_path, href_gas_path, program=None):
         PKA_REFERENCE_SUFFIX_HELP,
         PKA_TARGET_SUFFIX_HELP,
         discover_pka_reference_companion_outputs,
+        pka_field_paths_exist,
     )
     from chemsmart.utils.io import discover_pka_target_companion_outputs
 
@@ -1652,9 +1847,14 @@ def _auto_discover_pka_files(ha_gas_path, href_gas_path, program=None):
         ha_gas_path, program=program
     )
     results.update(discover_pka_reference_companion_outputs(href_gas_path))
+    ha_ensemble = _maybe_discover_ha_ensemble(ha_gas_path, program=program)
+    if ha_ensemble is not None:
+        results["ha"] = ha_ensemble
 
     missing = [
-        f"  {k}: {v}" for k, v in results.items() if not os.path.isfile(v)
+        f"  {k}: {v}"
+        for k, v in results.items()
+        if not pka_field_paths_exist(v)
     ]
     if missing:
         raise click.UsageError(
@@ -1740,6 +1940,8 @@ def analyze(
       <basename>_pka_HA_sp.<ext>   HA solvent single-point
       <basename>_pka_A_sp.<ext>    conjugate base solvent SP
       (and the corresponding _pka_Ref_* / _pka_HRef_sp files for HRef)
+    If <basename>_pka_HA_opt_c*.<ext> ensemble files exist, those (and
+    matching A/SP _c* files) are used instead of the single-file suffixes.
     Override any auto-discovered path with the corresponding flag.
 
     \b
@@ -1774,6 +1976,9 @@ def analyze(
             a = optional["a"]
             ha_solv = optional["ha_solv"]
             a_solv = optional["a_solv"]
+            if "ha" in discovered:
+                ha = discovered["ha"]
+                logger.info(f"Auto-discovered HA ensemble: {ha}")
 
         validate_direct_analyze_files(ha, a, ha_solv, a_solv)
 
@@ -1818,6 +2023,9 @@ def analyze(
             ref = optional["ref"]
             href_solv = optional["href_solv"]
             ref_solv = optional["ref_solv"]
+            if "ha" in discovered:
+                ha = discovered["ha"]
+                logger.info(f"Auto-discovered HA ensemble: {ha}")
 
     validate_analyze_files(
         ha, a, href, ref, ha_solv, a_solv, href_solv, ref_solv, reference_pka

@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import re
 
 import numpy as np
 
+from chemsmart.utils.repattern import conformer_index_suffix_pattern
+
 logger = logging.getLogger(__name__)
+
+_CONFORMER_INDEX_SUFFIX_RE = re.compile(conformer_index_suffix_pattern)
 
 
 def normalize_table_cell(value):
     """Convert blank/NaN table cells to None for stable downstream handling."""
     if value is None:
         return None
+    if isinstance(value, (list, tuple)):
+        return value
     if isinstance(value, float) and np.isnan(value):
         return None
     try:
@@ -28,6 +35,68 @@ def normalize_table_cell(value):
         stripped = value.strip()
         return stripped if stripped else None
     return value
+
+
+def pka_field_paths(value):
+    """Return filesystem paths stored in a pKa table or analysis field."""
+    value = normalize_table_cell(value)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        paths = []
+        for item in value:
+            item = normalize_table_cell(item)
+            if item is not None:
+                paths.append(str(item))
+        return paths
+    return [str(value)]
+
+
+def pka_field_paths_exist(value):
+    """Return True when every stored path exists as a file."""
+    paths = pka_field_paths(value)
+    return bool(paths) and all(os.path.isfile(path) for path in paths)
+
+
+def _pka_is_glob_suffix(suffix):
+    return "*" in str(suffix)
+
+
+def _pka_concrete_suffixes(suffixes):
+    return [suffix for suffix in suffixes if not _pka_is_glob_suffix(suffix)]
+
+
+def _join_pka_output_path(directory, filename):
+    if directory:
+        return os.path.join(directory, filename)
+    return filename
+
+
+def _pka_conformer_sort_key(path):
+    stem = os.path.splitext(os.path.basename(str(path)))[0]
+    match = _CONFORMER_INDEX_SUFFIX_RE.search(stem)
+    index = int(match.group(1)) if match else 0
+    return (index, str(path))
+
+
+def glob_pka_ensemble_files(basename, suffix, directory, extensions):
+    """Return sorted ensemble output paths matching a ``_c*`` suffix glob."""
+    prefix = str(suffix).rstrip("*")
+    if directory is None:
+        directory = ""
+    matches = []
+    seen = set()
+    for ext in extensions:
+        pattern = _join_pka_output_path(directory, f"{basename}{prefix}*{ext}")
+        for path in glob.glob(pattern):
+            if not os.path.isfile(path) or path in seen:
+                continue
+            stem = os.path.splitext(os.path.basename(path))[0]
+            if not _CONFORMER_INDEX_SUFFIX_RE.search(stem):
+                continue
+            seen.add(path)
+            matches.append(path)
+    return sorted(matches, key=_pka_conformer_sort_key)
 
 
 class PKaTableEntry:
@@ -494,11 +563,12 @@ class PKaOutputTableEntry:
     )
 
     # Filename suffix patterns for CHEMSMART pKa job outputs (not CSV aliases).
+    # Glob suffixes (``_c*``) are tried first and yield a sorted ensemble.
     _OUTPUT_SUFFIX_CANDIDATES = {
-        "ha_gas": ["_pka_HA_opt", "_pka_HA", "_pka"],
-        "a_gas": ["_pka_A_opt", "_pka_A", "_pka_cb"],
-        "ha_sp": ["_pka_HA_sp", "_pka_sp"],
-        "a_sp": ["_pka_A_sp", "_pka_cb_sp"],
+        "ha_gas": ["_pka_HA_opt_c*", "_pka_HA_opt", "_pka_HA", "_pka"],
+        "a_gas": ["_pka_A_opt_c*", "_pka_A_opt", "_pka_A", "_pka_cb"],
+        "ha_sp": ["_pka_HA_sp_c*", "_pka_HA_sp", "_pka_sp"],
+        "a_sp": ["_pka_A_sp_c*", "_pka_A_sp", "_pka_cb_sp"],
         "href_gas": ["_pka_HRef_opt", "_HRef_opt", "_pka_HRef", "_HRef"],
         "ref_gas": [
             "_pka_Ref_opt",
@@ -517,7 +587,9 @@ class PKaOutputTableEntry:
     TARGET_SUFFIX_HELP = (
         "  <basename>_pka_A_opt.<ext>   (conjugate base gas-phase)\n"
         "  <basename>_pka_HA_sp.<ext>   (HA solvent single-point)\n"
-        "  <basename>_pka_A_sp.<ext>    (conjugate base solvent SP)"
+        "  <basename>_pka_A_sp.<ext>    (conjugate base solvent SP)\n"
+        "  Ensemble: <basename>_pka_HA_opt_c*.<ext>\n"
+        "             (and matching A/SP _c* files)"
     )
 
     REFERENCE_SUFFIX_HELP = (
@@ -667,9 +739,9 @@ class PKaOutputTableEntry:
         """Return existing output-file paths already listed in this row."""
         paths = []
         for field in self._OUTPUT_PATH_FIELDS:
-            val = normalize_table_cell(self.get(field))
-            if val and os.path.isfile(str(val)):
-                paths.append(str(val))
+            for path in pka_field_paths(self.get(field)):
+                if os.path.isfile(path):
+                    paths.append(path)
         return paths
 
     def _basename_output_paths(self, suffix_candidates):
@@ -677,6 +749,13 @@ class PKaOutputTableEntry:
         paths = []
         for suffixes in suffix_candidates.values():
             for suffix in suffixes:
+                if _pka_is_glob_suffix(suffix):
+                    paths.extend(
+                        glob_pka_ensemble_files(
+                            self.basename, suffix, "", (".log", ".out")
+                        )
+                    )
+                    continue
                 for ext in (".log", ".out"):
                     candidate = f"{self.basename}{suffix}{ext}"
                     if os.path.isfile(candidate):
@@ -714,36 +793,25 @@ class PKaOutputTableEntry:
 
     def _resolve_filenames(self):
         """Auto-discover output files based on basename if not explicitly provided."""
-        from chemsmart.utils.io import get_program_output_extensions
-
         suffix_candidates = {
             key: self._OUTPUT_SUFFIX_CANDIDATES[key]
             for key in self._TARGET_AUTO_DISCOVER_FIELDS
         }
 
         program = self._detect_output_program(suffix_candidates)
-        extensions = get_program_output_extensions(program)
-        default_ext = extensions[0]
 
-        for field, suffixes in suffix_candidates.items():
+        for field in suffix_candidates:
             if normalize_table_cell(self.get(field)) is not None:
                 continue
-
-            found = False
-            for suffix in suffixes:
-                for ext in extensions:
-                    candidate = f"{self.basename}{suffix}{ext}"
-                    if os.path.exists(candidate):
-                        self._set_field(field, candidate)
-                        found = True
-                        break
-                if found:
-                    break
-
-            if not found:
-                self._set_field(
-                    field, f"{self.basename}{suffixes[0]}{default_ext}"
-                )
+            self._set_field(
+                field,
+                discover_pka_output_path(
+                    self.basename,
+                    "",
+                    field,
+                    program=program,
+                ),
+            )
 
         self._derive_helper_fields()
 
@@ -812,10 +880,15 @@ class PKaOutputTableEntry:
         else:
             raise ValueError(f"Unsupported pKa analysis scheme: {scheme!r}")
         for col, val in required_files:
-            if val is None or (isinstance(val, float) and np.isnan(val)):
+            paths = pka_field_paths(val)
+            if not paths:
                 errors.append(f"Missing {col}{row_info}")
-            elif check_file_exists and not os.path.exists(str(val)):
-                errors.append(f"File not found for {col}: {val}{row_info}")
+            elif check_file_exists:
+                for path in paths:
+                    if not os.path.exists(path):
+                        errors.append(
+                            f"File not found for {col}: {path}{row_info}"
+                        )
 
         if scheme == "proton exchange":
             if self.pka_ref is None or (
@@ -1285,7 +1358,10 @@ class PKaOutputTable:
 def pka_output_basename_from_path(filepath, role):
     """Strip a known gas-phase suffix to recover the pKa job basename."""
     stem = os.path.splitext(os.path.basename(str(filepath)))[0]
-    for suffix in PKaOutputTableEntry._OUTPUT_SUFFIX_CANDIDATES.get(role, []):
+    stem = _CONFORMER_INDEX_SUFFIX_RE.sub("", stem)
+    for suffix in _pka_concrete_suffixes(
+        PKaOutputTableEntry._OUTPUT_SUFFIX_CANDIDATES.get(role, [])
+    ):
         if stem.endswith(suffix):
             return stem[: -len(suffix)]
     return stem
@@ -1298,7 +1374,12 @@ def discover_pka_output_path(
     program=None,
     filepath_hint=None,
 ):
-    """Return the first existing companion output path for *role*."""
+    """Return existing companion output path(s) for *role*.
+
+    If ``{basename}_pka_*_c*.log`` (or ``.out``) ensemble files exist,
+    return them as a numerically sorted list. Otherwise return the first
+    matching single-file suffix path, or the default first concrete suffix.
+    """
     from chemsmart.utils.io import (
         get_program_output_extensions,
         get_program_type_from_file,
@@ -1308,13 +1389,30 @@ def discover_pka_output_path(
         program = get_program_type_from_file(filepath_hint)
     extensions = get_program_output_extensions(program)
     suffixes = PKaOutputTableEntry._OUTPUT_SUFFIX_CANDIDATES[role]
-    directory = directory or "."
+    if directory is None:
+        directory = "."
+
     for suffix in suffixes:
+        if not _pka_is_glob_suffix(suffix):
+            continue
+        matches = glob_pka_ensemble_files(
+            basename, suffix, directory, extensions
+        )
+        if matches:
+            return matches
+
+    concrete_suffixes = _pka_concrete_suffixes(suffixes)
+    for suffix in concrete_suffixes:
         for ext in extensions:
-            candidate = os.path.join(directory, f"{basename}{suffix}{ext}")
+            candidate = _join_pka_output_path(
+                directory, f"{basename}{suffix}{ext}"
+            )
             if os.path.isfile(candidate):
                 return candidate
-    return os.path.join(directory, f"{basename}{suffixes[0]}{extensions[0]}")
+    default_suffix = concrete_suffixes[0] if concrete_suffixes else suffixes[0]
+    return _join_pka_output_path(
+        directory, f"{basename}{default_suffix}{extensions[0]}"
+    )
 
 
 def discover_pka_reference_companion_outputs(href_gas_path, program=None):

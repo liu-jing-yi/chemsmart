@@ -22,6 +22,11 @@ allxyz_filename_pattern = r"([^\s\"']+\.allxyz\b)"
 # It will match if .xyz is followed by: a
 # space, a quote, end of line, punctuation
 
+# Last `_cN` token of a job label or filename stem (extension already
+# stripped). Matches crest_conformers_c1, mol_pka_HA_opt_c12, and
+# structure_from_lowest_opt_c10. Group 1 is the integer index.
+conformer_index_suffix_pattern = r"_c(\d+)$"
+
 # Pattern to match the solvent name in a %cosmors solventfilename line, e.g.:
 #   solventfilename "water"
 # Captures the name (without quotes).  Used to locate the corresponding

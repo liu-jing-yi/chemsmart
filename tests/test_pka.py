@@ -319,6 +319,148 @@ class TestAqueousProtonSolutionFreeEnergy:
         assert result["delta_G_proton_user_supplied"] is True
 
 
+class TestPkaEnsembleAnalysis:
+    """Ensemble G_eff analysis for multi-conformer pKa outputs."""
+
+    def test_ensemble_effective_free_energy_two_equal_g(self):
+        import math
+
+        from chemsmart.cli.pka import ensemble_effective_free_energy
+        from chemsmart.utils.constants import R, energy_conversion
+
+        g = -1.0
+        temperature = 298.15
+        g_eff = ensemble_effective_free_energy([g, g], temperature)
+        rt_hartree = energy_conversion("j/mol", "hartree", R * temperature)
+        assert g_eff == pytest.approx(g - rt_hartree * math.log(2))
+
+    def test_ensemble_effective_free_energy_single_value_unchanged(self):
+        from chemsmart.cli.pka import ensemble_effective_free_energy
+
+        assert ensemble_effective_free_energy([-0.5], 298.15) == pytest.approx(
+            -0.5
+        )
+
+    def test_compute_pka_two_file_pairs_uses_g_eff(
+        self, tmp_path, monkeypatch
+    ):
+        import math
+
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        ha2 = tmp_path / "ha2.log"
+        a2 = tmp_path / "a2.log"
+        has2 = tmp_path / "has2.log"
+        as2 = tmp_path / "as2.log"
+        for path in (ha2, a2, has2, as2):
+            _write_signature_file(path, "gaussian")
+
+        from chemsmart.cli.pka import compute_pka
+        from chemsmart.utils.constants import R, energy_conversion
+
+        temperature = 298.15
+        single = compute_pka(
+            ha_gas_file=files["ha.log"],
+            a_gas_file=files["a.log"],
+            ha_solv_file=files["has.log"],
+            a_solv_file=files["as.log"],
+            scheme="direct",
+            temperature=temperature,
+        )
+        result = compute_pka(
+            ha_gas_file=[files["ha.log"], str(ha2)],
+            a_gas_file=[files["a.log"], str(a2)],
+            ha_solv_file=[files["has.log"], str(has2)],
+            a_solv_file=[files["as.log"], str(as2)],
+            scheme="direct",
+            temperature=temperature,
+        )
+        rt_hartree = energy_conversion("j/mol", "hartree", R * temperature)
+        expected_g_ha = single["G_soln_HA_au"] - rt_hartree * math.log(2)
+        expected_g_a = single["G_soln_A_au"] - rt_hartree * math.log(2)
+        assert result["G_soln_HA_au"] == pytest.approx(expected_g_ha)
+        assert result["G_soln_A_au"] == pytest.approx(expected_g_a)
+        assert result["num_conformers_HA"] == 2
+        assert result["num_conformers_A"] == 2
+
+    def test_print_pka_summary_mentions_ensemble_g_eff(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        files = _build_outputs(tmp_path, "gaussian")
+        _install_fake_thermochemistry(monkeypatch)
+        ha2 = tmp_path / "ha2.log"
+        a2 = tmp_path / "a2.log"
+        has2 = tmp_path / "has2.log"
+        as2 = tmp_path / "as2.log"
+        for path in (ha2, a2, has2, as2):
+            _write_signature_file(path, "gaussian")
+
+        from chemsmart.cli.pka import print_pka_summary
+
+        print_pka_summary(
+            ha_gas_file=[files["ha.log"], str(ha2)],
+            a_gas_file=[files["a.log"], str(a2)],
+            ha_solv_file=[files["has.log"], str(has2)],
+            a_solv_file=[files["as.log"], str(as2)],
+            scheme="direct",
+            temperature=298.15,
+        )
+        output = capsys.readouterr().out
+        assert "G_eff" in output
+        assert "2 conformers" in output
+
+    def test_analyze_auto_discovers_ensemble(self, tmp_path, monkeypatch):
+        for name in (
+            "acid1_pka_HA_opt_c1.log",
+            "acid1_pka_HA_opt_c2.log",
+            "acid1_pka_A_opt_c1.log",
+            "acid1_pka_A_opt_c2.log",
+            "acid1_pka_HA_sp_c1.log",
+            "acid1_pka_HA_sp_c2.log",
+            "acid1_pka_A_sp_c1.log",
+            "acid1_pka_A_sp_c2.log",
+        ):
+            _write_signature_file(tmp_path / name, "gaussian")
+
+        called = {}
+
+        def _fake_print(*args, **kwargs):
+            called["kwargs"] = kwargs
+
+        import chemsmart.cli.pka as pka_cli
+
+        monkeypatch.setattr(pka_cli, "print_pka_summary", _fake_print)
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "pka",
+                "-s",
+                "direct",
+                "analyze",
+                "-ha",
+                str(tmp_path / "acid1_pka_HA_opt_c1.log"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called["kwargs"]["ha_gas_file"] == [
+            str(tmp_path / "acid1_pka_HA_opt_c1.log"),
+            str(tmp_path / "acid1_pka_HA_opt_c2.log"),
+        ]
+        assert called["kwargs"]["a_gas_file"] == [
+            str(tmp_path / "acid1_pka_A_opt_c1.log"),
+            str(tmp_path / "acid1_pka_A_opt_c2.log"),
+        ]
+        assert called["kwargs"]["ha_solv_file"] == [
+            str(tmp_path / "acid1_pka_HA_sp_c1.log"),
+            str(tmp_path / "acid1_pka_HA_sp_c2.log"),
+        ]
+        assert called["kwargs"]["a_solv_file"] == [
+            str(tmp_path / "acid1_pka_A_sp_c1.log"),
+            str(tmp_path / "acid1_pka_A_sp_c2.log"),
+        ]
+
+
 class TestPkbConversion:
     """pKb = pKs − pKa conversion for analysis and summaries."""
 
