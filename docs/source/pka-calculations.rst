@@ -33,15 +33,24 @@ CHEMSMART provides pKa workflows in two separate stages:
 **Job submission**
 
 -  ``chemsmart run/sub gaussian ... pka [submit|batch]`` — prepare and run Gaussian pKa calculations.
+
 -  ``chemsmart run/sub orca ... pka [submit|batch]`` — prepare and run ORCA pKa calculations.
+
 -  Add ``--pkb`` to protonate a free-base input and run the same HA / A⁻ jobs; add ``--pks`` for a non-default
    autoprotolysis constant (see :ref:`pka-pkb`).
+
 -  Use ``chemsmart run`` for local preparation and execution; use ``chemsmart sub`` on HPC clusters to generate
    scheduler scripts (see :ref:`pka-hpc-batch-submission`).
+
 -  A single structure yields one job; batch input (CSV table or multi-molecule CDXML) can produce multiple jobs in one
    invocation.
+
 -  When ``pka`` is invoked without an explicit subcommand, a submission table triggers ``batch``; otherwise ``submit``
    runs.
+
+-  Optional CREST conformational sampling is off by default (``--sampling``). Pass ``-N`` / ``--num-conformers`` on the
+   ``pka`` group (after ``pka``, not on ``run`` / ``sub``) to keep more than the lowest CREST structure. See
+   :ref:`pka-crest-sampling`.
 
 **Output analysis**
 
@@ -132,6 +141,16 @@ CHEMSMART implements a dual-level approach for accurate solvation free energies:
 
       G_{\text{soln}} = E_{\text{solv}} + G_{\text{corr}}
 
+#. **Ensemble free energy** (when a species has more than one conformer):
+
+   .. math::
+
+      G_{\text{eff}} = -RT \ln \sum_i \exp(-G_{\text{soln},i}/RT)
+
+   Each conformer still has :math:`G_{\text{soln},i} = E_{\text{solv},i} + G_{\text{corr},i}`. Analysis replaces that
+   species’ :math:`G_{\text{soln}}` with :math:`G_{\text{eff}}` (evaluated with a log-sum-exp shift). A single conformer
+   is unchanged.
+
 .. note::
 
    All internal energies are stored in Hartree (au). :math:`\Delta G_{\text{soln}}` (proton exchange) and :math:`\Delta
@@ -165,6 +184,10 @@ The default scheme is **proton exchange**, which requires a reference acid (``-r
    chemsmart run gaussian -p my_project -f acid.xyz -c 0 -m 1 pka -pi 10 -s direct
    chemsmart run orca -p my_project -f acid.xyz -c 0 -m 1 pka -pi 10 -s direct
 
+   # Opt-in CREST sampling (N=1 uses crest_best.xyz; -N must follow pka)
+   chemsmart run gaussian -p my_project -f acid.xyz -c 0 -m 1 pka \
+       --sampling -N 3 -pi 10 -s direct
+
    # pKb submit: input is the free base B; omit -pi when SMARTS finds one site
    chemsmart run gaussian -p my_project -f pyridine.xyz -c 0 -m 1 pka \
        --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
@@ -181,6 +204,46 @@ The default scheme is **proton exchange**, which requires a reference acid (``-r
 Comma- or whitespace-delimited table with columns ``filepath``, ``proton_index``, ``charge``, ``multiplicity``. With
 ``--pkb``, ``proton_index`` is the **basic-atom** index to protonate. Leave ``proton_index`` blank to use ChemDraw
 colour (CDXML) or a unique SMARTS match (see :ref:`pka-site-resolution`).
+
+.. _pka-crest-sampling:
+
+****************************************
+ Optional CREST Conformational Sampling
+****************************************
+
+CREST sampling is **opt-in**. Without ``--sampling``, pKa submit/analyze behaviour is unchanged: one gas-phase opt+freq
+and one solvent SP per species.
+
+**Flags** (on the ``pka`` group, after ``pka``):
+
+-  ``--sampling`` / ``--no-sampling`` — run CREST on HA and A⁻ before DFT. Default: off. When a reference acid is
+   configured, HRef and Ref⁻ are sampled as well.
+-  ``-N`` / ``--num-conformers`` — number of lowest-energy CREST conformers to take into DFT (must be ``>= 1``; default
+   ``1``). Values greater than 1 require ``--sampling``.
+
+``-N`` on ``pka`` is distinct from ``chemsmart run/sub -n/--num-cores``. Place ``-N`` **after** ``pka``.
+
+**Geometry selection**
+
+-  ``N = 1``: use ``crest_best.xyz`` (else the first frame of energy-sorted ``crest_conformers.xyz``).
+-  ``N > 1``: use the first N frames of energy-sorted ``crest_conformers.xyz``.
+
+CREST is gas-phase unless a CREST project YAML (the same ``-p`` name as Gaussian/ORCA, when present) already sets a
+solvent. The HA / A⁻ pair is built **before** sampling, so atom order after CREST does not matter.
+
+**DFT jobs after sampling**
+
+Each sampled species yields N gas-phase opt+freq jobs. Solvent single-points remain one job per species, taken from the
+lowest-energy optimized conformer. Parent completion requires DFT opt+SP only; CREST is best-effort.
+
+If CREST has not finished, the serial pKa job waits (same as opt/SP phases) so HPC resubmits can continue. After CREST
+terminates abnormally or completes without usable geometries, CHEMSMART logs a warning and falls back to the input
+geometry (or the shorter available conformer set).
+
+**Analysis**
+
+When a species has more than one completed conformer (matching gas and solvent files), analysis uses Boltzmann
+:math:`G_{\text{eff}}` instead of a single :math:`G_{\text{soln}}`. See Dual-Level Approach above.
 
 .. _pka-site-resolution:
 
@@ -360,11 +423,16 @@ Each pKa job creates gas-phase opt+freq and solvent single-point sub-jobs. Outpu
       -  Reference acid / conjugate base (proton exchange only)
    -  -  ``_HRef_sp`` / ``_Ref_sp``
       -  Reference solvent single-points (proton exchange only)
+   -  -  ``_HA_crest`` / ``_A_crest``
+      -  CREST sampling of HA / A⁻ (``--sampling`` only)
+   -  -  ``_HA_opt_cN`` / ``_A_opt_cN``
+      -  N-th CREST conformer gas-phase opt+freq when ``-N`` > 1 (1-based)
 
 Gaussian batch jobs use the input stem as the job label (e.g. ``acid1_HA_opt.log``). ORCA batch jobs append ``_pka`` to
 the stem (e.g. ``acid1_pka_HA_opt.out``). The output-analysis autodiscovery convention below is aligned with the
 ``{basename}_pka_*`` pattern used by ORCA submission and by typical batch output tables. With ``--pkb``, HA is BH⁺ and
-A⁻ is B; file names are unchanged.
+A⁻ is B; file names are unchanged. With ``--sampling -N 1``, DFT names are unchanged. With ``-N`` greater than 1, opt
+labels gain ``_c1``, ``_c2``, …; solvent SPs stay ``_HA_sp`` / ``_A_sp`` (lowest conformer).
 
 .. _pka-pkb:
 
@@ -575,6 +643,10 @@ patterns as ``batch-analyze``:
 -  ``<basename>_pka_HA_sp.<ext>`` — HA solvent single-point
 -  ``<basename>_pka_A_sp.<ext>`` — conjugate base solvent SP
 
+If ``<basename>_pka_HA_opt_c*.<ext>`` (or ``.out``) files exist, auto-discovery uses that sorted ensemble and the
+matching ``_A_opt_c*``, ``_HA_sp_c*``, and ``_A_sp_c*`` files instead of the single-file suffixes. Otherwise the
+single-file suffixes above are used.
+
 **From the HRef gas-phase file (``-hr``)**
 
 -  ``<basename>_pka_Ref_opt.<ext>`` — reference conjugate base
@@ -649,19 +721,19 @@ order; both ``.log`` and ``.out`` are tested.
 
    -  -  ``ha_gas``
       -  HA gas-phase opt+freq output
-      -  ``_pka_HA_opt``, ``_pka_HA``, ``_pka``
+      -  ``_pka_HA_opt_c*``, ``_pka_HA_opt``, ``_pka_HA``, ``_pka``
 
    -  -  ``a_gas``
       -  A⁻ gas-phase opt+freq output
-      -  ``_pka_A_opt``, ``_pka_A``, ``_pka_cb``
+      -  ``_pka_A_opt_c*``, ``_pka_A_opt``, ``_pka_A``, ``_pka_cb``
 
    -  -  ``ha_sp``
       -  HA solvent single-point output
-      -  ``_pka_HA_sp``, ``_pka_sp``
+      -  ``_pka_HA_sp_c*``, ``_pka_HA_sp``, ``_pka_sp``
 
    -  -  ``a_sp``
       -  A⁻ solvent single-point output
-      -  ``_pka_A_sp``, ``_pka_cb_sp``
+      -  ``_pka_A_sp_c*``, ``_pka_A_sp``, ``_pka_cb_sp``
 
 **Reference-acid columns (proton exchange only)**
 
@@ -934,6 +1006,9 @@ When ``--pkb`` or ``--pks`` is set, the summary adds pKs and pKb lines:
    *** Computed pKb(B)  = -38.70 ***
 
 With an explicit ``--pks``, the source reads ``(user-supplied)`` instead of ``(default aqueous)``.
+
+When a species has more than one conformer, the solution-free-energy lines read ``HA (2 conformers, G_eff):`` and the
+method block notes :math:`G_{\text{eff}} = -RT \ln \sum \exp(-G_i/RT)`.
 
 **Direct dissociation**
 

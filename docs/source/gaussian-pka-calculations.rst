@@ -55,6 +55,18 @@ Where:
 This runs gas-phase opt+freq and solvent single-points for HA, A⁻, HRef, and Ref⁻ (default solvent: SMD/water from
 project or CLI).
 
+**CREST sampling (optional)**
+
+Sampling is off by default. Pass ``--sampling`` on the ``pka`` group. ``-N`` / ``--num-conformers`` (default ``1``) must
+appear **after** ``pka``; it is not ``chemsmart run/sub -n/--num-cores``. ``N = 1`` uses ``crest_best.xyz``; ``N > 1``
+takes the N lowest frames of ``crest_conformers.xyz`` into gas-phase opt+freq. Solvent SPs remain one job per species
+(lowest conformer). CREST failure falls back to the input geometry. See :ref:`pka-crest-sampling`.
+
+.. code:: bash
+
+   chemsmart run gaussian -p my_project -f acid.xyz -c 0 -m 1 pka \
+       --sampling -N 3 -pi 10 -s direct
+
 **Direct cycle**
 
 Use ``-s direct`` when you do **not** want a reference acid. Only HA and A⁻ calculations are submitted.
@@ -125,6 +137,10 @@ Sub-job labels determine output filenames. For a job with label ``acid1`` (the d
    acid1_Ref_opt.log     # Ref- gas-phase (proton exchange)
    acid1_HRef_sp.log     # HRef solvent SP (proton exchange)
    acid1_Ref_sp.log      # Ref- solvent SP (proton exchange)
+
+With ``--sampling -N 1``, DFT names are unchanged and CREST jobs are ``acid1_HA_crest`` / ``acid1_A_crest``. With ``-N``
+greater than 1, gas-phase opt labels become ``acid1_HA_opt_c1.log``, ``acid1_HA_opt_c2.log``, …; solvent SPs stay
+``acid1_HA_sp.log`` / ``acid1_A_sp.log``.
 
 When building a ``batch-analyze`` output table, either list these paths explicitly or use a ``basename`` and suffix
 convention documented in :ref:`pka-calculations` (the ``_pka_*`` autodiscovery pattern matches ORCA-labelled outputs;
@@ -274,6 +290,15 @@ Core Options
    -  -  ``-s``
       -  ``--scheme``
       -  ``direct`` or ``proton exchange`` (default).
+
+   -  -
+      -  ``--sampling`` / ``--no-sampling``
+      -  Run CREST on HA, A⁻, and any reference acid before DFT. Default: off. See :ref:`pka-crest-sampling`.
+
+   -  -  ``-N``
+      -  ``--num-conformers``
+      -  Number of lowest-energy CREST conformers to optimize (default ``1``). Must appear after ``pka``. Values greater
+         than 1 require ``--sampling``.
 
    -  -
       -  ``--conjugate-base-charge``
@@ -472,6 +497,19 @@ Example 6: pKb Submit and Analyze
        -ha pyridine_HA_opt.log \
        -hr ref_acid_HRef_opt.log \
        -rp 6.75
+
+Example 7: CREST Sampling
+=========================
+
+.. code:: bash
+
+   chemsmart run gaussian -p b3lyp_project -f phenol.xyz -c 0 -m 1 pka \
+       --sampling -N 3 \
+       -pi 13 \
+       -s direct
+
+``-N`` follows ``pka``. Analysis of multi-conformer ``_c*`` outputs uses Boltzmann :math:`G_{\text{eff}}` when matching
+gas and solvent files are present. See :ref:`pka-crest-sampling`.
 
 **********
  See Also

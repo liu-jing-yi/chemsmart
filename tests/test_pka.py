@@ -229,6 +229,95 @@ def _build_pka_batch_table(tmp_path):
     return table
 
 
+def _first_hydrogen_index(molecule):
+    return next(
+        i + 1 for i, symbol in enumerate(molecule.symbols) if symbol == "H"
+    )
+
+
+def _write_crest_main_out(path, normal=True):
+    text = (
+        "Conformer-Rotamer Ensemble Sampling Tool\n"
+        "$ crest mol.xyz --chrg 0 --uhf 0\n"
+    )
+    if normal:
+        text += "CREST terminated normally.\n"
+    else:
+        text += "CREST failed.\n"
+    Path(path).write_text(text)
+
+
+def _write_translated_conformers(path, molecule, n, shift=0.5):
+    for index in range(n):
+        frame = molecule.copy()
+        frame.positions = frame.positions + [index * shift, 0.0, 0.0]
+        frame.write_xyz(str(path), mode="w" if index == 0 else "a")
+
+
+def _direct_pka_job(
+    backend,
+    molecule,
+    jobrunner,
+    *,
+    sampling=False,
+    num_conformers=1,
+    label="mol_pka",
+):
+    proton_index = _first_hydrogen_index(molecule)
+    molecule.charge = 0
+    molecule.multiplicity = 1
+    if backend == "gaussian":
+        from chemsmart.jobs.gaussian.pka import GaussianpKaJob
+        from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
+
+        settings = GaussianpKaJobSettings(
+            proton_index=proton_index,
+            scheme="direct",
+            functional="B3LYP",
+            basis="6-31G*",
+            sampling=sampling,
+            num_conformers=num_conformers,
+        )
+        job_cls = GaussianpKaJob
+    else:
+        from chemsmart.jobs.orca.pka import ORCApKaJob
+        from chemsmart.jobs.orca.settings import ORCApKaJobSettings
+
+        settings = ORCApKaJobSettings(
+            proton_index=proton_index,
+            scheme="direct",
+            functional="B3LYP",
+            basis="def2-SVP",
+            sampling=sampling,
+            num_conformers=num_conformers,
+        )
+        job_cls = ORCApKaJob
+    return job_cls(
+        molecule=molecule,
+        settings=settings,
+        label=label,
+        jobrunner=jobrunner,
+    )
+
+
+def _make_crest_search_job(molecule, jobrunner, label="ha_crest"):
+    from chemsmart.jobs.crest.conformers import CRESTConformerSearchJob
+    from chemsmart.jobs.crest.settings import CRESTJobSettings
+
+    settings = CRESTJobSettings.default()
+    settings.jobtype = "conformers"
+    settings.charge = 0 if molecule.charge is None else molecule.charge
+    settings.multiplicity = (
+        1 if molecule.multiplicity is None else molecule.multiplicity
+    )
+    return CRESTConformerSearchJob(
+        molecule=molecule,
+        settings=settings,
+        label=label,
+        jobrunner=jobrunner,
+    )
+
+
 class TestAqueousProtonSolutionFreeEnergy:
     def test_value_at_298_15_k(self):
         from chemsmart.cli.pka import (
@@ -459,6 +548,315 @@ class TestPkaEnsembleAnalysis:
             str(tmp_path / "acid1_pka_A_sp_c1.log"),
             str(tmp_path / "acid1_pka_A_sp_c2.log"),
         ]
+
+
+class TestPkaCrestSampling:
+    """CREST sampling helpers, pKa job labels, and conformer extract path."""
+
+    def test_pka_subjob_label_n1_and_n_greater_than_1(self):
+        from chemsmart.jobs.pka_sampling import pka_subjob_label
+
+        assert (
+            pka_subjob_label("mol_pka", "HA", "opt", 1, 1) == "mol_pka_HA_opt"
+        )
+        assert pka_subjob_label("mol_pka", "A", "sp", 2, 1) == "mol_pka_A_sp"
+        assert (
+            pka_subjob_label("mol_pka", "HA", "opt", 1, 3)
+            == "mol_pka_HA_opt_c1"
+        )
+        assert (
+            pka_subjob_label("mol_pka", "A", "sp", 2, 3) == "mol_pka_A_sp_c2"
+        )
+
+    def test_select_crest_conformers_waits_when_output_missing(
+        self, temporary_working_dir, water_molecule, crest_jobrunner_no_scratch
+    ):
+        from chemsmart.jobs.pka_sampling import select_crest_conformers
+
+        crest_job = _make_crest_search_job(
+            water_molecule, crest_jobrunner_no_scratch
+        )
+        assert select_crest_conformers(crest_job, 1, water_molecule) is None
+
+    def test_select_crest_conformers_missing_xyz_falls_back(
+        self,
+        temporary_working_dir,
+        water_molecule,
+        crest_jobrunner_no_scratch,
+        caplog,
+    ):
+        import logging
+
+        from chemsmart.jobs.pka_sampling import select_crest_conformers
+
+        water_molecule.charge = 0
+        water_molecule.multiplicity = 1
+        crest_job = _make_crest_search_job(
+            water_molecule, crest_jobrunner_no_scratch
+        )
+        _write_crest_main_out(crest_job.outputfile, normal=True)
+        with caplog.at_level(logging.WARNING):
+            selected = select_crest_conformers(crest_job, 1, water_molecule)
+        assert len(selected) == 1
+        assert selected[0].positions == pytest.approx(water_molecule.positions)
+        assert selected[0].charge == 0
+        assert "input" in caplog.text.lower()
+
+    def test_select_crest_conformers_abnormal_termination_falls_back(
+        self,
+        temporary_working_dir,
+        water_molecule,
+        crest_jobrunner_no_scratch,
+        caplog,
+    ):
+        import logging
+
+        from chemsmart.jobs.pka_sampling import select_crest_conformers
+
+        water_molecule.charge = 1
+        water_molecule.multiplicity = 1
+        crest_job = _make_crest_search_job(
+            water_molecule, crest_jobrunner_no_scratch, label="failed_crest"
+        )
+        _write_crest_main_out(crest_job.outputfile, normal=False)
+        with caplog.at_level(logging.WARNING):
+            selected = select_crest_conformers(crest_job, 1, water_molecule)
+        assert len(selected) == 1
+        assert selected[0].positions == pytest.approx(water_molecule.positions)
+        assert selected[0].charge == 1
+        assert "did not terminate normally" in caplog.text
+
+    def test_select_crest_conformers_fewer_than_n_uses_available(
+        self,
+        temporary_working_dir,
+        water_molecule,
+        crest_jobrunner_no_scratch,
+        caplog,
+    ):
+        import logging
+
+        from chemsmart.jobs.pka_sampling import select_crest_conformers
+
+        water_molecule.charge = 0
+        water_molecule.multiplicity = 1
+        crest_job = _make_crest_search_job(
+            water_molecule, crest_jobrunner_no_scratch, label="short_crest"
+        )
+        _write_crest_main_out(crest_job.outputfile, normal=True)
+        _write_translated_conformers(
+            Path(crest_job.folder) / "crest_conformers.xyz",
+            water_molecule,
+            2,
+        )
+        with caplog.at_level(logging.WARNING):
+            selected = select_crest_conformers(crest_job, 3, water_molecule)
+        assert len(selected) == 2
+        assert selected[0].charge == 0
+        assert "requested 3" in caplog.text
+
+    def test_select_crest_conformers_slices_fixture_ensemble(
+        self,
+        temporary_working_dir,
+        water_molecule,
+        crest_jobrunner_no_scratch,
+        multiple_molecules_xyz_file,
+    ):
+        import shutil
+
+        from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.jobs.pka_sampling import select_crest_conformers
+
+        water_molecule.charge = 0
+        water_molecule.multiplicity = 1
+        crest_job = _make_crest_search_job(
+            water_molecule, crest_jobrunner_no_scratch, label="ens_crest"
+        )
+        _write_crest_main_out(crest_job.outputfile, normal=True)
+        shutil.copy(
+            multiple_molecules_xyz_file,
+            Path(crest_job.folder) / "crest_conformers.xyz",
+        )
+        selected = select_crest_conformers(crest_job, 3, water_molecule)
+        expected = Molecule.from_filepath(
+            multiple_molecules_xyz_file, index=":", return_list=True
+        )[:3]
+        assert len(selected) == 3
+        for got, want in zip(selected, expected):
+            assert got.positions == pytest.approx(want.positions)
+            assert got.charge == 0
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_default_path_has_no_crest_jobs_and_keeps_labels(
+        self,
+        backend,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(backend, mol, jobrunner, label="1a_pka")
+        assert job.crest_jobs == []
+        assert job.protonated_crest_job is None
+        assert job.conjugate_base_crest_job is None
+        assert job.protonated_job.label == "1a_pka_HA_opt"
+        assert job.conjugate_base_job.label == "1a_pka_A_opt"
+        if job.sp_jobs is None:
+            job._create_sp_jobs()
+        assert job.protonated_sp_job.label == "1a_pka_HA_sp"
+        assert job.conjugate_base_sp_job.label == "1a_pka_A_sp"
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sampling_n1_creates_crest_children_and_keeps_dft_labels(
+        self,
+        backend,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            backend, mol, jobrunner, sampling=True, label="1a_pka"
+        )
+        assert len(job.crest_jobs) == 2
+        assert job.protonated_crest_job.label == "1a_pka_HA_crest"
+        assert job.conjugate_base_crest_job.label == "1a_pka_A_crest"
+        assert job.protonated_job.label == "1a_pka_HA_opt"
+        assert job.conjugate_base_job.label == "1a_pka_A_opt"
+        if job.sp_jobs is None:
+            job._create_sp_jobs()
+        assert job.protonated_sp_job.label == "1a_pka_HA_sp"
+        assert job.conjugate_base_sp_job.label == "1a_pka_A_sp"
+
+    def test_sampling_n1_uses_extracted_crest_geometry(
+        self,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+    ):
+        import numpy as np
+
+        from chemsmart.io.molecules.structure import Molecule
+
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            "gaussian",
+            mol,
+            gaussian_jobrunner_no_scratch,
+            sampling=True,
+            label="1a_pka",
+        )
+        original = np.array(mol.positions, copy=True)
+        shifted = mol.copy()
+        shifted.positions = original + np.array([1.0, 0.0, 0.0])
+        ha_crest = job.protonated_crest_job
+        a_crest = job.conjugate_base_crest_job
+        _write_crest_main_out(ha_crest.outputfile, normal=True)
+        _write_crest_main_out(a_crest.outputfile, normal=True)
+        best_path = Path(ha_crest.folder) / "crest_best.xyz"
+        shifted.write_xyz(str(best_path), mode="w")
+
+        selected = job._selected_crest_conformers()
+        assert selected is not None
+        ha_confs, a_confs, *_ = selected
+        assert ha_confs[0].positions == pytest.approx(shifted.positions)
+        assert not np.allclose(ha_confs[0].positions, original)
+        job._prepare_target_opt_jobs(ha_confs, a_confs)
+        assert job.protonated_job.molecule.positions == pytest.approx(
+            shifted.positions
+        )
+        assert job.protonated_job.label == "1a_pka_HA_opt"
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_sampling_n3_labels_opt_c1_to_c3(
+        self,
+        backend,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            backend,
+            mol,
+            jobrunner,
+            sampling=True,
+            num_conformers=3,
+            label="1a_pka",
+        )
+        assert [child.label for child in job.protonated_opt_jobs] == [
+            "1a_pka_HA_opt_c1",
+            "1a_pka_HA_opt_c2",
+            "1a_pka_HA_opt_c3",
+        ]
+        assert [child.label for child in job.conjugate_base_opt_jobs] == [
+            "1a_pka_A_opt_c1",
+            "1a_pka_A_opt_c2",
+            "1a_pka_A_opt_c3",
+        ]
+        assert job.protonated_job.label == "1a_pka_HA_opt_c1"
+        if job.sp_jobs is None:
+            job._create_sp_jobs()
+        assert [child.label for child in job.protonated_sp_jobs] == [
+            "1a_pka_HA_sp"
+        ]
+        assert [child.label for child in job.conjugate_base_sp_jobs] == [
+            "1a_pka_A_sp"
+        ]
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_submit_rejects_num_conformers_without_sampling(
+        self, tmp_path, monkeypatch, backend
+    ):
+        _require_backend_pka_subcommand(run, backend)
+        acid = tmp_path / "acid.xyz"
+        acid.write_text("2\nacid\nC 0.0 0.0 0.0\nH 0.0 0.0 1.0\n")
+        config_root = _write_test_backend_project(tmp_path, backend)
+        monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_root))
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            [
+                "--no-scratch",
+                "--fake",
+                backend,
+                "-p",
+                "test",
+                "-f",
+                str(acid),
+                "-c",
+                "0",
+                "-m",
+                "1",
+                "pka",
+                "-N",
+                "3",
+                "-s",
+                "direct",
+                "submit",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "-N/--num-conformers requires --sampling" in result.output
 
 
 class TestPkbConversion:
@@ -1272,9 +1670,8 @@ class TestPKa:
 
         assert result.exit_code == 0, result.output
         assert len(captured["submissions"]) == 2
-        # In "sub ... pka batch", jobs are not executed; only submission scripts are
-        # generated, so reference molecules are not built at this stage.
-        assert reference_pair_call_count["count"] == 0
+        # Two batch jobs share one cached HRef/Ref- pair built at construction.
+        assert reference_pair_call_count["count"] == 1
 
     def test_sub_orca_pka_batch_first_exchange_rest_direct(
         self, tmp_path, monkeypatch, captured
@@ -1425,6 +1822,7 @@ class TestPKa:
         assert "--sampling" in result.output
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
+        assert "-N" in result.output
 
     def test_run_orca_pka_help_is_submission_only(
         self, tmp_path, monkeypatch, single_molecule_xyz_file
@@ -1457,6 +1855,7 @@ class TestPKa:
         assert "--sampling" in result.output
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
+        assert "-N" in result.output
 
     def test_run_pka_help_keeps_output_analysis_commands(self):
         runner = CliRunner()

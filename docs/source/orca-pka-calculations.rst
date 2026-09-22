@@ -46,6 +46,18 @@ Where:
 
 This runs gas-phase opt+freq and CPCM/water solvent single-points for HA, A⁻, HRef, and Ref⁻.
 
+**CREST sampling (optional)**
+
+Sampling is off by default. Pass ``--sampling`` on the ``pka`` group. ``-N`` / ``--num-conformers`` (default ``1``) must
+appear **after** ``pka``; it is not ``chemsmart run/sub -n/--num-cores``. ``N = 1`` uses ``crest_best.xyz``; ``N > 1``
+takes the N lowest frames of ``crest_conformers.xyz`` into gas-phase opt+freq. Solvent SPs remain one job per species
+(lowest conformer). CREST failure falls back to the input geometry. See :ref:`pka-crest-sampling`.
+
+.. code:: bash
+
+   chemsmart run orca -p my_project -f acid.xyz -c 0 -m 1 pka \
+       --sampling -N 3 -pi 10 -s direct
+
 **Direct cycle**
 
 .. code:: bash
@@ -106,6 +118,10 @@ is ``acid1_pka`` and typical outputs are:
    acid1_pka_Ref_opt.out
    acid1_pka_HRef_sp.out
    acid1_pka_Ref_sp.out
+
+With ``--sampling -N 1``, DFT names are unchanged and CREST jobs are ``acid1_pka_HA_crest`` / ``acid1_pka_A_crest``.
+With ``-N`` greater than 1, gas-phase opt labels become ``acid1_pka_HA_opt_c1.out``, ``acid1_pka_HA_opt_c2.out``, …;
+solvent SPs stay ``acid1_pka_HA_sp.out`` / ``acid1_pka_A_sp.out``.
 
 These names align with the ``batch-analyze`` autodiscovery convention ``<basename>_pka_*`` when ``basename`` is
 ``acid1``.
@@ -211,6 +227,15 @@ of **SMD**).
    -  -  ``-s``
       -  ``--scheme``
       -  ``direct`` or ``proton exchange`` (default).
+
+   -  -
+      -  ``--sampling`` / ``--no-sampling``
+      -  Run CREST on HA, A⁻, and any reference acid before DFT. Default: off. See :ref:`pka-crest-sampling`.
+
+   -  -  ``-N``
+      -  ``--num-conformers``
+      -  Number of lowest-energy CREST conformers to optimize (default ``1``). Must appear after ``pka``. Values greater
+         than 1 require ``--sampling``.
 
    -  -
       -  ``--conjugate-base-charge``
@@ -365,6 +390,19 @@ Example 6: pKb Submit and Analyze
        -ha pyridine_pka_HA_opt.out \
        -hr ref_acid_pka_HRef_opt.out \
        -rp 6.75
+
+Example 7: CREST Sampling
+=========================
+
+.. code:: bash
+
+   chemsmart run orca -p orca_m062x -f phenol.xyz -c 0 -m 1 pka \
+       --sampling -N 3 \
+       -pi 13 \
+       -s direct
+
+``-N`` follows ``pka``. Analysis of multi-conformer ``_c*`` outputs uses Boltzmann :math:`G_{\text{eff}}` when matching
+gas and solvent files are present. See :ref:`pka-crest-sampling`.
 
 **********
  See Also
