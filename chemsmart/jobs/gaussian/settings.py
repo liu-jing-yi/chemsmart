@@ -1014,10 +1014,10 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         multiplicity (int): Multiplicity of the protonated form (inherited from parent).
         conjugate_base_charge (int): Charge of the conjugate base (typically charge - 1).
         conjugate_base_multiplicity (int): Multiplicity of the conjugate base.
-        sampling (bool): Whether to run CREST conformational sampling of HA
-            and A- before DFT. Default is False.
-        num_conformers (int): Number of CREST conformers to retain per target
-            species. Must be >= 1. Default is 1.
+        sampling (bool): Whether to run CREST conformational sampling of HA,
+            A-, and any reference acid before DFT. Default is False.
+        num_conformers (int): Number of lowest-energy CREST conformers to
+            optimize per sampled species. Must be >= 1. Default is 1.
         crest_project (str): Optional CREST project YAML name (the same ``-p``
             name used for Gaussian). Used when sampling is enabled.
 
@@ -1138,10 +1138,10 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             cutoff_enthalpy (float): Cutoff frequency for enthalpy in cm^-1
                 using Head-Gordon's quasi-RRHO method. Default is 100.0 cm^-1.
             energy_units (str): Energy units for output. Default is 'hartree'.
-            sampling (bool): Enable CREST conformational sampling of HA and A-
-                before DFT. Default is False.
-            num_conformers (int): Number of CREST conformers to retain per
-                target species. Must be >= 1. Default is 1.
+            sampling (bool): Enable CREST conformational sampling of HA, A-,
+                and any reference acid before DFT. Default is False.
+            num_conformers (int): Number of lowest-energy CREST conformers to
+                optimize per sampled species. Must be >= 1. Default is 1.
             crest_project (str, optional): CREST project YAML name (the same
                 ``-p`` name used for Gaussian). Default is None (CREST defaults).
             **kwargs: Additional keyword arguments passed to GaussianJobSettings,

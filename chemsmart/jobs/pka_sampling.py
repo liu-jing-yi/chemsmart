@@ -62,7 +62,7 @@ def select_crest_conformers(crest_job, num_conformers, fallback_molecule):
     conformers, a shorter available set, or ``[fallback_molecule]``.
 
     ``N == 1`` uses ``crest_best.xyz`` (else the first frame of
-    ``crest_conformers.xyz``). ``N > 1`` uses the first ``N`` frames of
+    ``crest_conformers.xyz``). ``N > 1`` uses the N lowest frames of
     energy-sorted ``crest_conformers.xyz``. Charge and multiplicity are
     copied from ``fallback_molecule``.
 

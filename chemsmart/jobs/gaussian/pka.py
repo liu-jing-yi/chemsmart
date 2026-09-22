@@ -3,8 +3,9 @@ Gaussian pKa calculation job implementation.
 
 This module provides the GaussianpKaJob class for performing pKa
 calculations using Gaussian with a proper thermodynamic cycle:
-1. Gas phase optimization + frequency for both HA and A-
-2. Solution phase single point for both HA and A- at the same level of theory
+1. Optional CREST conformational sampling of HA, A-, and any reference acid
+2. Gas phase optimization + frequency for both HA and A-
+3. Solution phase single point for both HA and A- at the same level of theory
 
 Using the same level of theory ensures proper error cancellation for
 solvation free energy calculations.
@@ -17,6 +18,11 @@ from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
+from chemsmart.jobs.pka_sampling import (
+    build_pka_crest_job,
+    pka_subjob_label,
+    select_crest_conformers,
+)
 from chemsmart.jobs.runner import decide_phase_transition, run_phase_jobs
 
 logger = logging.getLogger(__name__)
@@ -27,11 +33,18 @@ class GaussianpKaJob(GaussianJob):
     Gaussian job class for pKa calculations using direct thermodynamic cycle.
 
     Performs pKa calculations using the following workflow:
-    1. Optimize HA in gas phase (opt + freq) - get G(HA)_gas
-    2. Optimize A- in gas phase (opt + freq) - get G(A-)_gas
-    3. Run SP on optimized HA in solution - get E(HA)_aq
-    4. Run SP on optimized A- in solution - get E(A-)_aq
-    5. Calculate solvation free energies and pKa
+    1. Optionally run CREST conformational sampling on HA, A-, and,
+       when a reference acid is set, HRef and Ref-
+    2. Optimize HA in gas phase (opt + freq) - get G(HA)_gas
+    3. Optimize A- in gas phase (opt + freq) - get G(A-)_gas
+    4. Run SP on optimized HA in solution - get E(HA)_aq
+    5. Run SP on optimized A- in solution - get E(A-)_aq
+    6. Calculate solvation free energies and pKa
+
+    When sampling is enabled, each sampled species yields N gas-phase
+    opt+freq jobs for the N lowest CREST conformers and one solvent SP
+    job from the lowest conformer's optimized geometry. Parent completion
+    requires DFT opt+SP only.
 
     Attributes:
         TYPE (str): Job type identifier ('g16pka').
@@ -91,18 +104,18 @@ class GaussianpKaJob(GaussianJob):
             **kwargs,
         )
 
-        self.opt_jobs = []
+        self.crest_jobs = []
+        self.protonated_crest_job = None
+        self.conjugate_base_crest_job = None
+        self.ref_acid_crest_job = None
+        self.ref_conjugate_base_crest_job = None
+
         self.ref_opt_jobs = []
-        self.sp_jobs = None
+        self.ref_acid_opt_jobs = []
+        self.ref_conjugate_base_opt_jobs = []
         self.ref_sp_jobs = None
-
-        # Target acid jobs
-        self.protonated_job = None
-        self.conjugate_base_job = None
-        self.protonated_sp_job = None
-        self.conjugate_base_sp_job = None
-
-        # Reference acid jobs
+        self.ref_acid_sp_jobs = None
+        self.ref_conjugate_base_sp_jobs = None
         self.ref_acid_job = None
         self.ref_conjugate_base_job = None
         self.ref_acid_sp_job = None
@@ -120,63 +133,149 @@ class GaussianpKaJob(GaussianJob):
         if self.settings is None:
             return
 
-        # 1. Target Acid (HA / A-)
-        prot_opt_settings, conj_opt_settings = (
-            self.settings._create_gas_phase_job_settings(self.molecule)
-        )
         prot_mol, conj_mol = self.settings.conjugate_pair_molecules(
             self.molecule
         )
+        if self.settings.sampling:
+            self.protonated_crest_job = build_pka_crest_job(
+                prot_mol,
+                f"{self.label}_HA_crest",
+                self.settings,
+                self,
+            )
+            self.conjugate_base_crest_job = build_pka_crest_job(
+                conj_mol,
+                f"{self.label}_A_crest",
+                self.settings,
+                self,
+            )
+            self.crest_jobs = [
+                self.protonated_crest_job,
+                self.conjugate_base_crest_job,
+            ]
+            n = self.settings.num_conformers
+            ha_molecules = [prot_mol] * n
+            a_molecules = [conj_mol] * n
+        else:
+            ha_molecules = [prot_mol]
+            a_molecules = [conj_mol]
 
-        self.protonated_job = GaussianOptJob(
-            molecule=prot_mol,
-            settings=prot_opt_settings,
-            label=f"{self.label}_HA_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        self.conjugate_base_job = GaussianOptJob(
-            molecule=conj_mol,
-            settings=conj_opt_settings,
-            label=f"{self.label}_A_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
-        )
-        self.opt_jobs = [self.protonated_job, self.conjugate_base_job]
+        self._prepare_target_opt_jobs(ha_molecules, a_molecules)
 
-        # 2. Reference Acid (HRef / Ref-)
         if self.has_reference_jobs:
-            self.ref_opt_jobs = self._prepare_ref_opt_jobs()
-            self.ref_acid_job, self.ref_conjugate_base_job = self.ref_opt_jobs
+            href_mol, ref_mol = self._reference_pair_molecules()
+            if self.settings.sampling:
+                self.ref_acid_crest_job = build_pka_crest_job(
+                    href_mol,
+                    f"{self.label}_HRef_crest",
+                    self.settings,
+                    self,
+                )
+                self.ref_conjugate_base_crest_job = build_pka_crest_job(
+                    ref_mol,
+                    f"{self.label}_Ref_crest",
+                    self.settings,
+                    self,
+                )
+                self.crest_jobs.extend(
+                    [
+                        self.ref_acid_crest_job,
+                        self.ref_conjugate_base_crest_job,
+                    ]
+                )
+                n = self.settings.num_conformers
+                href_molecules = [href_mol] * n
+                ref_molecules = [ref_mol] * n
+            else:
+                href_molecules = [href_mol]
+                ref_molecules = [ref_mol]
+            self._prepare_ref_opt_jobs(href_molecules, ref_molecules)
 
-    def _prepare_ref_opt_jobs(self):
-        """Prepare gas phase optimization jobs for HRef and Ref-."""
+    def _prepare_target_opt_jobs(self, ha_molecules, a_molecules):
+        """Build gas-phase opt+freq jobs for HA and A- conformers."""
+        prot_opt_settings, conj_opt_settings = (
+            self.settings._create_gas_phase_job_settings(self.molecule)
+        )
+        self.protonated_opt_jobs = self._make_species_opt_jobs(
+            ha_molecules, prot_opt_settings, "HA"
+        )
+        self.conjugate_base_opt_jobs = self._make_species_opt_jobs(
+            a_molecules, conj_opt_settings, "A"
+        )
+        self.protonated_job = self.protonated_opt_jobs[0]
+        self.conjugate_base_job = self.conjugate_base_opt_jobs[0]
+        self.opt_jobs = self.protonated_opt_jobs + self.conjugate_base_opt_jobs
+        self.sp_jobs = None
+        self.protonated_sp_jobs = None
+        self.conjugate_base_sp_jobs = None
+        self.protonated_sp_job = None
+        self.conjugate_base_sp_job = None
+
+    def _make_species_opt_jobs(self, molecules, settings, species):
+        num_conformers = len(molecules)
+        jobs = []
+        for index, molecule in enumerate(molecules, start=1):
+            jobs.append(
+                GaussianOptJob(
+                    molecule=molecule,
+                    settings=settings,
+                    label=pka_subjob_label(
+                        self.label, species, "opt", index, num_conformers
+                    ),
+                    jobrunner=self.jobrunner,
+                    skip_completed=self.skip_completed,
+                )
+            )
+        return jobs
+
+    def _make_species_sp_jobs(self, opt_jobs, settings, species):
+        num_conformers = len(opt_jobs)
+        jobs = []
+        for index, opt_job in enumerate(opt_jobs, start=1):
+            molecule = self._optimized_molecule_from_job(
+                opt_job, opt_job.molecule
+            )
+            jobs.append(
+                GaussianSinglePointJob(
+                    molecule=molecule,
+                    settings=settings,
+                    label=pka_subjob_label(
+                        self.label, species, "sp", index, num_conformers
+                    ),
+                    jobrunner=self.jobrunner,
+                    skip_completed=self.skip_completed,
+                )
+            )
+        return jobs
+
+    def _reference_pair_molecules(self):
+        """Return the HRef and Ref- molecules for the configured reference acid."""
         reference_pair = self._get_cached_reference_pair(self.settings)
         if reference_pair is None:
-            ref_acid_mol, ref_conjugate_base_mol = (
-                self.settings.reference_pair_molecules()
-            )
-        else:
-            ref_acid_mol, ref_conjugate_base_mol = reference_pair
+            return self.settings.reference_pair_molecules()
+        return reference_pair
+
+    def _prepare_ref_opt_jobs(self, href_molecules, ref_molecules):
+        """Build gas-phase opt+freq jobs for HRef and Ref- conformers."""
         ref_acid_settings, ref_conjugate_base_settings = (
             self.settings.reference_pair_job_settings()
         )
-
-        ref_acid_job = GaussianOptJob(
-            molecule=ref_acid_mol,
-            settings=ref_acid_settings,
-            label=f"{self.label}_HRef_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+        self.ref_acid_opt_jobs = self._make_species_opt_jobs(
+            href_molecules, ref_acid_settings, "HRef"
         )
-        ref_conjugate_base_job = GaussianOptJob(
-            molecule=ref_conjugate_base_mol,
-            settings=ref_conjugate_base_settings,
-            label=f"{self.label}_Ref_opt",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+        self.ref_conjugate_base_opt_jobs = self._make_species_opt_jobs(
+            ref_molecules, ref_conjugate_base_settings, "Ref"
         )
-        return [ref_acid_job, ref_conjugate_base_job]
+        self.ref_acid_job = self.ref_acid_opt_jobs[0]
+        self.ref_conjugate_base_job = self.ref_conjugate_base_opt_jobs[0]
+        self.ref_opt_jobs = (
+            self.ref_acid_opt_jobs + self.ref_conjugate_base_opt_jobs
+        )
+        self.ref_sp_jobs = None
+        self.ref_acid_sp_jobs = None
+        self.ref_conjugate_base_sp_jobs = None
+        self.ref_acid_sp_job = None
+        self.ref_conjugate_base_sp_job = None
 
     def _optimized_molecule_from_job(self, job, fallback_molecule):
         """Return optimized geometry for a finished job, or a fallback molecule."""
@@ -250,83 +349,106 @@ class GaussianpKaJob(GaussianJob):
 
     def _create_sp_jobs(self):
         """Create solution phase SP jobs from optimized geometries."""
-        _, conj_fallback_mol = self.settings.conjugate_pair_molecules(
-            self.molecule
-        )
-        prot_opt_mol = self._optimized_molecule_from_job(
-            self.protonated_job, self.molecule
-        )
-        conj_opt_mol = self._optimized_molecule_from_job(
-            self.conjugate_base_job, conj_fallback_mol
-        )
-
         prot_sp_settings, conj_sp_settings = (
             self.settings._create_solution_phase_sp_settings(self.molecule)
         )
-
-        self.protonated_sp_job = GaussianSinglePointJob(
-            molecule=prot_opt_mol,
-            settings=prot_sp_settings,
-            label=f"{self.label}_HA_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+        self.protonated_sp_jobs = self._make_species_sp_jobs(
+            self.protonated_opt_jobs[:1], prot_sp_settings, "HA"
         )
-        self.conjugate_base_sp_job = GaussianSinglePointJob(
-            molecule=conj_opt_mol,
-            settings=conj_sp_settings,
-            label=f"{self.label}_A_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+        self.conjugate_base_sp_jobs = self._make_species_sp_jobs(
+            self.conjugate_base_opt_jobs[:1], conj_sp_settings, "A"
         )
-        self.sp_jobs = [self.protonated_sp_job, self.conjugate_base_sp_job]
+        self.protonated_sp_job = self.protonated_sp_jobs[0]
+        self.conjugate_base_sp_job = self.conjugate_base_sp_jobs[0]
+        self.sp_jobs = self.protonated_sp_jobs + self.conjugate_base_sp_jobs
 
     def _create_ref_sp_jobs(self):
         """Create reference solution phase SP jobs from optimized geometries."""
-        reference_pair = self._get_cached_reference_pair(self.settings)
-        if reference_pair is None:
-            ref_acid_fallback_mol, ref_conjugate_base_fallback_mol = (
-                self.settings.reference_pair_molecules()
-            )
-        else:
-            ref_acid_fallback_mol, ref_conjugate_base_fallback_mol = (
-                reference_pair
-            )
-        ref_acid_opt_mol = self._optimized_molecule_from_job(
-            self.ref_acid_job, ref_acid_fallback_mol
-        )
-        ref_conjugate_base_opt_mol = self._optimized_molecule_from_job(
-            self.ref_conjugate_base_job, ref_conjugate_base_fallback_mol
-        )
         ref_acid_sp_settings, ref_conjugate_base_sp_settings = (
             self.settings.reference_pair_sp_job_settings()
         )
+        self.ref_acid_sp_jobs = self._make_species_sp_jobs(
+            self.ref_acid_opt_jobs[:1], ref_acid_sp_settings, "HRef"
+        )
+        self.ref_conjugate_base_sp_jobs = self._make_species_sp_jobs(
+            self.ref_conjugate_base_opt_jobs[:1],
+            ref_conjugate_base_sp_settings,
+            "Ref",
+        )
+        self.ref_acid_sp_job = self.ref_acid_sp_jobs[0]
+        self.ref_conjugate_base_sp_job = self.ref_conjugate_base_sp_jobs[0]
+        self.ref_sp_jobs = (
+            self.ref_acid_sp_jobs + self.ref_conjugate_base_sp_jobs
+        )
 
-        self.ref_acid_sp_job = GaussianSinglePointJob(
-            molecule=ref_acid_opt_mol,
-            settings=ref_acid_sp_settings,
-            label=f"{self.label}_HRef_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+    def _run_crest_jobs(self):
+        """Run CREST sampling jobs for HA, A-, and any reference acid."""
+        run_phase_jobs(
+            parent_runner=None,
+            jobs=self.crest_jobs,
+            stop_on_incomplete=False,
+            logger_obj=logger,
+            phase_label="CREST sampling",
         )
-        self.ref_conjugate_base_sp_job = GaussianSinglePointJob(
-            molecule=ref_conjugate_base_opt_mol,
-            settings=ref_conjugate_base_sp_settings,
-            label=f"{self.label}_Ref_sp",
-            jobrunner=self.jobrunner,
-            skip_completed=self.skip_completed,
+
+    def _select_species_conformers(self, crest_job, fallback_molecule):
+        return select_crest_conformers(
+            crest_job, self.settings.num_conformers, fallback_molecule
         )
-        self.ref_sp_jobs = [
-            self.ref_acid_sp_job,
-            self.ref_conjugate_base_sp_job,
-        ]
+
+    def _selected_crest_conformers(self):
+        """Return selected conformers, or None if any CREST job has not finished.
+
+        The tuple is ``(HA, A-, HRef, Ref-)``. Reference entries are ``None``
+        when no reference acid is configured.
+        """
+        prot_mol, conj_mol = self.settings.conjugate_pair_molecules(
+            self.molecule
+        )
+        ha_confs = self._select_species_conformers(
+            self.protonated_crest_job, prot_mol
+        )
+        a_confs = self._select_species_conformers(
+            self.conjugate_base_crest_job, conj_mol
+        )
+        if ha_confs is None or a_confs is None:
+            return None
+        if not self.has_reference_jobs:
+            return ha_confs, a_confs, None, None
+        href_mol, ref_mol = self._reference_pair_molecules()
+        href_confs = self._select_species_conformers(
+            self.ref_acid_crest_job, href_mol
+        )
+        ref_confs = self._select_species_conformers(
+            self.ref_conjugate_base_crest_job, ref_mol
+        )
+        if href_confs is None or ref_confs is None:
+            return None
+        return ha_confs, a_confs, href_confs, ref_confs
 
     def _run(self, **kwargs):
         """
         Execute the pKa calculation.
 
-        Runs gas phase optimization jobs followed by solution phase SP jobs.
+        Optionally runs CREST sampling, then gas phase optimization jobs
+        followed by solution phase SP jobs.
         """
-        # Default sequential behaviour
+        if self.settings.sampling:
+            self._run_crest_jobs()
+            selected = self._selected_crest_conformers()
+            crest_transition = decide_phase_transition(
+                phase_name="CREST",
+                require_complete=True,
+                is_complete=selected is not None,
+                stop_message="CREST jobs incomplete, halting serial execution.",
+            )
+            if not crest_transition.proceed:
+                logger.info(crest_transition.message)
+                return
+            self._prepare_target_opt_jobs(selected[0], selected[1])
+            if self.has_reference_jobs:
+                self._prepare_ref_opt_jobs(selected[2], selected[3])
+
         # Run gas phase optimization jobs for target acid (HA, A-)
         self._run_opt_jobs()
 
@@ -377,6 +499,7 @@ class GaussianpKaJob(GaussianJob):
         Returns:
             bool: True if all optimization jobs and SP jobs
                 have completed successfully (including reference jobs if provided).
+                CREST sampling is not required for parent completion.
         """
         # Check target acid optimization jobs
         if not self._opt_jobs_are_complete():
@@ -400,7 +523,7 @@ class GaussianpKaJob(GaussianJob):
         Verify completion status of both gas phase optimization jobs.
 
         Returns:
-            bool: True if all optimization jobs are complete.
+            bool: True if all target gas-phase optimization jobs are complete.
         """
         if not self.opt_jobs:
             return False
@@ -425,7 +548,7 @@ class GaussianpKaJob(GaussianJob):
         Verify completion status of both solution phase SP jobs.
 
         Returns:
-            bool: True if all SP jobs are complete.
+            bool: True if all target solution-phase SP jobs are complete.
         """
         if not self.sp_jobs:
             return False

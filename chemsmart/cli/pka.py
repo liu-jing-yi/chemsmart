@@ -662,14 +662,14 @@ def click_pka_thermochemistry_options(f):
 def resolve_pka_sampling_options(sampling=False, num_conformers=1):
     """Return ``(sampling, num_conformers)`` for pKa submission.
 
-    ``-n/--num-conformers`` greater than 1 requires ``--sampling``.
+    ``-N/--num-conformers`` greater than 1 requires ``--sampling``.
     """
     sampling = bool(sampling)
     if num_conformers is None:
         num_conformers = 1
     if num_conformers > 1 and not sampling:
         raise click.UsageError(
-            "-n/--num-conformers requires --sampling when greater than 1."
+            "-N/--num-conformers requires --sampling when greater than 1."
         )
     return sampling, num_conformers
 
@@ -789,21 +789,21 @@ def click_pka_shared_options(f):
         default=False,
         type=bool,
         help=(
-            "Enable CREST conformational sampling of the target acid (HA) "
-            "and conjugate base (A-) before DFT. Off by default."
+            "Enable CREST conformational sampling before DFT for HA, A-, "
+            "and, when set, the reference acid. Off by default."
         ),
     )
     @click.option(
-        "-n",
+        "-N",
         "--num-conformers",
         type=click.IntRange(min=1),
         default=1,
         show_default=True,
         help=(
-            "Number of CREST conformers to retain per target species. "
-            "Place -n after pka so it is not interpreted as "
-            "run/sub -n/--num-cores. Values greater than 1 require "
-            "--sampling."
+            "Number of lowest-energy CREST conformers to optimize per "
+            "sampled species, as with crest -N. Solvent single-points "
+            "remain one job per species and use the lowest conformer. "
+            "Values greater than 1 require --sampling."
         ),
     )
     @functools.wraps(f)

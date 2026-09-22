@@ -1337,7 +1337,7 @@ class TestPKa:
         assert resolve_pka_sampling_options(True, 3) == (True, 3)
 
         with pytest.raises(
-            click.UsageError, match="-n/--num-conformers requires --sampling"
+            click.UsageError, match="-N/--num-conformers requires --sampling"
         ):
             resolve_pka_sampling_options(False, 3)
 

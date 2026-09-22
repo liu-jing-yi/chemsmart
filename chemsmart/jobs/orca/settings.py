@@ -775,10 +775,10 @@ class ORCApKaJobSettings(ORCAJobSettings):
         delta_G_proton (float): G_soln(H+) in kcal/mol for the direct cycle.
             None unless supplied; omitted values are computed as aqueous
             G_soln(H+) at the job temperature.
-        sampling (bool): Whether to run CREST conformational sampling of HA
-            and A- before DFT. Default is False.
-        num_conformers (int): Number of CREST conformers to retain per target
-            species. Must be >= 1. Default is 1.
+        sampling (bool): Whether to run CREST conformational sampling of HA,
+            A-, and any reference acid before DFT. Default is False.
+        num_conformers (int): Number of lowest-energy CREST conformers to
+            optimize per sampled species. Must be >= 1. Default is 1.
         crest_project (str): Optional CREST project YAML name (the same ``-p``
             name used for ORCA). Used when sampling is enabled.
     """
