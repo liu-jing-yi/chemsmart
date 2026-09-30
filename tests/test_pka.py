@@ -8,6 +8,30 @@ from click.testing import CliRunner
 from chemsmart.cli.run import run
 from chemsmart.cli.sub import sub
 
+_ENSEMBLE_SOLVENT_CONTRADICTIONS = (
+    "one job per species",
+    "one solvent SP per species",
+    "lowest-energy optimized conformer",
+    "use the lowest conformer",
+    "solvent SPs stay",
+    "solvent SPs remain",
+    "Solvent single-points remain one",
+)
+
+
+def _assert_no_ensemble_solvent_contradiction(text):
+    text = " ".join(text.split())
+    for phrase in _ENSEMBLE_SOLVENT_CONTRADICTIONS:
+        assert phrase not in text, phrase
+
+
+def _assert_ensemble_solvent_help(text):
+    normalized = " ".join(text.split())
+    _assert_no_ensemble_solvent_contradiction(normalized)
+    assert "matching solvent single-point" in normalized
+    assert "num-cores" in normalized
+    assert "_c1" in normalized
+
 
 def _molecule_from_smiles(smiles):
     from rdkit import Chem
@@ -2143,6 +2167,7 @@ class TestPKa:
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
         assert "-N" in result.output
+        _assert_ensemble_solvent_help(result.output)
 
     def test_run_orca_pka_help_is_submission_only(
         self, tmp_path, monkeypatch, single_molecule_xyz_file
@@ -2176,6 +2201,25 @@ class TestPKa:
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
         assert "-N" in result.output
+        _assert_ensemble_solvent_help(result.output)
+
+    def test_pka_docs_describe_matching_conformer_solvent_jobs(self):
+        root = Path(__file__).resolve().parents[1]
+        required = (
+            "N solvent single-point calculations",
+            "matching",
+            "_c1",
+            "--num-cores",
+        )
+        for relative in (
+            "docs/source/pka-calculations.rst",
+            "docs/source/gaussian-pka-calculations.rst",
+            "docs/source/orca-pka-calculations.rst",
+        ):
+            text = (root / relative).read_text()
+            _assert_no_ensemble_solvent_contradiction(text)
+            for phrase in required:
+                assert phrase in text, f"{relative} missing {phrase!r}"
 
     def test_run_pka_help_keeps_output_analysis_commands(self):
         runner = CliRunner()
@@ -2190,6 +2234,16 @@ class TestPKa:
         assert "--pks" in result.output
         assert "--sampling" not in result.output
         assert "--num-conformers" not in result.output
+
+        analyze = runner.invoke(
+            run,
+            ["--no-scratch", "--fake", "pka", "analyze", "--help"],
+        )
+        assert analyze.exit_code == 0, analyze.output
+        analyze_help = " ".join(analyze.output.split())
+        _assert_no_ensemble_solvent_contradiction(analyze_help)
+        assert "matching pair" in analyze_help
+        assert "_c1" in analyze_help
 
     def test_resolve_pka_sampling_options_rejects_n_without_sampling(self):
         from chemsmart.cli.pka import resolve_pka_sampling_options

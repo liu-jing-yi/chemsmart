@@ -58,9 +58,20 @@ project or CLI).
 **CREST sampling (optional)**
 
 Sampling is off by default. Pass ``--sampling`` on the ``pka`` group. ``-N`` / ``--num-conformers`` (default ``1``) must
-appear **after** ``pka``; it is not ``chemsmart run/sub -n/--num-cores``. ``N = 1`` uses ``crest_best.xyz``; ``N > 1``
-takes the N lowest frames of ``crest_conformers.xyz`` into gas-phase opt+freq. Solvent SPs remain one job per species
-(lowest conformer). CREST failure falls back to the input geometry. See :ref:`pka-crest-sampling`.
+appear **after** ``pka``; it is distinct from ``chemsmart run/sub -n/--num-cores``. ``N = 1`` uses ``crest_best.xyz``
+and keeps legacy DFT filenames without ``_c1``. ``N > 1`` takes the N lowest frames of ``crest_conformers.xyz``. Each
+selected conformer then receives one gas-phase opt+freq job and one matching solvent single-point:
+
+.. code:: text
+
+   CREST conformers
+       -> N gas-phase optimization/frequency calculations
+       -> N solvent single-point calculations
+       -> N conformer solution free energies
+       -> one ensemble effective free energy
+
+Gas and solvent outputs must form matching pairs. CREST failure falls back to the input geometry. See
+:ref:`pka-crest-sampling`.
 
 .. code:: bash
 
@@ -138,9 +149,9 @@ Sub-job labels determine output filenames. For a job with label ``acid1`` (the d
    acid1_HRef_sp.log     # HRef solvent SP (proton exchange)
    acid1_Ref_sp.log      # Ref- solvent SP (proton exchange)
 
-With ``--sampling -N 1``, DFT names are unchanged and CREST jobs are ``acid1_HA_crest`` / ``acid1_A_crest``. With ``-N``
-greater than 1, gas-phase opt labels become ``acid1_HA_opt_c1.log``, ``acid1_HA_opt_c2.log``, …; solvent SPs stay
-``acid1_HA_sp.log`` / ``acid1_A_sp.log``.
+With ``--sampling -N 1``, DFT names are unchanged (no ``_c1`` suffix) and CREST jobs are ``acid1_HA_crest`` /
+``acid1_A_crest``. With ``-N`` greater than 1, each conformer gets a matching pair, for example ``acid1_HA_opt_c1.log``
+and ``acid1_HA_sp_c1.log``, then ``_c2``, and so on. The same pattern is used for A⁻, HRef, and Ref⁻.
 
 When building a ``batch-analyze`` output table, either list these paths explicitly or use a ``basename`` and suffix
 convention documented in :ref:`pka-calculations` (the ``_pka_*`` autodiscovery pattern matches ORCA-labelled outputs;
@@ -296,9 +307,12 @@ Core Options
       -  Run CREST on HA, A⁻, and any reference acid before DFT. Default: off. See :ref:`pka-crest-sampling`.
 
    -  -  ``-N``
+
       -  ``--num-conformers``
-      -  Number of lowest-energy CREST conformers to optimize (default ``1``). Must appear after ``pka``. Values greater
-         than 1 require ``--sampling``.
+
+      -  Number of lowest-energy CREST conformers per sampled species (default ``1``). Must appear after ``pka``.
+         Distinct from ``-n`` / ``--num-cores``. Each conformer receives a gas-phase opt+freq job and a matching solvent
+         single-point. ``N = 1`` keeps legacy filenames without ``_c1``. Values greater than 1 require ``--sampling``.
 
    -  -
       -  ``--conjugate-base-charge``

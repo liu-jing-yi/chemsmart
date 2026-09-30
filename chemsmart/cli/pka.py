@@ -1147,9 +1147,10 @@ def click_pka_shared_options(f):
         default=1,
         show_default=True,
         help=(
-            "Number of lowest-energy CREST conformers to optimize per "
-            "sampled species, as with crest -N. Solvent single-points "
-            "remain one job per species and use the lowest conformer. "
+            "Number of lowest-energy CREST conformers per sampled "
+            "species. Distinct from -n/--num-cores. Each conformer gets "
+            "one gas-phase opt+freq job and one matching solvent "
+            "single-point. N = 1 keeps legacy filenames without _c1. "
             "Values greater than 1 require --sampling."
         ),
     )
@@ -2126,6 +2127,8 @@ def analyze(
       (and the corresponding _pka_Ref_* / _pka_HRef_sp files for HRef)
     If <basename>_pka_HA_opt_c*.<ext> ensemble files exist, those (and
     matching A/SP _c* files) are used instead of the single-file suffixes.
+    Gas-phase and solvent outputs for each species must form a matching
+    pair. N = 1 keeps the legacy names above, without a _c1 suffix.
     Override any auto-discovered path with the corresponding flag.
 
     \b

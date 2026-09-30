@@ -49,7 +49,8 @@ CHEMSMART provides pKa workflows in two separate stages:
    runs.
 
 -  Optional CREST conformational sampling is off by default (``--sampling``). Pass ``-N`` / ``--num-conformers`` on the
-   ``pka`` group (after ``pka``, not on ``run`` / ``sub``) to keep more than the lowest CREST structure. See
+   ``pka`` group (after ``pka``, not on ``run`` / ``sub``). ``-N`` is the number of CREST conformers that each receive a
+   gas-phase opt+freq and a matching solvent single-point. It is not ``-n`` / ``--num-cores``. See
    :ref:`pka-crest-sampling`.
 
 **Output analysis**
@@ -123,7 +124,7 @@ only). Pass ``-dG`` to override.
  Dual-Level Approach
 *********************
 
-CHEMSMART implements a dual-level approach for accurate solvation free energies:
+CHEMSMART implements a dual-level approach:
 
 #. **Thermal corrections** (:math:`G_{\text{corr}}`) from gas-phase frequency calculations using quasi-harmonic Gibbs
    free energy:
@@ -211,8 +212,8 @@ colour (CDXML) or a unique SMARTS match (see :ref:`pka-site-resolution`).
  Optional CREST Conformational Sampling
 ****************************************
 
-CREST sampling is **opt-in**. Without ``--sampling``, pKa submit/analyze behaviour is unchanged: one gas-phase opt+freq
-and one solvent SP per species.
+CREST sampling is **opt-in**. Without ``--sampling``, or with ``-N 1``, each species gets one gas-phase opt+freq and one
+solvent single-point. Those jobs keep legacy filenames and do not add ``_c1``.
 
 **Flags** (on the ``pka`` group, after ``pka``):
 
@@ -221,20 +222,36 @@ and one solvent SP per species.
 -  ``-N`` / ``--num-conformers`` — number of lowest-energy CREST conformers to take into DFT (must be ``>= 1``; default
    ``1``). Values greater than 1 require ``--sampling``.
 
-``-N`` on ``pka`` is distinct from ``chemsmart run/sub -n/--num-cores``. Place ``-N`` **after** ``pka``.
+``-N`` / ``--num-conformers`` on ``pka`` is distinct from the global core-count option ``-n`` / ``--num-cores`` on
+``chemsmart run`` / ``sub``. Place ``-N`` **after** ``pka``.
 
 **Geometry selection**
 
--  ``N = 1``: use ``crest_best.xyz`` (else the first frame of energy-sorted ``crest_conformers.xyz``).
+-  ``N = 1``: use ``crest_best.xyz`` (else the first frame of energy-sorted ``crest_conformers.xyz``). DFT filenames
+   stay the legacy names without ``_c1``.
 -  ``N > 1``: use the first N frames of energy-sorted ``crest_conformers.xyz``.
 
 CREST is gas-phase unless a CREST project YAML (the same ``-p`` name as Gaussian/ORCA, when present) already sets a
 solvent. The HA / A⁻ pair is built **before** sampling, so atom order after CREST does not matter.
 
-**DFT jobs after sampling**
+**Workflow**
 
-Each sampled species yields N gas-phase opt+freq jobs. Solvent single-points remain one job per species, taken from the
-lowest-energy optimized conformer. Parent completion requires DFT opt+SP only; CREST is best-effort.
+For each sampled species (HA, A⁻, and HRef / Ref⁻ when a reference acid is set):
+
+.. code:: text
+
+   CREST conformers
+       -> N gas-phase optimization/frequency calculations
+       -> N solvent single-point calculations
+       -> N conformer solution free energies
+       -> one ensemble effective free energy
+
+Each selected conformer receives its own gas-phase opt+freq job and a solvent single-point on that optimized geometry.
+Gas-phase and solvent outputs must form a matching pair: the same count, in conformer order (``c1``, ``c2``, …,
+``c10``). A mismatch raises an error that names the species and both counts. Analysis does not drop later conformers
+when ensemble files exist.
+
+Parent completion requires DFT opt+SP only; CREST is best-effort.
 
 If CREST has not finished, the serial pKa job waits (same as opt/SP phases) so HPC resubmits can continue. After CREST
 terminates abnormally or completes without usable geometries, CHEMSMART logs a warning and falls back to the input
@@ -242,8 +259,9 @@ geometry (or the shorter available conformer set).
 
 **Analysis**
 
-When a species has more than one completed conformer (matching gas and solvent files), analysis uses Boltzmann
-:math:`G_{\text{eff}}` instead of a single :math:`G_{\text{soln}}`. See Dual-Level Approach above.
+For each conformer, analysis computes :math:`G_{\text{soln},i} = E_{\text{solv},i} + G_{\text{corr},i}`. When a species
+has more than one conformer, that species’ free energy in the pKa cycle is the ensemble :math:`G_{\text{eff}}`. A single
+conformer is unchanged. See Dual-Level Approach above.
 
 .. _pka-site-resolution:
 
@@ -427,12 +445,19 @@ Each pKa job creates gas-phase opt+freq and solvent single-point sub-jobs. Outpu
       -  CREST sampling of HA / A⁻ (``--sampling`` only)
    -  -  ``_HA_opt_cN`` / ``_A_opt_cN``
       -  N-th CREST conformer gas-phase opt+freq when ``-N`` > 1 (1-based)
+   -  -  ``_HA_sp_cN`` / ``_A_sp_cN``
+      -  N-th CREST conformer solvent single-point when ``-N`` > 1 (1-based)
+   -  -  ``_HRef_opt_cN`` / ``_Ref_opt_cN``
+      -  N-th reference conformer gas-phase opt+freq when ``-N`` > 1
+   -  -  ``_HRef_sp_cN`` / ``_Ref_sp_cN``
+      -  N-th reference conformer solvent single-point when ``-N`` > 1
 
 Gaussian batch jobs use the input stem as the job label (e.g. ``acid1_HA_opt.log``). ORCA batch jobs append ``_pka`` to
 the stem (e.g. ``acid1_pka_HA_opt.out``). The output-analysis autodiscovery convention below is aligned with the
 ``{basename}_pka_*`` pattern used by ORCA submission and by typical batch output tables. With ``--pkb``, HA is BH⁺ and
-A⁻ is B; file names are unchanged. With ``--sampling -N 1``, DFT names are unchanged. With ``-N`` greater than 1, opt
-labels gain ``_c1``, ``_c2``, …; solvent SPs stay ``_HA_sp`` / ``_A_sp`` (lowest conformer).
+A⁻ is B; file names are unchanged. With ``--sampling`` and ``-N 1``, DFT names stay the legacy forms above and do not
+gain ``_c1``. With ``-N`` greater than 1, every gas-phase opt and every solvent single-point label gains ``_c1``,
+``_c2``, … so each conformer has a matching gas/solvent pair. The same suffixes apply to HRef and Ref⁻.
 
 .. _pka-pkb:
 
@@ -645,7 +670,10 @@ patterns as ``batch-analyze``:
 
 If ``<basename>_pka_HA_opt_c*.<ext>`` (or ``.out``) files exist, auto-discovery uses that sorted ensemble and the
 matching ``_A_opt_c*``, ``_HA_sp_c*``, and ``_A_sp_c*`` files instead of the single-file suffixes. Otherwise the
-single-file suffixes above are used.
+single-file suffixes above are used. ``N = 1`` keeps those legacy suffixes and does not add ``_c1``.
+
+Gas-phase and solvent outputs for each species must form a matching pair: the same number of files, in conformer order
+(``c1``, ``c2``, …, ``c10``). Analysis rejects unequal counts and names the species and both counts.
 
 **From the HRef gas-phase file (``-hr``)**
 
