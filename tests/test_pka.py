@@ -2167,6 +2167,7 @@ class TestPKa:
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
         assert "-N" in result.output
+        assert "--preview" in result.output
         _assert_ensemble_solvent_help(result.output)
 
     def test_run_orca_pka_help_is_submission_only(
@@ -2201,6 +2202,7 @@ class TestPKa:
         assert "--no-sampling" in result.output
         assert "--num-conformers" in result.output
         assert "-N" in result.output
+        assert "--preview" in result.output
         _assert_ensemble_solvent_help(result.output)
 
     def test_pka_docs_describe_matching_conformer_solvent_jobs(self):
@@ -3851,3 +3853,250 @@ class TestIonizableSiteSMARTS:
         mol = _molecule_from_smiles("CC(=O)N")
         with pytest.raises(ValueError, match="0 SMARTS matches"):
             resolve_ionizable_site(mol, mode="base")
+
+
+def _forbid_pka_job_construction(monkeypatch):
+    import importlib
+
+    def _reject(*args, **kwargs):
+        raise AssertionError("pKa job constructor called during preview")
+
+    for module_name, attribute in (
+        ("chemsmart.cli.gaussian.pka", "GaussianpKaJob"),
+        ("chemsmart.jobs.gaussian.pka", "GaussianpKaJob"),
+        ("chemsmart.jobs.orca.pka", "ORCApKaJob"),
+        ("chemsmart.cli.pka", "build_pka_crest_job"),
+    ):
+        module = importlib.import_module(module_name)
+        monkeypatch.setattr(module, attribute, _reject)
+
+
+def _preflight_table(output):
+    lines = []
+    started = False
+    for line in output.splitlines():
+        if line.startswith("fragment  "):
+            started = True
+        if not started:
+            continue
+        if not line.strip():
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _invoke_pka_preview(tmp_path, monkeypatch, backend, filename, *pka_args):
+    _require_backend_pka_subcommand(run, backend)
+    config_root = _write_test_backend_project(tmp_path, backend)
+    monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_root))
+    _forbid_pka_job_construction(monkeypatch)
+    runner = CliRunner()
+    args = [
+        "--no-scratch",
+        "--fake",
+        backend,
+        "-p",
+        "test",
+        "-f",
+        str(filename),
+        "-c",
+        "0",
+        "-m",
+        "1",
+        "pka",
+        "--preview",
+        "-s",
+        "direct",
+        *pka_args,
+    ]
+    return runner.invoke(run, args)
+
+
+class TestPkaPreview:
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_single_coloured_acid_preview(
+        self, tmp_path, monkeypatch, backend, colored_proton_cdxml_file
+    ):
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            colored_proton_cdxml_file,
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        assert table.startswith("fragment  label")
+        assert "phenol_pka" in table
+        assert "pKa" in table
+        assert "8 H" in table
+        assert "ChemDraw colour" in table
+        assert "explicit" not in table
+        assert "SMARTS" not in table
+        assert "0" in table
+        assert "1" in table
+        assert table.endswith("ok")
+        assert table.count("\n") == 2
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_two_coloured_acid_fragments_preview(
+        self,
+        tmp_path,
+        monkeypatch,
+        backend,
+        colored_proton_two_molecule_cdxml_file,
+    ):
+        from chemsmart.cli.pka import list_pka_preflight_sites
+
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            colored_proton_two_molecule_cdxml_file,
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        sites = list_pka_preflight_sites(
+            colored_proton_two_molecule_cdxml_file, None, "acid"
+        )
+        assert len(sites) == 2
+        rows = [line for line in table.splitlines() if line[:1].isdigit()]
+        assert len(rows) == 2
+        assert rows[0].startswith("1  ")
+        assert rows[1].startswith("2  ")
+        for number, (molecule, site, source) in enumerate(sites, start=1):
+            element = molecule.chemical_symbols[site - 1]
+            site_text = f"{site} {element}"
+            assert source == "ChemDraw colour"
+            assert f"phenol_two_molecule_frag{number}_pka" in rows[number - 1]
+            assert site_text in rows[number - 1]
+            assert "ChemDraw colour" in rows[number - 1]
+            assert "pKa" in rows[number - 1]
+        assert rows[0] != rows[1]
+        assert "frag1_pka" in rows[0]
+        assert "frag2_pka" in rows[1]
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_two_coloured_base_fragments_preview(
+        self,
+        tmp_path,
+        monkeypatch,
+        backend,
+        colored_basic_atom_two_molecule_cdxml_file,
+    ):
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            colored_basic_atom_two_molecule_cdxml_file,
+            "--pkb",
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        rows = [line for line in table.splitlines() if line[:1].isdigit()]
+        assert len(rows) == 2
+        for number, row in enumerate(rows, start=1):
+            assert row.startswith(f"{number}  ")
+            assert f"pyridine_two_molecule_frag{number}_pka" in row
+            assert "pKb" in row
+            assert " N" in row
+            assert "ChemDraw colour" in row
+            assert "added H" in row
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_uncoloured_smarts_preview(
+        self, tmp_path, monkeypatch, backend, uncolored_pyridine_cdxml_file
+    ):
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            uncolored_pyridine_cdxml_file,
+            "--pkb",
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        assert "SMARTS" in table
+        assert "ChemDraw colour" not in table
+        assert "explicit" not in table
+        assert "pKb" in table
+        assert " N" in table
+        assert "pyridine_uncolored_pka" in table
+        assert "added H" in table
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_explicit_index_overrides_colour(
+        self, tmp_path, monkeypatch, backend, colored_proton_cdxml_file
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        molecule = Molecule.from_filepath(colored_proton_cdxml_file)
+        explicit = next(
+            index
+            for index, symbol in enumerate(molecule.chemical_symbols, start=1)
+            if symbol == "H" and index != 8
+        )
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            colored_proton_cdxml_file,
+            "-pi",
+            str(explicit),
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        assert f"{explicit} H" in table
+        assert "explicit" in table
+        assert "ChemDraw colour" not in table
+        assert "SMARTS" not in table
+        assert "8 H" not in table
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_ambiguous_colour_fails_before_jobs(
+        self, tmp_path, monkeypatch, backend, two_color_basic_atom_cdxml_file
+    ):
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            backend,
+            two_color_basic_atom_cdxml_file,
+            "--pkb",
+            "batch",
+        )
+        assert result.exit_code != 0
+        assert "Multiple uniquely coloured" in result.output
+        assert "constructor called" not in result.output
+        assert _preflight_table(result.output) == ""
+
+    def test_multiple_smarts_sites_fail_before_jobs(
+        self, tmp_path, monkeypatch
+    ):
+        molecule = _molecule_from_smiles("Oc1ccc(O)cc1")
+        path = tmp_path / "hydroquinone.xyz"
+        molecule.write(str(path), format="xyz")
+        result = _invoke_pka_preview(
+            tmp_path, monkeypatch, "gaussian", path, "batch"
+        )
+        assert result.exit_code != 0
+        assert "SMARTS matches" in result.output
+        assert "constructor called" not in result.output
+
+    def test_preview_without_batch_does_not_create_jobs(
+        self, tmp_path, monkeypatch, colored_proton_cdxml_file
+    ):
+        result = _invoke_pka_preview(
+            tmp_path,
+            monkeypatch,
+            "gaussian",
+            colored_proton_cdxml_file,
+        )
+        assert result.exit_code == 0, result.output
+        table = _preflight_table(result.output)
+        assert "phenol_pka" in table
+        assert "8 H" in table
+        assert "constructor called" not in result.output

@@ -222,8 +222,7 @@ solvent single-point. Those jobs keep legacy filenames and do not add ``_c1``.
 -  ``-N`` / ``--num-conformers`` — number of lowest-energy CREST conformers to take into DFT (must be ``>= 1``; default
    ``1``). Values greater than 1 require ``--sampling``.
 
-``-N`` / ``--num-conformers`` on ``pka`` is distinct from the global core-count option ``-n`` / ``--num-cores`` on
-``chemsmart run`` / ``sub``. Place ``-N`` **after** ``pka``.
+Place ``-N`` **after** ``pka``.
 
 **Geometry selection**
 
@@ -390,6 +389,35 @@ above) to create one job per ChemDraw fragment.
 
    If ``-f`` is a CDXML file (not a CSV table), CHEMSMART routes to per-fragment site detection automatically. For
    general CDXML structure handling outside pKa, see :doc:`chemdraw-organometallic`.
+
+.. _pka-chemdraw-preview:
+
+******************
+ ChemDraw preview
+******************
+
+``--preview`` reads a structure file, prints one row per ChemDraw fragment, and stops before creating or submitting
+Gaussian, ORCA, or CREST jobs. It does not write job directories.
+
+.. code:: bash
+
+   chemsmart run gaussian -p my_project -f acids.cdxml -c 0 -m 1 \
+       pka --preview -s direct batch
+
+   chemsmart run orca -p my_project -f acids.cdxml -c 0 -m 1 \
+       pka --preview -s direct batch
+
+The table columns are fragment number, job label, mode (``pKa`` or ``pKb``), selected site (atom index and element),
+selection source, input charge, input multiplicity, and status. Fragment order follows the ChemDraw document.
+
+-  ``-pi`` / ``--proton-index`` takes precedence and is reported as ``explicit``.
+-  A uniquely coloured site is reported as ``ChemDraw colour``.
+-  An uncoloured drawing with one SMARTS match is reported as ``SMARTS``.
+
+For ``pKa``, the site is the hydrogen that will be removed. For ``--pkb``, the site is the heavy atom that will be
+protonated, and the status also gives the index of the hydrogen added to the free base. Ambiguous colour markup or more
+than one SMARTS site stops the command before any job is created. The charge and multiplicity columns are the values
+submission would use: parent ``-c`` / ``-m`` when they are set, otherwise the values read from the structure.
 
 **Proton and reference options for CDXML**
 

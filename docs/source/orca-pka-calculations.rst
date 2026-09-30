@@ -110,7 +110,8 @@ can be omitted for single-fragment inputs. Uncoloured CDXML falls through to SMA
    chemsmart run orca -p my_project -f pyridine.cdxml -c 0 -m 1 pka \
        --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
 
-See :ref:`pka-calculations` for site precedence, multi-molecule CDXML workflows, and colour-code options.
+See :ref:`pka-calculations` for site precedence, multi-molecule CDXML workflows, and colour-code options. Pass
+``--preview`` to print that interpretation and stop before any job is created. See :ref:`pka-chemdraw-preview`.
 
 ************************
  Job Output File Naming
@@ -251,6 +252,11 @@ of **SMD**).
       -  Number of lowest-energy CREST conformers per sampled species (default ``1``). Must appear after ``pka``.
          Distinct from ``-n`` / ``--num-cores``. Each conformer receives a gas-phase opt+freq job and a matching solvent
          single-point. ``N = 1`` keeps legacy filenames without ``_c1``. Values greater than 1 require ``--sampling``.
+
+   -  -
+      -  ``--preview``
+      -  Print a preflight table for the input structure and stop before creating or submitting jobs. See
+         :ref:`pka-chemdraw-preview`.
 
    -  -
       -  ``--conjugate-base-charge``

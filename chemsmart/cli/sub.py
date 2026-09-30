@@ -332,6 +332,9 @@ def process_pipeline(ctx, *args, **kwargs):  # noqa: PLR0915
 
     ctx = _clean_command(ctx)
     jobrunner = ctx.obj["jobrunner"]
+    if not args or args[0] is None:
+        logger.info("No job to submit.")
+        return None
     job = args[0]
 
     # Handle list of jobs (when multiple molecules are specified with --index)

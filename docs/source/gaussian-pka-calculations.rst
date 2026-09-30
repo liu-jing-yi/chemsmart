@@ -130,7 +130,8 @@ falls through to SMARTS.
        --pkb -r ref_acid.xyz -rpi 21 -rc 1 -rm 1
 
 See :ref:`pka-calculations` for site precedence, multi-molecule CDXML batch submission, and the ``-cc`` / ``-rcc``
-colour options.
+colour options. ``pka --preview`` prints that interpretation and stops before any job is created. See
+:ref:`pka-chemdraw-preview`.
 
 ************************
  Job Output File Naming
@@ -313,6 +314,11 @@ Core Options
       -  Number of lowest-energy CREST conformers per sampled species (default ``1``). Must appear after ``pka``.
          Distinct from ``-n`` / ``--num-cores``. Each conformer receives a gas-phase opt+freq job and a matching solvent
          single-point. ``N = 1`` keeps legacy filenames without ``_c1``. Values greater than 1 require ``--sampling``.
+
+   -  -
+      -  ``--preview``
+      -  Print a preflight table for the input structure and stop before creating or submitting jobs. See
+         :ref:`pka-chemdraw-preview`.
 
    -  -
       -  ``--conjugate-base-charge``

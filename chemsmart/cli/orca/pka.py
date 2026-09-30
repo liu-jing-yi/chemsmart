@@ -30,6 +30,7 @@ from chemsmart.cli.pka import (
     pka_submit_site_mode,
     prepare_pka_submit_molecules,
     prepare_pka_submit_structure,
+    print_pka_preview,
     require_pka_charge_multiplicity,
     resolve_pka_batch_row,
     resolve_pka_submit_proton_options,
@@ -81,6 +82,7 @@ def pka(
     cutoff_enthalpy,
     proton_index,
     color_code,
+    preview,
     **kwargs,
 ):
     """ORCA pKa job submission.
@@ -140,6 +142,7 @@ def pka(
         cutoff_enthalpy=cutoff_enthalpy,
         entropy_method=entropy_method,
         skip_completed=skip_completed,
+        preview=preview,
     )
     ctx.ensure_object(dict)
     ctx.obj["pka_shared"] = shared
@@ -178,6 +181,8 @@ def submit(ctx, skip_completed, proton_index, color_code, **kwargs):
           -s direct submit
     """
     shared = ctx.obj["pka_shared"]
+    if print_pka_preview(ctx):
+        return None
     filename = ctx.obj.get("filename")
     jobrunner = ctx.obj["jobrunner"]
 
@@ -288,6 +293,8 @@ def batch(ctx, skip_completed, proton_index, color_code, **kwargs):
           -s "proton exchange" -r ref.xyz -rpi 5 -rc 0 -rm 1 batch
     """
     shared = ctx.obj["pka_shared"]
+    if print_pka_preview(ctx):
+        return None
     jobrunner = ctx.obj["jobrunner"]
 
     input_table_path = ctx.obj.get("filename")

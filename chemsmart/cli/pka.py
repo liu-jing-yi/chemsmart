@@ -15,6 +15,8 @@ import functools
 import logging
 import math
 import os
+from pathlib import Path
+from typing import NamedTuple
 
 import click
 
@@ -1154,6 +1156,15 @@ def click_pka_shared_options(f):
             "Values greater than 1 require --sampling."
         ),
     )
+    @click.option(
+        "--preview",
+        is_flag=True,
+        default=False,
+        help=(
+            "Print a preflight table for the input structure and stop "
+            "before creating or submitting Gaussian, ORCA, or CREST jobs."
+        ),
+    )
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         return f(*args, **kwargs)
@@ -1597,6 +1608,413 @@ def resolve_pka_batch_row(
 
     pka_mol = pka_molecules[0]
     return pka_mol.proton_index, pka_mol
+
+
+PKA_SITE_SOURCE_EXPLICIT = "explicit"
+PKA_SITE_SOURCE_COLOUR = "ChemDraw colour"
+PKA_SITE_SOURCE_SMARTS = "SMARTS"
+PKA_PREFLIGHT_COLUMNS = (
+    "fragment",
+    "label",
+    "mode",
+    "site",
+    "source",
+    "charge",
+    "multiplicity",
+    "status",
+)
+
+
+class PkaPreflightRow(NamedTuple):
+    fragment: int
+    label: str
+    mode: str
+    site: str
+    source: str
+    charge: str
+    multiplicity: str
+    status: str
+
+
+def list_pka_preflight_sites(filename, color_code, mode):
+    """Return ``(molecule, site_index, source)`` in ChemDraw fragment order.
+
+    An explicit ``--proton-index`` is not applied here. CDXML colour is
+    tried first. A file with no colour markup falls through to SMARTS.
+    Other structure files use SMARTS.
+    """
+    if mode not in _IONIZABLE_SITE_SMARTS:
+        raise ValueError(f"mode must be 'acid' or 'base', got {mode!r}")
+
+    filename = str(filename)
+    if is_pka_cdxml_input(filename):
+        from chemsmart.io.file import PKaCDXFile
+
+        cdx_file = PKaCDXFile(filename)
+        try:
+            site, molecules = cdx_file._resolve_proton_from_cdxml(
+                color_code, mode=mode
+            )
+        except ValueError as exc:
+            if color_code is not None or not _cdxml_has_no_colour_markup(exc):
+                raise
+            molecules = list(cdx_file.molecules)
+            if not molecules:
+                raise ValueError(
+                    f"Could not read a molecule from {filename}. "
+                    "Specify -pi/--proton-index or -cc/--color-code."
+                ) from exc
+            return [
+                (
+                    molecule,
+                    resolve_ionizable_site(molecule, mode=mode),
+                    PKA_SITE_SOURCE_SMARTS,
+                )
+                for molecule in molecules
+            ]
+        if molecules is not None:
+            return [
+                (molecule, molecule.proton_index, PKA_SITE_SOURCE_COLOUR)
+                for molecule in molecules
+            ]
+        parsed = list(cdx_file.molecules)
+        if not parsed:
+            raise ValueError(f"Could not read a molecule from {filename}.")
+        return [(parsed[-1], site, PKA_SITE_SOURCE_COLOUR)]
+
+    from chemsmart.io.molecules.structure import Molecule
+
+    molecule = Molecule.from_filepath(filename)
+    if molecule is None:
+        raise ValueError(
+            f"Could not read a molecule from {filename}. "
+            "Specify -pi/--proton-index or -cc/--color-code."
+        )
+    return [
+        (
+            molecule,
+            resolve_ionizable_site(molecule, mode=mode),
+            PKA_SITE_SOURCE_SMARTS,
+        )
+    ]
+
+
+def _pka_submission_backend(ctx):
+    current = ctx
+    while current is not None:
+        if current.info_name in ("gaussian", "orca"):
+            return current.info_name
+        current = current.parent
+    return "gaussian"
+
+
+def _single_pka_job_label(ctx, filename):
+    label = ctx.obj.get("label")
+    if label:
+        return label
+    return f"{Path(str(filename)).stem}_pka"
+
+
+def _fragment_pka_job_label(filename, fragment):
+    return f"{Path(str(filename)).stem}_frag{fragment}_pka"
+
+
+def _table_pka_job_label(filepath, backend):
+    label = Path(str(filepath)).stem
+    if backend == "orca" and not label.endswith("_pka"):
+        return f"{label}_pka"
+    return label
+
+
+def _preview_opt_settings(ctx):
+    project_settings = ctx.obj["project_settings"]
+    opt_settings = project_settings.opt_settings()
+    job_settings = ctx.obj.get("job_settings")
+    keywords = ctx.obj.get("keywords") or {}
+    if job_settings is not None:
+        opt_settings = opt_settings.merge(job_settings, keywords=keywords)
+    return opt_settings
+
+
+def _resolved_charge_multiplicity(opt_settings, molecule):
+    charge = opt_settings.charge
+    multiplicity = opt_settings.multiplicity
+    if charge is None and molecule.charge is not None:
+        charge = int(molecule.charge)
+    if multiplicity is None and molecule.multiplicity is not None:
+        multiplicity = int(molecule.multiplicity)
+    return charge, multiplicity
+
+
+def _require_preview_charge_multiplicity(
+    fragment, charge, multiplicity, filename
+):
+    missing = []
+    if charge is None:
+        missing.append("-c/--charge")
+    if multiplicity is None:
+        missing.append("-m/--multiplicity")
+    if not missing:
+        return
+    raise click.UsageError(
+        f"Fragment {fragment}: charge and multiplicity are required "
+        f"before pKa preview. Missing: {', '.join(missing)}. "
+        "Provide them on the parent command or use a structure from "
+        f"which they can be inferred ({filename})."
+    )
+
+
+def _preflight_row_for_site(
+    ctx,
+    molecule,
+    site_index,
+    source,
+    fragment,
+    label,
+    filename,
+    opt_settings=None,
+    charge=None,
+    multiplicity=None,
+):
+    shared = ctx.obj["pka_shared"]
+    pkb = bool(shared.get("pkb", False))
+    mode_name = "pKb" if pkb else "pKa"
+    site_index = int(site_index)
+    n_atoms = molecule.num_atoms
+    if site_index < 1 or site_index > n_atoms:
+        raise click.UsageError(
+            f"Fragment {fragment}: atom index {site_index} is outside "
+            f"1..{n_atoms} ({filename})."
+        )
+    element = molecule.chemical_symbols[site_index - 1]
+    if opt_settings is None:
+        opt_settings = _preview_opt_settings(ctx)
+    if charge is None and multiplicity is None:
+        charge, multiplicity = _resolved_charge_multiplicity(
+            opt_settings, molecule
+        )
+    _require_preview_charge_multiplicity(
+        fragment, charge, multiplicity, filename
+    )
+
+    status = "ok"
+    if pkb:
+        try:
+            protonated, _hydrogen_index, _updated = (
+                prepare_pkb_submit_molecule(molecule, site_index, opt_settings)
+            )
+        except ValueError as exc:
+            raise click.UsageError(f"Fragment {fragment}: {exc}") from exc
+        status = f"ok; added H {protonated.proton_index}"
+    elif element != "H":
+        raise click.UsageError(
+            f"Fragment {fragment}: atom {site_index} is {element}, not "
+            f"the hydrogen that would be removed ({filename})."
+        )
+
+    return PkaPreflightRow(
+        fragment=fragment,
+        label=label,
+        mode=mode_name,
+        site=f"{site_index} {element}",
+        source=source,
+        charge=str(int(charge)),
+        multiplicity=str(int(multiplicity)),
+        status=status,
+    )
+
+
+def _molecules_for_explicit_preview(filename):
+    if is_pka_cdxml_input(filename):
+        from chemsmart.io.file import PKaCDXFile
+
+        return list(PKaCDXFile(filename).molecules)
+    from chemsmart.io.molecules.structure import Molecule
+
+    molecule = Molecule.from_filepath(filename)
+    if molecule is None:
+        return []
+    if isinstance(molecule, list):
+        return list(molecule)
+    return [molecule]
+
+
+def _explicit_preflight_targets(ctx, filename):
+    molecules = list(ctx.obj.get("molecules") or [])
+    if not molecules:
+        molecules = _molecules_for_explicit_preview(filename)
+    if not molecules:
+        raise click.UsageError(f"Could not read a molecule from {filename}.")
+    indices = ctx.obj.get("molecule_indices")
+    if indices and len(molecules) > 1:
+        return [
+            (int(index), molecule)
+            for index, molecule in zip(indices, molecules)
+        ]
+    fragment = len(molecules)
+    return [(fragment, molecules[-1])]
+
+
+def _rows_for_explicit_index(ctx, filename, proton_index, opt_settings):
+    targets = _explicit_preflight_targets(ctx, filename)
+    base_label = _single_pka_job_label(ctx, filename)
+    multiple = len(targets) > 1
+    rows = []
+    for fragment, molecule in targets:
+        label = f"{base_label}_idx{fragment}" if multiple else base_label
+        rows.append(
+            _preflight_row_for_site(
+                ctx,
+                molecule,
+                proton_index,
+                PKA_SITE_SOURCE_EXPLICIT,
+                fragment,
+                label,
+                filename,
+                opt_settings=opt_settings,
+            )
+        )
+    return rows
+
+
+def _rows_for_submission_table(ctx, filename, color_code, mode, opt_settings):
+    import copy
+
+    from chemsmart.utils.datasets import PKaOutputTable, PKaTableEntry
+
+    try:
+        entries = PKaTableEntry.parse_pka_table(filename)
+        PKaOutputTable.validate_pka_table_entries(
+            entries, check_file_exists=True
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    backend = _pka_submission_backend(ctx)
+    pkb = bool(ctx.obj["pka_shared"].get("pkb", False))
+    rows = []
+    for number, entry in enumerate(entries, start=1):
+        filepath = entry.filepath
+        label = _table_pka_job_label(filepath, backend)
+        row_settings = copy.copy(opt_settings)
+        row_settings.charge = int(entry.charge)
+        row_settings.multiplicity = int(entry.multiplicity)
+        if entry.proton_index is not None:
+            site, molecule = resolve_pka_batch_row(
+                filepath,
+                proton_index=entry.proton_index,
+                color_code=color_code,
+                pkb=pkb,
+            )
+            source = PKA_SITE_SOURCE_EXPLICIT
+        else:
+            sites = list_pka_preflight_sites(filepath, color_code, mode)
+            if len(sites) != 1:
+                raise click.UsageError(
+                    f"Row {number}: {filepath} contains {len(sites)} "
+                    "ChemDraw fragments. Pass a multi-fragment file as "
+                    "-f with pka batch, not inside a submission table."
+                )
+            molecule, site, source = sites[0]
+        rows.append(
+            _preflight_row_for_site(
+                ctx,
+                molecule,
+                site,
+                source,
+                number,
+                label,
+                filepath,
+                opt_settings=row_settings,
+                charge=int(entry.charge),
+                multiplicity=int(entry.multiplicity),
+            )
+        )
+    return rows
+
+
+def build_pka_preflight_rows(ctx):
+    """Return preflight rows for the current pKa submission context."""
+    filename = ctx.obj.get("filename")
+    if not filename:
+        raise click.UsageError(
+            "--preview requires -f/--filename pointing at a structure "
+            "file or a pKa submission table."
+        )
+    proton_index, color_code = resolve_pka_submit_proton_options(ctx)
+    mode = pka_submit_site_mode(ctx.obj["pka_shared"].get("pkb", False))
+    opt_settings = _preview_opt_settings(ctx)
+
+    from chemsmart.utils.datasets import PKaTableEntry
+
+    if PKaTableEntry.is_submission_table(filename):
+        return _rows_for_submission_table(
+            ctx, filename, color_code, mode, opt_settings
+        )
+    if proton_index is not None:
+        return _rows_for_explicit_index(
+            ctx, filename, proton_index, opt_settings
+        )
+
+    sites = list_pka_preflight_sites(filename, color_code, mode)
+    multiple = len(sites) > 1
+    rows = []
+    for number, (molecule, site, source) in enumerate(sites, start=1):
+        label = (
+            _fragment_pka_job_label(filename, number)
+            if multiple
+            else _single_pka_job_label(ctx, filename)
+        )
+        rows.append(
+            _preflight_row_for_site(
+                ctx,
+                molecule,
+                site,
+                source,
+                number,
+                label,
+                filename,
+                opt_settings=opt_settings,
+            )
+        )
+    return rows
+
+
+def format_pka_preflight_table(rows):
+    """Return a deterministic plain-text table for *rows*."""
+    records = [list(row) for row in rows]
+    headers = list(PKA_PREFLIGHT_COLUMNS)
+    widths = [
+        max([len(header)] + [len(str(record[index])) for record in records])
+        for index, header in enumerate(headers)
+    ]
+
+    def _format_line(cells):
+        return "  ".join(
+            str(cell).ljust(width) for cell, width in zip(cells, widths)
+        ).rstrip()
+
+    lines = [
+        _format_line(headers),
+        _format_line("-" * width for width in widths),
+    ]
+    lines.extend(_format_line(record) for record in records)
+    return "\n".join(lines)
+
+
+def print_pka_preview(ctx):
+    """Print the preflight table when ``--preview`` is set.
+
+    Returns True after printing. The caller must not create jobs.
+    """
+    if not ctx.obj["pka_shared"].get("preview"):
+        return False
+    try:
+        rows = build_pka_preflight_rows(ctx)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    click.echo(format_pka_preflight_table(rows))
+    return True
 
 
 def batch_pka_jobs_from_cdxml(
