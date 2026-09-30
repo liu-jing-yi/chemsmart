@@ -15,6 +15,7 @@ import functools
 import logging
 import math
 import os
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -35,8 +36,17 @@ from chemsmart.utils.constants import (
     energy_conversion,
 )
 from chemsmart.utils.io import get_program_type_from_file
+from chemsmart.utils.repattern import conformer_index_suffix_pattern
 
 logger = logging.getLogger(__name__)
+
+_THERMOCHEMISTRY_TYPE = Thermochemistry
+_PKA_CONFORMER_SUFFIX_RE = re.compile(conformer_index_suffix_pattern)
+CHEMDRAW_MOLECULAR_FRAGMENT_WARNING = (
+    "This file contains more than one ChemDraw molecular fragment. "
+    "Salts, counterions, explicit solvent, catalyst/ligand pairs, and "
+    "other disconnected components may not be independent molecules."
+)
 
 
 def resolve_pka_entropy_cutoff(cutoff_entropy_grimme, cutoff_entropy_truhlar):
@@ -76,6 +86,46 @@ def _extract_thermochemistry_property(thermo, filepath, attr, label):
     return value
 
 
+def _record_parsed_temperature(thermo, filepath, records):
+    """Store a parsed thermochemistry temperature when the parser has one."""
+    if records is None or type(thermo) is not _THERMOCHEMISTRY_TYPE:
+        return
+    temperature = thermo.file_object.temperature_in_K
+    if temperature is None:
+        return
+    records.append((str(filepath), float(temperature)))
+
+
+def _warn_inconsistent_conformer_temperatures(label, records):
+    """Warn when one species' parsed conformer temperatures differ."""
+    if len(records) < 2:
+        return
+    unique = {round(temperature, 4) for _, temperature in records}
+    if len(unique) < 2:
+        return
+    details = ", ".join(
+        f"{Path(path).name}={temperature:g} K" for path, temperature in records
+    )
+    logger.warning(
+        "%s conformer outputs use inconsistent temperatures (%s).",
+        label,
+        details,
+    )
+
+
+def _pka_conformer_tag(filepath, index):
+    stem = Path(str(filepath)).stem
+    match = _PKA_CONFORMER_SUFFIX_RE.search(stem)
+    if match:
+        return f"c{int(match.group(1))}"
+    return f"conformer {index}"
+
+
+def _pka_output_error(label, filepath, index, exc):
+    tag = _pka_conformer_tag(filepath, index)
+    return f"{label} {tag}: {exc}"
+
+
 def pka_gas_phase_data(
     filepath,
     temperature=298.15,
@@ -84,6 +134,7 @@ def pka_gas_phase_data(
     cutoff_entropy_grimme=100.0,
     cutoff_enthalpy=100.0,
     entropy_method="grimme",
+    temperature_records=None,
 ):
     """Return gas-phase SCF energy and qh-G correction in Hartree."""
     thermo = Thermochemistry(
@@ -113,10 +164,11 @@ def pka_gas_phase_data(
         "j/mol", "hartree", electronic_energy_j_mol
     )
     qh_gibbs_au = energy_conversion("j/mol", "hartree", qh_gibbs_j_mol)
+    _record_parsed_temperature(thermo, filepath, temperature_records)
     return electronic_energy_au, qh_gibbs_au - electronic_energy_au
 
 
-def pka_solvent_scf_energy(filepath):
+def pka_solvent_scf_energy(filepath, temperature_records=None):
     """Return solvent-phase SCF energy in Hartree."""
     thermo = Thermochemistry(filename=filepath)
     electronic_energy_j_mol = _extract_thermochemistry_property(
@@ -125,6 +177,7 @@ def pka_solvent_scf_energy(filepath):
         "electronic_energy",
         "SCF energy",
     )
+    _record_parsed_temperature(thermo, filepath, temperature_records)
     return energy_conversion("j/mol", "hartree", electronic_energy_j_mol)
 
 
@@ -270,13 +323,33 @@ def _species_solution_free_energy(
     g_corr_values = []
     e_solv_values = []
     g_soln_values = []
-    for gas_file, solv_file in zip(gas_files, solv_files):
-        e_gas, g_corr = pka_gas_phase_data(gas_file, **thermo_kwargs)
-        e_solv = pka_solvent_scf_energy(solv_file)
+    temperature_records = []
+    for index, (gas_file, solv_file) in enumerate(
+        zip(gas_files, solv_files), start=1
+    ):
+        try:
+            e_gas, g_corr = pka_gas_phase_data(
+                gas_file,
+                temperature_records=temperature_records,
+                **thermo_kwargs,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                _pka_output_error(label, gas_file, index, exc)
+            ) from exc
+        try:
+            e_solv = pka_solvent_scf_energy(
+                solv_file, temperature_records=temperature_records
+            )
+        except ValueError as exc:
+            raise ValueError(
+                _pka_output_error(label, solv_file, index, exc)
+            ) from exc
         e_gas_values.append(e_gas)
         g_corr_values.append(g_corr)
         e_solv_values.append(e_solv)
         g_soln_values.append(e_solv + g_corr)
+    _warn_inconsistent_conformer_temperatures(label, temperature_records)
     n_conformers = len(g_soln_values)
     g_soln = (
         ensemble_effective_free_energy(g_soln_values, temperature)
@@ -1746,6 +1819,12 @@ def _resolved_charge_multiplicity(opt_settings, molecule):
     return charge, multiplicity
 
 
+def _fragment_charge_prefix(fragment, filename):
+    if is_pka_cdxml_input(filename):
+        return f"ChemDraw molecular fragment {fragment}"
+    return f"Fragment {fragment}"
+
+
 def _require_preview_charge_multiplicity(
     fragment, charge, multiplicity, filename
 ):
@@ -1756,9 +1835,10 @@ def _require_preview_charge_multiplicity(
         missing.append("-m/--multiplicity")
     if not missing:
         return
+    prefix = _fragment_charge_prefix(fragment, filename)
     raise click.UsageError(
-        f"Fragment {fragment}: charge and multiplicity are required "
-        f"before pKa preview. Missing: {', '.join(missing)}. "
+        f"{prefix}: charge and multiplicity are required before pKa "
+        f"preview. Missing: {', '.join(missing)}. "
         "Provide them on the parent command or use a structure from "
         f"which they can be inferred ({filename})."
     )
@@ -1804,12 +1884,15 @@ def _preflight_row_for_site(
                 prepare_pkb_submit_molecule(molecule, site_index, opt_settings)
             )
         except ValueError as exc:
-            raise click.UsageError(f"Fragment {fragment}: {exc}") from exc
+            raise click.UsageError(
+                f"{_fragment_charge_prefix(fragment, filename)}: {exc}"
+            ) from exc
         status = f"ok; added H {protonated.proton_index}"
     elif element != "H":
         raise click.UsageError(
-            f"Fragment {fragment}: atom {site_index} is {element}, not "
-            f"the hydrogen that would be removed ({filename})."
+            f"{_fragment_charge_prefix(fragment, filename)}: atom "
+            f"{site_index} is {element}, not the hydrogen that would "
+            f"be removed ({filename})."
         )
 
     return PkaPreflightRow(
@@ -2002,6 +2085,42 @@ def format_pka_preflight_table(rows):
     return "\n".join(lines)
 
 
+def _parent_charge_multiplicity(ctx):
+    job_settings = ctx.obj.get("job_settings")
+    if job_settings is None:
+        return None, None
+    return job_settings.charge, job_settings.multiplicity
+
+
+def pka_preflight_notices(ctx):
+    """Return notices for a multi-fragment ChemDraw file.
+
+    Parent ``-c`` / ``-m`` are reported only when those command values
+    are set, because they then apply to every fragment. Per-fragment
+    charges parsed from the drawing are left to the table.
+    """
+    filename = ctx.obj.get("filename")
+    if not filename or not is_pka_cdxml_input(filename):
+        return []
+    if len(PKaCDXFile(filename).molecules) < 2:
+        return []
+    notices = [CHEMDRAW_MOLECULAR_FRAGMENT_WARNING]
+    charge, multiplicity = _parent_charge_multiplicity(ctx)
+    parts = []
+    if charge is not None:
+        parts.append(f"-c/--charge {int(charge)}")
+    if multiplicity is not None:
+        parts.append(f"-m/--multiplicity {int(multiplicity)}")
+    if not parts:
+        return notices
+    verb = "apply" if len(parts) > 1 else "applies"
+    notices.append(
+        f"Parent {' and '.join(parts)} {verb} to every "
+        "ChemDraw molecular fragment."
+    )
+    return notices
+
+
 def print_pka_preview(ctx):
     """Print the preflight table when ``--preview`` is set.
 
@@ -2013,6 +2132,8 @@ def print_pka_preview(ctx):
         rows = build_pka_preflight_rows(ctx)
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
+    for notice in pka_preflight_notices(ctx):
+        click.echo(notice)
     click.echo(format_pka_preflight_table(rows))
     return True
 
@@ -2039,6 +2160,8 @@ def batch_pka_jobs_from_cdxml(
         raise click.UsageError(str(exc)) from exc
 
     if pka_molecules is not None:
+        if len(pka_molecules) > 1:
+            click.echo(CHEMDRAW_MOLECULAR_FRAGMENT_WARNING)
         return create_jobs_fn(
             ctx, pka_molecules, shared, skip_completed, **kwargs
         )

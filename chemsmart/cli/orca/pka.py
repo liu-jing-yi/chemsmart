@@ -482,7 +482,7 @@ def _create_orca_pka_jobs_from_molecules(
             raise click.UsageError(str(exc)) from exc
         require_pka_charge_multiplicity(
             row_opt_settings,
-            source_hint=f"CDXML fragment {idx} in {filename}",
+            source_hint=(f"ChemDraw molecular fragment {idx} in {filename}"),
         )
         pka_settings = ORCApKaJobSettings.build_orca_pka_settings(
             proton_index, shared, row_opt_settings

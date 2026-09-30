@@ -2636,6 +2636,8 @@ class TestPKa:
 
         assert result.exit_code == 0, result.output
         assert len(captured["jobs"]) == 2
+        assert "ChemDraw molecular fragment" in result.output
+        assert "Parent -c/--charge" not in result.output
         for job in captured["jobs"]:
             assert job.settings.charge == 0
             assert job.settings.multiplicity == 1
@@ -3937,6 +3939,7 @@ class TestPkaPreview:
         assert "1" in table
         assert table.endswith("ok")
         assert table.count("\n") == 2
+        assert "ChemDraw molecular fragment" not in result.output
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_two_coloured_acid_fragments_preview(
@@ -3976,6 +3979,12 @@ class TestPkaPreview:
         assert rows[0] != rows[1]
         assert "frag1_pka" in rows[0]
         assert "frag2_pka" in rows[1]
+        assert "ChemDraw molecular fragment" in result.output
+        assert (
+            "Parent -c/--charge 0 and -m/--multiplicity 1 apply "
+            "to every ChemDraw molecular fragment."
+        ) in result.output
+        assert "Salts, counterions" in result.output
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
     def test_two_coloured_base_fragments_preview(
@@ -4100,3 +4109,162 @@ class TestPkaPreview:
         assert "phenol_pka" in table
         assert "8 H" in table
         assert "constructor called" not in result.output
+
+
+def _invoke_pka_without_charge(
+    tmp_path, monkeypatch, backend, filename, *pka_args
+):
+    _require_backend_pka_subcommand(run, backend)
+    config_root = _write_test_backend_project(tmp_path, backend)
+    monkeypatch.setenv("CHEMSMART_CONFIG_DIR", str(config_root))
+    _forbid_pka_job_construction(monkeypatch)
+    runner = CliRunner()
+    args = [
+        "--no-scratch",
+        "--fake",
+        backend,
+        "-p",
+        "test",
+        "-f",
+        str(filename),
+        "pka",
+        "-s",
+        "direct",
+        *pka_args,
+    ]
+    return runner.invoke(run, args)
+
+
+class TestPkaSeminarValidation:
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_missing_charge_and_multiplicity_fail_before_preview(
+        self, tmp_path, monkeypatch, backend
+    ):
+        molecule = _molecule_from_smiles("Oc1ccccc1")
+        path = tmp_path / "phenol.xyz"
+        molecule.write(str(path), format="xyz")
+        preview = _invoke_pka_without_charge(
+            tmp_path, monkeypatch, backend, path, "--preview"
+        )
+        assert preview.exit_code != 0
+        assert "Fragment 1" in preview.output
+        assert "-c/--charge" in preview.output
+        assert "-m/--multiplicity" in preview.output
+        assert "constructor called" not in preview.output
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_missing_charge_and_multiplicity_fail_before_submit(
+        self, tmp_path, monkeypatch, backend
+    ):
+        molecule = _molecule_from_smiles("Oc1ccccc1")
+        path = tmp_path / "phenol.xyz"
+        molecule.write(str(path), format="xyz")
+        submitted = _invoke_pka_without_charge(
+            tmp_path, monkeypatch, backend, path
+        )
+        assert submitted.exit_code != 0
+        assert "Charge and multiplicity are required" in submitted.output
+        assert "-c/--charge" in submitted.output
+        assert "-m/--multiplicity" in submitted.output
+        assert "constructor called" not in submitted.output
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_multi_fragment_preview_without_parent_flags_keeps_parsed_charge(
+        self,
+        tmp_path,
+        monkeypatch,
+        backend,
+        colored_proton_two_molecule_cdxml_file,
+    ):
+        result = _invoke_pka_without_charge(
+            tmp_path,
+            monkeypatch,
+            backend,
+            colored_proton_two_molecule_cdxml_file,
+            "--preview",
+            "batch",
+        )
+        assert result.exit_code == 0, result.output
+        assert "ChemDraw molecular fragment" in result.output
+        assert "Parent -c/--charge" not in result.output
+        assert "Parent -m/--multiplicity" not in result.output
+        table = _preflight_table(result.output)
+        rows = [line for line in table.splitlines() if line[:1].isdigit()]
+        assert len(rows) == 2
+        assert "constructor called" not in result.output
+
+    def test_output_errors_name_species_and_conformer(self, monkeypatch):
+        from chemsmart.cli.pka import _species_solution_free_energy
+
+        def _fail_gas(filepath, **kwargs):
+            if str(filepath).endswith("_c2.log"):
+                raise ValueError(
+                    f"File '{filepath}' did not terminate normally. "
+                    "Skipping thermochemistry calculation for this file."
+                )
+            return -1.0, 0.01
+
+        monkeypatch.setattr("chemsmart.cli.pka.pka_gas_phase_data", _fail_gas)
+        monkeypatch.setattr(
+            "chemsmart.cli.pka.pka_solvent_scf_energy",
+            lambda filepath, **kwargs: -1.1,
+        )
+        with pytest.raises(ValueError, match=r"HA c2: File '.*_c2.log'"):
+            _species_solution_free_energy(
+                ["ha_opt_c1.log", "ha_opt_c2.log"],
+                ["ha_sp_c1.log", "ha_sp_c2.log"],
+                {},
+                298.15,
+                "HA",
+            )
+
+        def _imaginary(filepath, **kwargs):
+            raise ValueError(
+                f"Invalid geometry optimization for {filepath}. "
+                "A valid optimized geometry should not contain "
+                "imaginary frequencies."
+            )
+
+        monkeypatch.setattr("chemsmart.cli.pka.pka_gas_phase_data", _imaginary)
+        with pytest.raises(
+            ValueError, match=r"A- conformer 1: Invalid geometry"
+        ):
+            _species_solution_free_energy(
+                ["a_opt.log"],
+                ["a_sp.log"],
+                {},
+                298.15,
+                "A-",
+            )
+
+    def test_inconsistent_conformer_temperatures_warn(self, caplog):
+        import logging
+
+        from chemsmart.cli.pka import (
+            _warn_inconsistent_conformer_temperatures,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            _warn_inconsistent_conformer_temperatures(
+                "HA",
+                [
+                    ("ha_opt_c1.log", 298.15),
+                    ("ha_opt_c2.log", 310.0),
+                ],
+            )
+        assert "HA conformer outputs use inconsistent temperatures" in (
+            caplog.text
+        )
+        assert "ha_opt_c1.log=298.15 K" in caplog.text
+        assert "ha_opt_c2.log=310 K" in caplog.text
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            _warn_inconsistent_conformer_temperatures(
+                "HA",
+                [
+                    ("ha_opt_c1.log", 298.15),
+                    ("ha_opt_c2.log", 298.15),
+                ],
+            )
+        assert "inconsistent temperatures" not in caplog.text

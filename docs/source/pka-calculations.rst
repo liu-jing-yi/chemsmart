@@ -226,8 +226,7 @@ Place ``-N`` **after** ``pka``.
 
 **Geometry selection**
 
--  ``N = 1``: use ``crest_best.xyz`` (else the first frame of energy-sorted ``crest_conformers.xyz``). DFT filenames
-   stay the legacy names without ``_c1``.
+-  ``N = 1``: use ``crest_best.xyz`` (else the first frame of energy-sorted ``crest_conformers.xyz``).
 -  ``N > 1``: use the first N frames of energy-sorted ``crest_conformers.xyz``.
 
 CREST is gas-phase unless a CREST project YAML (the same ``-p`` name as Gaussian/ORCA, when present) already sets a
@@ -258,9 +257,8 @@ geometry (or the shorter available conformer set).
 
 **Analysis**
 
-For each conformer, analysis computes :math:`G_{\text{soln},i} = E_{\text{solv},i} + G_{\text{corr},i}`. When a species
-has more than one conformer, that species’ free energy in the pKa cycle is the ensemble :math:`G_{\text{eff}}`. A single
-conformer is unchanged. See Dual-Level Approach above.
+Ensemble free energies use the dual-level :math:`G_{\text{eff}}` above. Checks on completed outputs are under
+:ref:`pka-output-analysis`.
 
 .. _pka-site-resolution:
 
@@ -330,9 +328,11 @@ proton is uniquely coloured (or use ``-rcc`` / ``--reference-color-code``). If t
 
 **Multi-molecule CDXML (one job per fragment)**
 
-A single ``.cdxml`` / ``.cdx`` file may contain **multiple molecules** (multiple ChemDraw fragments). CHEMSMART performs
-**per-fragment** colour detection and creates **one pKa job per fragment**. With ``--pkb``, each fragment is protonated
-at its coloured (or SMARTS) basic atom.
+A single ``.cdxml`` / ``.cdx`` file may contain **multiple molecules** (multiple ChemDraw molecular fragments).
+CHEMSMART performs **per-fragment** colour detection and creates **one pKa job per fragment**. With ``--pkb``, each
+fragment is protonated at its coloured (or SMARTS) basic atom. Salts, counterions, explicit solvent, catalyst/ligand
+pairs, and other disconnected components may not be independent molecules. ``--preview`` and ``pka batch`` print that
+warning once per multi-fragment file.
 
 Pass the file with ``pka batch`` (or ``pka submit`` for a single-fragment file):
 
@@ -343,7 +343,7 @@ Pass the file with ``pka batch`` (or ``pka submit`` for a single-fragment file):
 
    chemsmart run orca -p my_project -f acids.cdxml -c 0 -m 1 pka -s direct batch
 
-Job labels are derived from the filename, e.g. ``acids_frag1_pka`` (Gaussian) or ``acids_frag1_pka`` (ORCA).
+Job labels are derived from the filename, for example ``acids_frag1_pka``, for both Gaussian and ORCA.
 
 **Charge and multiplicity**
 
@@ -361,8 +361,10 @@ How charge and multiplicity are resolved depends on the input mode:
          does not need ``-c`` / ``-m`` when ``-f`` is a table.
 
    -  -  Multi-fragment CDXML (``-f`` is ``.cdxml`` / ``.cdx``)
-      -  Parent ``-c`` / ``-m`` apply to every fragment by default. If either is omitted on the backend command,
-         CHEMSMART may copy values from the parsed CDXML structure when the drawing supplies them.
+
+      -  Parent ``-c`` / ``-m``, when set on the ``gaussian`` or ``orca`` command, apply to every ChemDraw molecular
+         fragment. ``--preview`` states that explicitly. An omitted flag uses the charge or multiplicity parsed from
+         that fragment.
 
    -  -  Single-molecule submit (XYZ, LOG, CDXML, …)
       -  ``-c`` and ``-m`` on the backend command are required unless already present on merged project/job settings.
@@ -416,8 +418,9 @@ selection source, input charge, input multiplicity, and status. Fragment order f
 
 For ``pKa``, the site is the hydrogen that will be removed. For ``--pkb``, the site is the heavy atom that will be
 protonated, and the status also gives the index of the hydrogen added to the free base. Ambiguous colour markup or more
-than one SMARTS site stops the command before any job is created. The charge and multiplicity columns are the values
-submission would use: parent ``-c`` / ``-m`` when they are set, otherwise the values read from the structure.
+than one SMARTS site stops the command before any job is created. Charge and multiplicity follow the table above, and a
+missing value stops ``--preview`` and job submission before any Gaussian, ORCA, or CREST job is created. The
+multi-fragment warning is described under **Multi-molecule CDXML**.
 
 **Proton and reference options for CDXML**
 
@@ -602,11 +605,20 @@ submit`` calls while you only maintain one top-level submission command locally.
 See also :doc:`cli-overview` for general ``chemsmart sub`` usage and :doc:`configuration-server-settings` for scheduler
 configuration.
 
+.. _pka-output-analysis:
+
 *****************************************
  Output Analysis (``chemsmart run pka``)
 *****************************************
 
 All post-processing lives under ``chemsmart run pka``. No Gaussian or ORCA backend is invoked during analysis.
+
+Each output must have terminated normally. A file that did not, or a gas-phase optimization that still has imaginary
+frequencies, stops analysis with an error that names the species (``HA``, ``A-``, ``HRef``, or ``Ref-``) and the
+conformer (``cN``, or the conformer position for a legacy file without ``_cN``). Imaginary-frequency checking stays
+enabled for those gas-phase optimizations. Analysis warns when parsed thermochemistry temperatures differ among a
+species' conformers. Solvent identity is not compared: Gaussian and ORCA outputs do not expose one shared solvent field.
+Confirm that paired conformers used the same solvent model and solvent.
 
 Thermochemistry extraction
 ==========================
