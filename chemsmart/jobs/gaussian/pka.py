@@ -4,8 +4,8 @@ Gaussian pKa calculation job implementation.
 This module provides the GaussianpKaJob class for performing pKa
 calculations using Gaussian with a proper thermodynamic cycle:
 1. Optional CREST conformational sampling of HA, A-, and any reference acid
-2. Gas phase optimization + frequency for both HA and A-
-3. Solution phase single point for both HA and A- at the same level of theory
+2. Gas phase optimization + frequency for each selected conformer of HA and A-
+3. Solution phase single point for each optimized conformer at the same level of theory
 
 Using the same level of theory ensures proper error cancellation for
 solvation free energy calculations.
@@ -14,16 +14,13 @@ solvation free energy calculations.
 import logging
 import os
 
+from chemsmart.cli.pka import build_pka_crest_job, select_crest_conformers
 from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
-from chemsmart.jobs.pka_sampling import (
-    build_pka_crest_job,
-    pka_subjob_label,
-    select_crest_conformers,
-)
 from chemsmart.jobs.runner import decide_phase_transition, run_phase_jobs
+from chemsmart.utils.datasets import pka_job_species_outputs, pka_subjob_label
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +39,8 @@ class GaussianpKaJob(GaussianJob):
     6. Calculate solvation free energies and pKa
 
     When sampling is enabled, each sampled species yields N gas-phase
-    opt+freq jobs for the N lowest CREST conformers and one solvent SP
-    job from the lowest conformer's optimized geometry. Parent completion
-    requires DFT opt+SP only.
+    opt+freq jobs and N solvent single-point jobs, one pair per conformer.
+    Parent completion requires DFT opt+SP only.
 
     Attributes:
         TYPE (str): Job type identifier ('g16pka').
@@ -348,30 +344,30 @@ class GaussianpKaJob(GaussianJob):
         )
 
     def _create_sp_jobs(self):
-        """Create solution phase SP jobs from optimized geometries."""
+        """Create one solution-phase SP job per optimized conformer."""
         prot_sp_settings, conj_sp_settings = (
             self.settings._create_solution_phase_sp_settings(self.molecule)
         )
         self.protonated_sp_jobs = self._make_species_sp_jobs(
-            self.protonated_opt_jobs[:1], prot_sp_settings, "HA"
+            self.protonated_opt_jobs, prot_sp_settings, "HA"
         )
         self.conjugate_base_sp_jobs = self._make_species_sp_jobs(
-            self.conjugate_base_opt_jobs[:1], conj_sp_settings, "A"
+            self.conjugate_base_opt_jobs, conj_sp_settings, "A"
         )
         self.protonated_sp_job = self.protonated_sp_jobs[0]
         self.conjugate_base_sp_job = self.conjugate_base_sp_jobs[0]
         self.sp_jobs = self.protonated_sp_jobs + self.conjugate_base_sp_jobs
 
     def _create_ref_sp_jobs(self):
-        """Create reference solution phase SP jobs from optimized geometries."""
+        """Create one reference solvent SP job per optimized conformer."""
         ref_acid_sp_settings, ref_conjugate_base_sp_settings = (
             self.settings.reference_pair_sp_job_settings()
         )
         self.ref_acid_sp_jobs = self._make_species_sp_jobs(
-            self.ref_acid_opt_jobs[:1], ref_acid_sp_settings, "HRef"
+            self.ref_acid_opt_jobs, ref_acid_sp_settings, "HRef"
         )
         self.ref_conjugate_base_sp_jobs = self._make_species_sp_jobs(
-            self.ref_conjugate_base_opt_jobs[:1],
+            self.ref_conjugate_base_opt_jobs,
             ref_conjugate_base_sp_settings,
             "Ref",
         )
@@ -665,33 +661,12 @@ class GaussianpKaJob(GaussianJob):
     # =========================================================================
 
     def _pka_output_files(self):
-        """Return (ha_file, a_file, href_file, ref_file) output-path tuple.
+        """Return gas and solvent output paths for every pKa species.
 
-        Centralises the repeated logic of resolving output file paths from
-        the four pKa species jobs.  Reference paths (href_file, ref_file) are
-        only populated when reference jobs exist *and* their opt phase is
-        complete; otherwise they are ``None``.
+        Each species maps to ``{"gas": [...], "solv": [...]}`` in conformer
+        order. Reference species are included when a reference acid is set.
         """
-        ha_file = (
-            self.protonated_job.outputfile if self.protonated_job else None
-        )
-        a_file = (
-            self.conjugate_base_job.outputfile
-            if self.conjugate_base_job
-            else None
-        )
-        href_file = None
-        ref_file = None
-        if self.has_reference_jobs and self._ref_opt_jobs_are_complete():
-            href_file = (
-                self.ref_acid_job.outputfile if self.ref_acid_job else None
-            )
-            ref_file = (
-                self.ref_conjugate_base_job.outputfile
-                if self.ref_conjugate_base_job
-                else None
-            )
-        return ha_file, a_file, href_file, ref_file
+        return pka_job_species_outputs(self)
 
     def compute_thermochemistry(self):
         """
@@ -712,13 +687,13 @@ class GaussianpKaJob(GaussianJob):
                 "Run the pKa jobs first using job.run()."
             )
 
-        ha_file, a_file, href_file, ref_file = self._pka_output_files()
+        files = self._pka_output_files()
 
         return Gaussian16pKaOutput.compute_pka_thermochemistry(
-            ha_file=ha_file,
-            a_file=a_file,
-            href_file=href_file,
-            ref_file=ref_file,
+            ha_file=files["HA"]["gas"],
+            a_file=files["A-"]["gas"],
+            href_file=files["HRef"]["gas"] if "HRef" in files else None,
+            ref_file=files["Ref-"]["gas"] if "Ref-" in files else None,
             temperature=self.settings.temperature,
             concentration=self.settings.concentration,
             pressure=self.settings.pressure,
@@ -737,39 +712,17 @@ class GaussianpKaJob(GaussianJob):
                 "Run the pKa jobs first using job.run()."
             )
 
-        ha_gas, a_gas, href_gas, ref_gas = self._pka_output_files()
-        ha_solv = (
-            self.protonated_sp_job.outputfile
-            if self.protonated_sp_job
-            else None
-        )
-        a_solv = (
-            self.conjugate_base_sp_job.outputfile
-            if self.conjugate_base_sp_job
-            else None
-        )
-        href_solv = ref_solv = None
-        if self.has_reference_jobs:
-            href_solv = (
-                self.ref_acid_sp_job.outputfile
-                if self.ref_acid_sp_job
-                else None
-            )
-            ref_solv = (
-                self.ref_conjugate_base_sp_job.outputfile
-                if self.ref_conjugate_base_sp_job
-                else None
-            )
+        files = self._pka_output_files()
 
-        Gaussian16pKaOutput.print_pka_summary(
-            ha_gas_file=ha_gas,
-            a_gas_file=a_gas,
-            href_gas_file=href_gas,
-            ref_gas_file=ref_gas,
-            ha_solv_file=ha_solv,
-            a_solv_file=a_solv,
-            href_solv_file=href_solv,
-            ref_solv_file=ref_solv,
+        return Gaussian16pKaOutput.print_pka_summary(
+            ha_gas_file=files["HA"]["gas"],
+            a_gas_file=files["A-"]["gas"],
+            href_gas_file=files["HRef"]["gas"] if "HRef" in files else None,
+            ref_gas_file=files["Ref-"]["gas"] if "Ref-" in files else None,
+            ha_solv_file=files["HA"]["solv"],
+            a_solv_file=files["A-"]["solv"],
+            href_solv_file=files["HRef"]["solv"] if "HRef" in files else None,
+            ref_solv_file=files["Ref-"]["solv"] if "Ref-" in files else None,
             pka_reference=getattr(self.settings, "reference_pka", None),
             temperature=self.settings.temperature,
             concentration=self.settings.concentration,
@@ -777,7 +730,7 @@ class GaussianpKaJob(GaussianJob):
             cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
             cutoff_enthalpy=self.settings.cutoff_enthalpy,
             scheme=self.settings.scheme,
-            delta_G_proton=getattr(self.settings, "delta_G_proton", None),
+            delta_G_proton=self.settings.delta_G_proton,
             pkb=self.settings.pkb,
             pks=self.settings.pks,
             solvent_id=self.settings.solvent_id,

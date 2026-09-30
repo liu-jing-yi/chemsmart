@@ -99,6 +99,123 @@ def glob_pka_ensemble_files(basename, suffix, directory, extensions):
     return sorted(matches, key=_pka_conformer_sort_key)
 
 
+def pka_subjob_label(base_label, species, stage, index, num_conformers):
+    """Return a DFT subjob label for one pKa species and stage.
+
+    For ``N == 1`` the label is ``{base_label}_{species}_{stage}`` (for
+    example ``mol_pka_HA_opt``). For ``N > 1`` a 1-based conformer suffix
+    is appended (for example ``mol_pka_HA_opt_c1``).
+
+    Args:
+        base_label (str): Parent pKa job label.
+        species (str): Species tag (``HA``, ``A``, ``HRef``, or ``Ref``).
+        stage (str): Stage tag (``opt`` or ``sp``).
+        index (int): 1-based conformer index; ignored when ``N == 1``.
+        num_conformers (int): Number of conformers in the ensemble.
+
+    Returns:
+        str: Subjob label.
+    """
+    label = f"{base_label}_{species}_{stage}"
+    if num_conformers is not None and num_conformers > 1:
+        return f"{label}_c{index}"
+    return label
+
+
+def output_paths_in_conformer_order(jobs):
+    """Return output paths ordered ``c1``, ``c2``, ..., ``c10``.
+
+    Jobs without a ``_cN`` suffix keep a zero index, so a single legacy
+    output stays a one-element list. Paths are not collapsed to the first
+    conformer.
+    """
+    paths = []
+    for job in jobs or []:
+        if job is None:
+            continue
+        paths.append(job.outputfile)
+    return sorted(paths, key=_pka_conformer_sort_key)
+
+
+def collect_pka_species_outputs(
+    ha_opt_jobs,
+    a_opt_jobs,
+    ha_sp_jobs,
+    a_sp_jobs,
+    href_opt_jobs=None,
+    ref_opt_jobs=None,
+    href_sp_jobs=None,
+    ref_sp_jobs=None,
+    include_reference=False,
+):
+    """Pair gas-phase and solvent outputs for each pKa species.
+
+    Species are ``HA``, ``A-``, and, when ``include_reference`` is true,
+    ``HRef`` and ``Ref-``. Each value is ``{"gas": [...], "solv": [...]}``
+    in conformer order. A species whose gas and solvent counts differ
+    raises ``ValueError`` naming that species and both counts.
+    """
+    species_jobs = [
+        ("HA", ha_opt_jobs, ha_sp_jobs),
+        ("A-", a_opt_jobs, a_sp_jobs),
+    ]
+    if include_reference:
+        species_jobs.extend(
+            [
+                ("HRef", href_opt_jobs, href_sp_jobs),
+                ("Ref-", ref_opt_jobs, ref_sp_jobs),
+            ]
+        )
+
+    collected = {}
+    for species, gas_jobs, solv_jobs in species_jobs:
+        gas_paths = output_paths_in_conformer_order(gas_jobs)
+        solv_paths = output_paths_in_conformer_order(solv_jobs)
+        if len(gas_paths) != len(solv_paths):
+            raise ValueError(
+                f"{species} gas-phase and solvent file counts must match "
+                f"({len(gas_paths)} vs {len(solv_paths)})."
+            )
+        if not gas_paths:
+            raise ValueError(f"Missing required files for {species}.")
+        collected[species] = {"gas": gas_paths, "solv": solv_paths}
+    return collected
+
+
+def pka_job_species_outputs(job):
+    """Collect ensemble output paths from a Gaussian or ORCA pKa job.
+
+    Solvent single-point jobs are created from every gas-phase opt job
+    when they are not already present. Reference species are included
+    when the job has a reference acid.
+    """
+    if job.sp_jobs is None:
+        job._create_sp_jobs()
+    include_reference = bool(job.has_reference_jobs)
+    href_opt_jobs = None
+    ref_opt_jobs = None
+    href_sp_jobs = None
+    ref_sp_jobs = None
+    if include_reference:
+        if job.ref_sp_jobs is None:
+            job._create_ref_sp_jobs()
+        href_opt_jobs = job.ref_acid_opt_jobs
+        ref_opt_jobs = job.ref_conjugate_base_opt_jobs
+        href_sp_jobs = job.ref_acid_sp_jobs
+        ref_sp_jobs = job.ref_conjugate_base_sp_jobs
+    return collect_pka_species_outputs(
+        ha_opt_jobs=job.protonated_opt_jobs,
+        a_opt_jobs=job.conjugate_base_opt_jobs,
+        ha_sp_jobs=job.protonated_sp_jobs,
+        a_sp_jobs=job.conjugate_base_sp_jobs,
+        href_opt_jobs=href_opt_jobs,
+        ref_opt_jobs=ref_opt_jobs,
+        href_sp_jobs=href_sp_jobs,
+        ref_sp_jobs=ref_sp_jobs,
+        include_reference=include_reference,
+    )
+
+
 class PKaTableEntry:
     """Generic table-row abstraction for pKa job-submission tables.
 

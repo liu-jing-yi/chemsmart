@@ -262,21 +262,33 @@ def _direct_pka_job(
     sampling=False,
     num_conformers=1,
     label="mol_pka",
+    scheme="direct",
+    reference_file=None,
+    reference_proton_index=None,
 ):
     proton_index = _first_hydrogen_index(molecule)
     molecule.charge = 0
     molecule.multiplicity = 1
+    reference_kwargs = {}
+    if reference_file is not None:
+        reference_kwargs = {
+            "reference_file": reference_file,
+            "reference_proton_index": reference_proton_index,
+            "reference_charge": 0,
+            "reference_multiplicity": 1,
+        }
     if backend == "gaussian":
         from chemsmart.jobs.gaussian.pka import GaussianpKaJob
         from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
 
         settings = GaussianpKaJobSettings(
             proton_index=proton_index,
-            scheme="direct",
+            scheme=scheme,
             functional="B3LYP",
             basis="6-31G*",
             sampling=sampling,
             num_conformers=num_conformers,
+            **reference_kwargs,
         )
         job_cls = GaussianpKaJob
     else:
@@ -285,11 +297,12 @@ def _direct_pka_job(
 
         settings = ORCApKaJobSettings(
             proton_index=proton_index,
-            scheme="direct",
+            scheme=scheme,
             functional="B3LYP",
             basis="def2-SVP",
             sampling=sampling,
             num_conformers=num_conformers,
+            **reference_kwargs,
         )
         job_cls = ORCApKaJob
     return job_cls(
@@ -554,7 +567,7 @@ class TestPkaCrestSampling:
     """CREST sampling helpers, pKa job labels, and conformer extract path."""
 
     def test_pka_subjob_label_n1_and_n_greater_than_1(self):
-        from chemsmart.jobs.pka_sampling import pka_subjob_label
+        from chemsmart.utils.datasets import pka_subjob_label
 
         assert (
             pka_subjob_label("mol_pka", "HA", "opt", 1, 1) == "mol_pka_HA_opt"
@@ -571,7 +584,7 @@ class TestPkaCrestSampling:
     def test_select_crest_conformers_waits_when_output_missing(
         self, temporary_working_dir, water_molecule, crest_jobrunner_no_scratch
     ):
-        from chemsmart.jobs.pka_sampling import select_crest_conformers
+        from chemsmart.cli.pka import select_crest_conformers
 
         crest_job = _make_crest_search_job(
             water_molecule, crest_jobrunner_no_scratch
@@ -587,7 +600,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.jobs.pka_sampling import select_crest_conformers
+        from chemsmart.cli.pka import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -611,7 +624,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.jobs.pka_sampling import select_crest_conformers
+        from chemsmart.cli.pka import select_crest_conformers
 
         water_molecule.charge = 1
         water_molecule.multiplicity = 1
@@ -635,7 +648,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.jobs.pka_sampling import select_crest_conformers
+        from chemsmart.cli.pka import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -663,8 +676,8 @@ class TestPkaCrestSampling:
     ):
         import shutil
 
+        from chemsmart.cli.pka import select_crest_conformers
         from chemsmart.io.molecules.structure import Molecule
-        from chemsmart.jobs.pka_sampling import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -817,10 +830,14 @@ class TestPkaCrestSampling:
         if job.sp_jobs is None:
             job._create_sp_jobs()
         assert [child.label for child in job.protonated_sp_jobs] == [
-            "1a_pka_HA_sp"
+            "1a_pka_HA_sp_c1",
+            "1a_pka_HA_sp_c2",
+            "1a_pka_HA_sp_c3",
         ]
         assert [child.label for child in job.conjugate_base_sp_jobs] == [
-            "1a_pka_A_sp"
+            "1a_pka_A_sp_c1",
+            "1a_pka_A_sp_c2",
+            "1a_pka_A_sp_c3",
         ]
 
     @pytest.mark.parametrize("backend", ["gaussian", "orca"])
@@ -857,6 +874,309 @@ class TestPkaCrestSampling:
         )
         assert result.exit_code != 0
         assert "-N/--num-conformers requires --sampling" in result.output
+
+
+def _conformer_index(filename):
+    suffix = Path(filename).stem.rsplit("_c", 1)[-1]
+    if suffix.isdigit() and suffix != Path(filename).stem:
+        return int(suffix)
+    return 1
+
+
+def _conformer_mock_energies(filename):
+    """Return distinct J/mol energies so each conformer changes G_soln.
+
+    HA and A- use different conformer slopes so the ensemble ΔG is not the
+    same as the conformer-1 ΔG.
+    """
+    name = Path(filename).name
+    index = _conformer_index(name)
+    slope = 8000.0 if "_HA_" in name else 400.0
+    electronic = -1.0e6 - index * slope
+    if "_sp" in name:
+        electronic -= 5.0e4
+    return electronic, electronic + 1000.0
+
+
+def _install_conformer_thermochemistry(monkeypatch):
+    class _FakeThermochemistry:
+        def __init__(self, filename, **kwargs):
+            electronic, qh = _conformer_mock_energies(filename)
+            self.electronic_energy = electronic
+            self.qrrho_gibbs_free_energy = qh
+            self.zero_point_energy = electronic
+            self.enthalpy = electronic
+            self.qrrho_enthalpy = qh
+            self.gibbs_free_energy = qh
+
+    monkeypatch.setattr(
+        "chemsmart.cli.pka.Thermochemistry",
+        _FakeThermochemistry,
+    )
+
+
+def _touch_output(path, program):
+    signature = (
+        "Gaussian, Inc.\n" if program == "gaussian" else "* O   R   C   A *\n"
+    )
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(signature)
+
+
+class TestPkaEnsembleJobOutputs:
+    """Job API, analyze, and batch-analyze share one ensemble file set."""
+
+    def test_conformer_paths_sort_c10_after_c9(self):
+        from chemsmart.utils.datasets import output_paths_in_conformer_order
+
+        class _Job:
+            def __init__(self, outputfile):
+                self.outputfile = outputfile
+
+        ordered = output_paths_in_conformer_order(
+            [
+                _Job("mol_HA_opt_c10.log"),
+                _Job("mol_HA_opt_c2.log"),
+                _Job("mol_HA_opt_c9.log"),
+                _Job("mol_HA_opt_c1.log"),
+            ]
+        )
+        assert [Path(path).name for path in ordered] == [
+            "mol_HA_opt_c1.log",
+            "mol_HA_opt_c2.log",
+            "mol_HA_opt_c9.log",
+            "mol_HA_opt_c10.log",
+        ]
+
+    def test_mismatched_gas_and_sp_counts_name_the_species(self):
+        from chemsmart.utils.datasets import collect_pka_species_outputs
+
+        class _Job:
+            def __init__(self, outputfile):
+                self.outputfile = outputfile
+
+        with pytest.raises(
+            ValueError,
+            match=r"HA gas-phase and solvent file counts must match \(2 vs 1\)",
+        ):
+            collect_pka_species_outputs(
+                ha_opt_jobs=[_Job("ha_c1.log"), _Job("ha_c2.log")],
+                a_opt_jobs=[_Job("a_c1.log")],
+                ha_sp_jobs=[_Job("ha_sp_c1.log")],
+                a_sp_jobs=[_Job("a_sp_c1.log")],
+            )
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_one_conformer_paths_stay_legacy(
+        self,
+        backend,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+        monkeypatch,
+    ):
+        from chemsmart.cli.pka import compute_pka
+        from chemsmart.io.molecules.structure import Molecule
+
+        _install_conformer_thermochemistry(monkeypatch)
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(backend, mol, jobrunner, label="legacy_pka")
+        monkeypatch.setattr(job, "_opt_jobs_are_complete", lambda: True)
+        files = job._pka_output_files()
+        assert list(files) == ["HA", "A-"]
+        for species in ("HA", "A-"):
+            assert len(files[species]["gas"]) == 1
+            assert len(files[species]["solv"]) == 1
+            assert "_c" not in Path(files[species]["gas"][0]).name
+            assert "_c" not in Path(files[species]["solv"][0]).name
+
+        job_result = job.print_thermochemistry()
+        analyzed = compute_pka(
+            ha_gas_file=files["HA"]["gas"][0],
+            a_gas_file=files["A-"]["gas"][0],
+            ha_solv_file=files["HA"]["solv"][0],
+            a_solv_file=files["A-"]["solv"][0],
+            scheme="direct",
+        )
+        assert job_result["pKa"] == pytest.approx(analyzed["pKa"])
+        assert job_result["num_conformers_HA"] == 1
+        thermo = job.compute_thermochemistry()
+        assert isinstance(thermo["HA"], dict)
+        assert thermo["HA"]["name"] == "HA"
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_three_conformer_job_passes_three_gas_and_sp_paths(
+        self,
+        backend,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            backend,
+            mol,
+            jobrunner,
+            sampling=True,
+            num_conformers=3,
+            label="acid_pka",
+        )
+        files = job._pka_output_files()
+        for species, gas_tag, solv_tag in (
+            ("HA", "HA_opt", "HA_sp"),
+            ("A-", "A_opt", "A_sp"),
+        ):
+            gas_names = [Path(path).name for path in files[species]["gas"]]
+            solv_names = [Path(path).name for path in files[species]["solv"]]
+            assert gas_names == [
+                f"acid_pka_{gas_tag}_c1.{_output_ext(backend)}",
+                f"acid_pka_{gas_tag}_c2.{_output_ext(backend)}",
+                f"acid_pka_{gas_tag}_c3.{_output_ext(backend)}",
+            ]
+            assert solv_names == [
+                f"acid_pka_{solv_tag}_c1.{_output_ext(backend)}",
+                f"acid_pka_{solv_tag}_c2.{_output_ext(backend)}",
+                f"acid_pka_{solv_tag}_c3.{_output_ext(backend)}",
+            ]
+
+    @pytest.mark.parametrize("backend", ["gaussian", "orca"])
+    def test_reference_ensembles_include_all_four_species(
+        self,
+        backend,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        orca_jobrunner_no_scratch,
+    ):
+        from chemsmart.io.molecules.structure import Molecule
+
+        jobrunner = {
+            "gaussian": gaussian_jobrunner_no_scratch,
+            "orca": orca_jobrunner_no_scratch,
+        }[backend]
+        reference = temporary_working_dir / "ref_acid.xyz"
+        reference.write_text("2\nref\nO 0.0 0.0 0.0\nH 0.0 0.0 1.0\n")
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            backend,
+            mol,
+            jobrunner,
+            sampling=True,
+            num_conformers=3,
+            label="acid_pka",
+            scheme="proton exchange",
+            reference_file=str(reference),
+            reference_proton_index=2,
+        )
+        files = job._pka_output_files()
+        assert list(files) == ["HA", "A-", "HRef", "Ref-"]
+        for species in files:
+            assert len(files[species]["gas"]) == 3
+            assert len(files[species]["solv"]) == 3
+            gas_indexes = [
+                Path(path).stem.rsplit("_c", 1)[1]
+                for path in files[species]["gas"]
+            ]
+            solv_indexes = [
+                Path(path).stem.rsplit("_c", 1)[1]
+                for path in files[species]["solv"]
+            ]
+            assert gas_indexes == ["1", "2", "3"]
+            assert solv_indexes == ["1", "2", "3"]
+
+    def test_job_analyze_and_batch_analyze_share_ensemble_pka(
+        self,
+        temporary_working_dir,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        monkeypatch,
+    ):
+        from chemsmart.cli.pka import compute_pka
+        from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.utils.datasets import PKaOutputTable
+
+        _install_conformer_thermochemistry(monkeypatch)
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            "gaussian",
+            mol,
+            gaussian_jobrunner_no_scratch,
+            sampling=True,
+            num_conformers=3,
+            label="acid_pka",
+        )
+        monkeypatch.setattr(job, "_opt_jobs_are_complete", lambda: True)
+        files = job._pka_output_files()
+        for species in files:
+            for path in files[species]["gas"] + files[species]["solv"]:
+                _touch_output(path, "gaussian")
+
+        job_result = job.print_thermochemistry()
+        analyzed = compute_pka(
+            ha_gas_file=files["HA"]["gas"],
+            a_gas_file=files["A-"]["gas"],
+            ha_solv_file=files["HA"]["solv"],
+            a_solv_file=files["A-"]["solv"],
+            scheme="direct",
+        )
+        first_only = compute_pka(
+            ha_gas_file=files["HA"]["gas"][0],
+            a_gas_file=files["A-"]["gas"][0],
+            ha_solv_file=files["HA"]["solv"][0],
+            a_solv_file=files["A-"]["solv"][0],
+            scheme="direct",
+        )
+
+        table_path = temporary_working_dir / "outputs.csv"
+        table_path.write_text("basename\nacid\n")
+        table = PKaOutputTable.from_file(str(table_path))
+        table.prepare(check_file_exists=True, scheme="direct")
+        batch_results = table.run_pka(
+            output_cls=compute_pka,
+            scheme="direct",
+        )
+
+        assert job_result["num_conformers_HA"] == 3
+        assert job_result["num_conformers_A"] == 3
+        assert job_result["pKa"] == pytest.approx(analyzed["pKa"])
+        assert batch_results[0]["pKa"] == pytest.approx(job_result["pKa"])
+        assert job_result["pKa"] != pytest.approx(first_only["pKa"])
+
+        thermo = job.compute_thermochemistry()
+        assert len(thermo["HA"]) == 3
+        assert len(thermo["A"]) == 3
+
+        runner = CliRunner()
+        cli_result = runner.invoke(
+            run,
+            [
+                "pka",
+                "-s",
+                "direct",
+                "analyze",
+                "-ha",
+                files["HA"]["gas"][0],
+            ],
+        )
+        assert cli_result.exit_code == 0, cli_result.output
+        assert f"{job_result['pKa']:.2f}" in cli_result.output
+
+
+def _output_ext(backend):
+    return "log" if backend == "gaussian" else "out"
 
 
 class TestPkbConversion:

@@ -4,8 +4,8 @@ ORCA pKa calculation job implementation.
 This module provides the ORCApKaJob class for performing pKa
 calculations using ORCA with a proper thermodynamic cycle:
 1. Optional CREST conformational sampling of HA, A-, and any reference acid
-2. Gas phase optimization + frequency for both HA and A-
-3. Solution phase single point for both HA and A- at the same level of theory
+2. Gas phase optimization + frequency for each selected conformer of HA and A-
+3. Solution phase single point for each optimized conformer at the same level of theory
 
 Using the same level of theory ensures proper error cancellation for
 solvation free energy calculations.
@@ -14,16 +14,13 @@ solvation free energy calculations.
 import logging
 import os
 
+from chemsmart.cli.pka import build_pka_crest_job, select_crest_conformers
 from chemsmart.jobs.orca.job import ORCAJob
 from chemsmart.jobs.orca.opt import ORCAOptJob
 from chemsmart.jobs.orca.settings import ORCApKaJobSettings
 from chemsmart.jobs.orca.singlepoint import ORCASinglePointJob
-from chemsmart.jobs.pka_sampling import (
-    build_pka_crest_job,
-    pka_subjob_label,
-    select_crest_conformers,
-)
 from chemsmart.jobs.runner import decide_phase_transition, run_phase_jobs
+from chemsmart.utils.datasets import pka_job_species_outputs, pka_subjob_label
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +39,8 @@ class ORCApKaJob(ORCAJob):
     6. (Optional) Same for reference acid Href and Ref-
 
     When sampling is enabled, each sampled species yields N gas-phase
-    opt+freq jobs for the N lowest CREST conformers and one solvent SP
-    job from the lowest conformer's optimized geometry. Parent completion
-    requires DFT opt+SP only.
+    opt+freq jobs and N solvent single-point jobs, one pair per conformer.
+    Parent completion requires DFT opt+SP only.
 
     Attributes:
         TYPE (str): Job type identifier ('orcapka').
@@ -383,19 +379,19 @@ class ORCApKaJob(ORCAJob):
         return jobs
 
     def _create_sp_jobs(self):
-        """Create solution phase SP jobs from the lowest optimized conformer."""
+        """Create one solution-phase SP job per optimized conformer."""
         protonated_sp_settings, conjugate_base_sp_settings = (
             self.settings._create_solution_phase_sp_settings(self.molecule)
         )
         self.protonated_sp_jobs = self._make_species_sp_jobs(
-            self.protonated_opt_jobs[:1],
+            self.protonated_opt_jobs,
             protonated_sp_settings,
             "HA",
             opt_legacy_label=self.label,
             sp_legacy_label=f"{self.label}_sp",
         )
         self.conjugate_base_sp_jobs = self._make_species_sp_jobs(
-            self.conjugate_base_opt_jobs[:1],
+            self.conjugate_base_opt_jobs,
             conjugate_base_sp_settings,
             "A",
             opt_legacy_label=f"{self.label}_cb",
@@ -473,18 +469,18 @@ class ORCApKaJob(ORCAJob):
         return jobs
 
     def _create_ref_sp_jobs(self):
-        """Create reference solution phase SP jobs from the lowest conformer."""
+        """Create one reference solvent SP job per optimized conformer."""
         ref_acid_sp_settings, ref_cb_sp_settings = (
             self.settings.reference_pair_sp_job_settings()
         )
         self.ref_acid_sp_jobs = self._make_ref_sp_jobs(
-            self.ref_acid_opt_jobs[:1],
+            self.ref_acid_opt_jobs,
             ref_acid_sp_settings,
             f"{self._ref_basename}_sp",
             opt_legacy_label=self._ref_basename,
         )
         self.ref_conjugate_base_sp_jobs = self._make_ref_sp_jobs(
-            self.ref_conjugate_base_opt_jobs[:1],
+            self.ref_conjugate_base_opt_jobs,
             ref_cb_sp_settings,
             f"{self._ref_conjugate_base_label}_sp",
             opt_legacy_label=self._ref_conjugate_base_label,
@@ -811,15 +807,12 @@ class ORCApKaJob(ORCAJob):
         return all(job.is_complete() for job in self.ref_sp_jobs)
 
     def _pka_output_files(self):
-        """Return (ha_file, a_file, href_file, ref_file) output-path tuple."""
-        ha_file = self.protonated_job.outputfile
-        a_file = self.conjugate_base_job.outputfile
-        href_file = None
-        ref_file = None
-        if self.has_reference_jobs and self._ref_opt_jobs_are_complete():
-            href_file = self.ref_acid_job.outputfile
-            ref_file = self.ref_conjugate_base_job.outputfile
-        return ha_file, a_file, href_file, ref_file
+        """Return gas and solvent output paths for every pKa species.
+
+        Each species maps to ``{"gas": [...], "solv": [...]}`` in conformer
+        order. Reference species are included when a reference acid is set.
+        """
+        return pka_job_species_outputs(self)
 
     def compute_thermochemistry(self):
         """Compute and return thermochemistry results for all species."""
@@ -831,13 +824,13 @@ class ORCApKaJob(ORCAJob):
                 "Run the pKa jobs first using job.run()."
             )
 
-        ha_file, a_file, href_file, ref_file = self._pka_output_files()
+        files = self._pka_output_files()
 
         return ORCApKaOutput.compute_pka_thermochemistry(
-            ha_file=ha_file,
-            a_file=a_file,
-            href_file=href_file,
-            ref_file=ref_file,
+            ha_file=files["HA"]["gas"],
+            a_file=files["A-"]["gas"],
+            href_file=files["HRef"]["gas"] if "HRef" in files else None,
+            ref_file=files["Ref-"]["gas"] if "Ref-" in files else None,
             temperature=self.settings.temperature,
             concentration=self.settings.concentration,
             pressure=self.settings.pressure,
@@ -856,23 +849,17 @@ class ORCApKaJob(ORCAJob):
                 "Run the pKa jobs first using job.run()."
             )
 
-        ha_gas, a_gas, href_gas, ref_gas = self._pka_output_files()
-        ha_solv = self.protonated_sp_job.outputfile
-        a_solv = self.conjugate_base_sp_job.outputfile
-        href_solv = ref_solv = None
-        if self.has_reference_jobs:
-            href_solv = self.ref_acid_sp_job.outputfile
-            ref_solv = self.ref_conjugate_base_sp_job.outputfile
+        files = self._pka_output_files()
 
-        ORCApKaOutput.print_pka_summary(
-            ha_gas_file=ha_gas,
-            a_gas_file=a_gas,
-            href_gas_file=href_gas,
-            ref_gas_file=ref_gas,
-            ha_solv_file=ha_solv,
-            a_solv_file=a_solv,
-            href_solv_file=href_solv,
-            ref_solv_file=ref_solv,
+        return ORCApKaOutput.print_pka_summary(
+            ha_gas_file=files["HA"]["gas"],
+            a_gas_file=files["A-"]["gas"],
+            href_gas_file=files["HRef"]["gas"] if "HRef" in files else None,
+            ref_gas_file=files["Ref-"]["gas"] if "Ref-" in files else None,
+            ha_solv_file=files["HA"]["solv"],
+            a_solv_file=files["A-"]["solv"],
+            href_solv_file=files["HRef"]["solv"] if "HRef" in files else None,
+            ref_solv_file=files["Ref-"]["solv"] if "Ref-" in files else None,
             pka_reference=self.settings.reference_pka,
             temperature=self.settings.temperature,
             concentration=self.settings.concentration,
@@ -880,7 +867,7 @@ class ORCApKaJob(ORCAJob):
             cutoff_entropy_grimme=self.settings.cutoff_entropy_grimme,
             cutoff_enthalpy=self.settings.cutoff_enthalpy,
             scheme=self.settings.scheme,
-            delta_G_proton=getattr(self.settings, "delta_G_proton", None),
+            delta_G_proton=self.settings.delta_G_proton,
             pkb=self.settings.pkb,
             pks=self.settings.pks,
             solvent_id=self.settings.solvent_id,
