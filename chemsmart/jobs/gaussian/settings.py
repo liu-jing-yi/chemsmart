@@ -1020,6 +1020,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             optimize per sampled species. Must be >= 1. Default is 1.
         crest_project (str): Optional CREST project YAML name (the same ``-p``
             name used for Gaussian). Used when sampling is enabled.
+        reference_pka (float): Experimental pKa of the reference acid.
+            Left unset for Gaussian jobs.
 
     References:
         Kelly CP, Cramer CJ, Truhlar DG (2006) Aqueous solvation free
@@ -1059,6 +1061,8 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id="water"
         )
     """
+
+    reference_pka = None
 
     def __init__(
         self,

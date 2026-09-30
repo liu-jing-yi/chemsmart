@@ -1121,6 +1121,49 @@ class TestPkaEnsembleJobOutputs:
             assert gas_indexes == ["1", "2", "3"]
             assert solv_indexes == ["1", "2", "3"]
 
+    def test_gaussian_sp_phase_rebuilds_after_early_output_collection(
+        self,
+        single_molecule_xyz_file,
+        gaussian_jobrunner_no_scratch,
+        monkeypatch,
+    ):
+        """An early path collection must not freeze solvent jobs to the input geometry."""
+        import numpy as np
+
+        from chemsmart.io.molecules.structure import Molecule
+
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        job = _direct_pka_job(
+            "gaussian", mol, gaussian_jobrunner_no_scratch, label="acid_pka"
+        )
+        input_positions = np.array(job.protonated_sp_job.molecule.positions)
+        job._pka_output_files()
+        assert job.protonated_sp_job.molecule.positions == pytest.approx(
+            input_positions
+        )
+
+        shifted = mol.copy()
+        shifted.positions = input_positions + np.array([1.0, 0.0, 0.0])
+
+        class _Optimized:
+            normal_termination = True
+            molecule = shifted
+
+        for opt_job in job.opt_jobs:
+            opt_job.is_complete = lambda: True
+            opt_job._output = lambda: _Optimized()
+
+        monkeypatch.setattr(
+            "chemsmart.jobs.chain.pka.run_phase_jobs", lambda **kwargs: None
+        )
+        job._run_sp_jobs()
+        assert job.protonated_sp_job.molecule.positions == pytest.approx(
+            shifted.positions
+        )
+        assert not np.allclose(
+            job.protonated_sp_job.molecule.positions, input_positions
+        )
+
     def test_job_analyze_and_batch_analyze_share_ensemble_pka(
         self,
         temporary_working_dir,
@@ -3594,7 +3637,7 @@ class TestPKa:
                 captured["sp_labels"].append(child_job.label)
 
         monkeypatch.setattr(
-            "chemsmart.jobs.orca.pka.run_phase_jobs",
+            "chemsmart.jobs.chain.pka.run_phase_jobs",
             _fake_run_phase_jobs,
         )
         monkeypatch.setattr(job, "_run_opt_jobs", lambda: None)
@@ -3680,7 +3723,7 @@ class TestPKa:
                 captured["labels"].append(child_job.label)
 
         monkeypatch.setattr(
-            "chemsmart.jobs.orca.pka.run_phase_jobs",
+            "chemsmart.jobs.chain.pka.run_phase_jobs",
             _fake_run_phase_jobs,
         )
 
