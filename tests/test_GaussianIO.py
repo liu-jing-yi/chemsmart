@@ -3233,7 +3233,7 @@ class TestGaussian16pKaOutput:
         gaussian_pKa_A_single_point_outputfile,
     ):
         """Omitted -dG uses the T-dependent aqueous G_soln(H+) default."""
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             aqueous_proton_solution_free_energy_kcal_mol,
         )
 

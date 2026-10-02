@@ -1206,7 +1206,7 @@ class PKaOutputTable:
         pks=None,
     ):
         """Return the formatted batch pKa summary table shown on stdout."""
-        from chemsmart.cli.pka import pks_to_pkb, resolve_pkb_reporting
+        from chemsmart.analysis.pka import pks_to_pkb, resolve_pkb_reporting
 
         display_scheme = scheme
         if display_scheme is None and results:

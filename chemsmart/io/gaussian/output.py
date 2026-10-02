@@ -3372,7 +3372,7 @@ class Gaussian16pKaOutput(Gaussian16Output):
         energy_units="hartree",
     ):
         """Compute thermochemistry for pKa species (HA, A-, HRef, Ref-)."""
-        from chemsmart.cli.pka import compute_pka_thermochemistry
+        from chemsmart.analysis.pka import compute_pka_thermochemistry
 
         return compute_pka_thermochemistry(
             ha_file=ha_file,
@@ -3417,7 +3417,7 @@ class Gaussian16pKaOutput(Gaussian16Output):
             ΔG_diss = G_soln(A⁻) + G_soln(H⁺) - G_soln(HA)
             pKa = ΔG_diss / (2.303 × R × T)
         """
-        from chemsmart.cli.pka import compute_pka
+        from chemsmart.analysis.pka import compute_pka
 
         return compute_pka(
             ha_gas_file=ha_gas_file,
@@ -3463,7 +3463,9 @@ class Gaussian16pKaOutput(Gaussian16Output):
         solvent_id=None,
     ):
         """Print a formatted summary of a dual-level pKa calculation."""
-        from chemsmart.cli.pka import print_pka_summary as _print_pka_summary
+        from chemsmart.analysis.pka import (
+            print_pka_summary as _print_pka_summary,
+        )
 
         return _print_pka_summary(
             ha_gas_file=ha_gas_file,

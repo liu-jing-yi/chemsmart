@@ -3860,7 +3860,7 @@ class ORCApKaOutput(ORCAOutput):
         energy_units="hartree",
     ):
         """Compute thermochemistry for pKa species (HA, A-, HRef, Ref-)."""
-        from chemsmart.cli.pka import compute_pka_thermochemistry
+        from chemsmart.analysis.pka import compute_pka_thermochemistry
 
         return compute_pka_thermochemistry(
             ha_file=ha_file,
@@ -3900,7 +3900,7 @@ class ORCApKaOutput(ORCAOutput):
         delta_G_proton=None,
     ):
         """Compute pKa using a dual-level thermodynamic cycle."""
-        from chemsmart.cli.pka import compute_pka
+        from chemsmart.analysis.pka import compute_pka
 
         return compute_pka(
             ha_gas_file=ha_gas_file,
@@ -3946,7 +3946,9 @@ class ORCApKaOutput(ORCAOutput):
         solvent_id=None,
     ):
         """Print formatted pKa summary."""
-        from chemsmart.cli.pka import print_pka_summary as _print_pka_summary
+        from chemsmart.analysis.pka import (
+            print_pka_summary as _print_pka_summary,
+        )
 
         return _print_pka_summary(
             ha_gas_file=ha_gas_file,

@@ -7,15 +7,11 @@ for each selected conformer. Child jobs are GaussianOptJob and
 GaussianSinglePointJob.
 """
 
-import logging
-
 from chemsmart.jobs.chain.pka import PKaJob
 from chemsmart.jobs.gaussian.job import GaussianJob
 from chemsmart.jobs.gaussian.opt import GaussianOptJob
 from chemsmart.jobs.gaussian.settings import GaussianpKaJobSettings
 from chemsmart.jobs.gaussian.singlepoint import GaussianSinglePointJob
-
-logger = logging.getLogger(__name__)
 
 
 class GaussianpKaJob(PKaJob, GaussianJob):
@@ -91,32 +87,3 @@ class GaussianpKaJob(PKaJob, GaussianJob):
             return self.conjugate_base_job.molecule
         _, conj_mol = self.settings.conjugate_pair_molecules(self.molecule)
         return conj_mol
-
-
-class GaussianpKaAnalyzeJob(GaussianpKaJob):
-    """Gaussian job class for analyzing pKa calculation results."""
-
-    TYPE = "g16pka_analyze"
-
-    def __init__(self, input_file, **kwargs):
-        """
-        Initialize the analyze job.
-
-        Args:
-            input_file (Molecule): The molecule object.
-            **kwargs: Additional arguments.
-        """
-        super().__init__(molecule=input_file, **kwargs)
-
-    def _run(self, **kwargs):
-        """Run the analysis (print thermochemistry)."""
-        try:
-            self.print_thermochemistry()
-        except Exception as e:
-            logger.error(f"Analysis failed for {self.label}: {e}")
-
-
-class GaussianpKaThermoJob(GaussianpKaAnalyzeJob):
-    """Gaussian job class for computing pKa thermochemistry (alias for analyze)."""
-
-    TYPE = "g16pka_thermo"

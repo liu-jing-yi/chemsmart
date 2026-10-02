@@ -9,7 +9,10 @@ and ``_crest_job_label``.
 import logging
 import os
 
-from chemsmart.cli.pka import build_pka_crest_job, select_crest_conformers
+from chemsmart.jobs.chain.sampling import (
+    build_pka_crest_job,
+    select_crest_conformers,
+)
 from chemsmart.jobs.runner import decide_phase_transition, run_phase_jobs
 from chemsmart.utils.datasets import pka_job_species_outputs, pka_subjob_label
 

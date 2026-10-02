@@ -148,7 +148,7 @@ def _install_fake_thermochemistry(monkeypatch, constructed=None):
             super().__init__(filename, **kwargs)
 
     monkeypatch.setattr(
-        "chemsmart.cli.pka.Thermochemistry",
+        "chemsmart.analysis.pka.Thermochemistry",
         _TrackingFakeThermochemistry,
     )
     return constructed
@@ -357,7 +357,7 @@ def _make_crest_search_job(molecule, jobrunner, label="ha_crest"):
 
 class TestAqueousProtonSolutionFreeEnergy:
     def test_value_at_298_15_k(self):
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             aqueous_proton_solution_free_energy_kcal_mol,
         )
 
@@ -367,7 +367,7 @@ class TestAqueousProtonSolutionFreeEnergy:
     def test_temperature_dependence_of_gas_and_standard_state_terms(self):
         import math
 
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             aqueous_proton_solution_free_energy_kcal_mol,
         )
         from chemsmart.utils.constants import R, atm_to_pa, energy_conversion
@@ -408,7 +408,7 @@ class TestAqueousProtonSolutionFreeEnergy:
     ):
         files = _build_outputs(tmp_path, "gaussian")
         _install_fake_thermochemistry(monkeypatch)
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             aqueous_proton_solution_free_energy_kcal_mol,
             compute_pka,
         )
@@ -451,7 +451,7 @@ class TestPkaEnsembleAnalysis:
     def test_ensemble_effective_free_energy_two_equal_g(self):
         import math
 
-        from chemsmart.cli.pka import ensemble_effective_free_energy
+        from chemsmart.analysis.pka import ensemble_effective_free_energy
         from chemsmart.utils.constants import R, energy_conversion
 
         g = -1.0
@@ -461,7 +461,7 @@ class TestPkaEnsembleAnalysis:
         assert g_eff == pytest.approx(g - rt_hartree * math.log(2))
 
     def test_ensemble_effective_free_energy_single_value_unchanged(self):
-        from chemsmart.cli.pka import ensemble_effective_free_energy
+        from chemsmart.analysis.pka import ensemble_effective_free_energy
 
         assert ensemble_effective_free_energy([-0.5], 298.15) == pytest.approx(
             -0.5
@@ -608,7 +608,7 @@ class TestPkaCrestSampling:
     def test_select_crest_conformers_waits_when_output_missing(
         self, temporary_working_dir, water_molecule, crest_jobrunner_no_scratch
     ):
-        from chemsmart.cli.pka import select_crest_conformers
+        from chemsmart.jobs.chain.sampling import select_crest_conformers
 
         crest_job = _make_crest_search_job(
             water_molecule, crest_jobrunner_no_scratch
@@ -624,7 +624,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.cli.pka import select_crest_conformers
+        from chemsmart.jobs.chain.sampling import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -648,7 +648,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.cli.pka import select_crest_conformers
+        from chemsmart.jobs.chain.sampling import select_crest_conformers
 
         water_molecule.charge = 1
         water_molecule.multiplicity = 1
@@ -672,7 +672,7 @@ class TestPkaCrestSampling:
     ):
         import logging
 
-        from chemsmart.cli.pka import select_crest_conformers
+        from chemsmart.jobs.chain.sampling import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -700,8 +700,8 @@ class TestPkaCrestSampling:
     ):
         import shutil
 
-        from chemsmart.cli.pka import select_crest_conformers
         from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.jobs.chain.sampling import select_crest_conformers
 
         water_molecule.charge = 0
         water_molecule.multiplicity = 1
@@ -934,7 +934,7 @@ def _install_conformer_thermochemistry(monkeypatch):
             self.gibbs_free_energy = qh
 
     monkeypatch.setattr(
-        "chemsmart.cli.pka.Thermochemistry",
+        "chemsmart.analysis.pka.Thermochemistry",
         _FakeThermochemistry,
     )
 
@@ -1250,14 +1250,14 @@ class TestPkbConversion:
     """pKb = pKs − pKa conversion for analysis and summaries."""
 
     def test_pks_to_pkb_arithmetic(self):
-        from chemsmart.cli.pka import pks_to_pkb
+        from chemsmart.analysis.pka import pks_to_pkb
 
         assert pks_to_pkb(4.5, 14.0) == pytest.approx(9.5)
         assert pks_to_pkb(6.75, 16.7) == pytest.approx(9.95)
         assert pks_to_pkb(10.0, 14.0) == pytest.approx(4.0)
 
     def test_resolve_pkb_reporting_defaults(self):
-        from chemsmart.cli.pka import DEFAULT_PKS, resolve_pkb_reporting
+        from chemsmart.analysis.pka import DEFAULT_PKS, resolve_pkb_reporting
 
         assert resolve_pkb_reporting() == (False, None, False)
         assert resolve_pkb_reporting(pkb=False, pks=None) == (
@@ -1296,7 +1296,7 @@ class TestPkbConversion:
     def test_warn_if_default_pks_non_aqueous(self, caplog):
         import logging
 
-        from chemsmart.cli.pka import warn_if_default_pks_non_aqueous
+        from chemsmart.analysis.pka import warn_if_default_pks_non_aqueous
 
         with caplog.at_level(logging.WARNING):
             warn_if_default_pks_non_aqueous(True, "acetonitrile")
@@ -1700,11 +1700,11 @@ class TestPKa:
                 pass
 
         monkeypatch.setattr(
-            "chemsmart.cli.pka.Thermochemistry",
+            "chemsmart.analysis.pka.Thermochemistry",
             _MissingScfThermochemistry,
         )
 
-        from chemsmart.cli.pka import pka_solvent_scf_energy
+        from chemsmart.analysis.pka import pka_solvent_scf_energy
 
         with pytest.raises(ValueError, match="Could not extract SCF energy"):
             pka_solvent_scf_energy(str(tmp_path / "missing.out"))
@@ -1718,11 +1718,11 @@ class TestPKa:
                 pass
 
         monkeypatch.setattr(
-            "chemsmart.cli.pka.Thermochemistry",
+            "chemsmart.analysis.pka.Thermochemistry",
             _MissingQhThermochemistry,
         )
 
-        from chemsmart.cli.pka import pka_gas_phase_data
+        from chemsmart.analysis.pka import pka_gas_phase_data
 
         with pytest.raises(
             ValueError,
@@ -3910,7 +3910,7 @@ def _forbid_pka_job_construction(monkeypatch):
         ("chemsmart.cli.gaussian.pka", "GaussianpKaJob"),
         ("chemsmart.jobs.gaussian.pka", "GaussianpKaJob"),
         ("chemsmart.jobs.orca.pka", "ORCApKaJob"),
-        ("chemsmart.cli.pka", "build_pka_crest_job"),
+        ("chemsmart.jobs.chain.sampling", "build_pka_crest_job"),
     ):
         module = importlib.import_module(module_name)
         monkeypatch.setattr(module, attribute, _reject)
@@ -4237,7 +4237,7 @@ class TestPkaSeminarValidation:
         assert "constructor called" not in result.output
 
     def test_output_errors_name_species_and_conformer(self, monkeypatch):
-        from chemsmart.cli.pka import _species_solution_free_energy
+        from chemsmart.analysis.pka import _species_solution_free_energy
 
         def _fail_gas(filepath, **kwargs):
             if str(filepath).endswith("_c2.log"):
@@ -4247,9 +4247,11 @@ class TestPkaSeminarValidation:
                 )
             return -1.0, 0.01
 
-        monkeypatch.setattr("chemsmart.cli.pka.pka_gas_phase_data", _fail_gas)
         monkeypatch.setattr(
-            "chemsmart.cli.pka.pka_solvent_scf_energy",
+            "chemsmart.analysis.pka.pka_gas_phase_data", _fail_gas
+        )
+        monkeypatch.setattr(
+            "chemsmart.analysis.pka.pka_solvent_scf_energy",
             lambda filepath, **kwargs: -1.1,
         )
         with pytest.raises(ValueError, match=r"HA c2: File '.*_c2.log'"):
@@ -4268,7 +4270,9 @@ class TestPkaSeminarValidation:
                 "imaginary frequencies."
             )
 
-        monkeypatch.setattr("chemsmart.cli.pka.pka_gas_phase_data", _imaginary)
+        monkeypatch.setattr(
+            "chemsmart.analysis.pka.pka_gas_phase_data", _imaginary
+        )
         with pytest.raises(
             ValueError, match=r"A- conformer 1: Invalid geometry"
         ):
@@ -4283,7 +4287,7 @@ class TestPkaSeminarValidation:
     def test_inconsistent_conformer_temperatures_warn(self, caplog):
         import logging
 
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             _warn_inconsistent_conformer_temperatures,
         )
 

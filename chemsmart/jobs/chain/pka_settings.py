@@ -86,7 +86,7 @@ class PKaMoleculeSettingsMixin:
             self.reference_conjugate_base_charge = None
             self.reference_conjugate_base_multiplicity = None
 
-        from chemsmart.cli.pka import (
+        from chemsmart.analysis.pka import (
             resolve_pkb_reporting,
             warn_if_default_pks_non_aqueous,
             warn_if_non_aqueous_direct_proton_default,
