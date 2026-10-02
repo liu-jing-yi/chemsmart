@@ -104,11 +104,6 @@ class ORCApKaJob(PKaJob, ORCAJob):
     def settings_class(cls):
         return ORCApKaJobSettings
 
-    def _pka_output_class(self):
-        from chemsmart.io.orca.output import ORCApKaOutput
-
-        return ORCApKaOutput
-
     @property
     def protonated_molecule(self):
         """Get the protonated molecule (HA)."""

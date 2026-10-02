@@ -1,7 +1,7 @@
 """Shared pKa phase machine for program-specific job subclasses.
 
-Subclasses supply ``opt_job_class``, ``sp_job_class``, and
-``_pka_output_class``. Optional hooks are ``_bind_subjob``,
+Subclasses supply ``opt_job_class`` and ``sp_job_class``. Optional hooks
+are ``_bind_subjob``,
 ``_sync_subjob_folders``, ``_subjob_label``, ``_subjob_legacy_label``,
 and ``_crest_job_label``.
 """
@@ -79,12 +79,6 @@ class PKaJob:
 
         self.has_reference_jobs = bool(self.settings.has_reference_file)
         self._prepare_pka_jobs()
-
-    def _pka_output_class(self):
-        """Return the output class that computes pKa thermochemistry."""
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _pka_output_class()."
-        )
 
     def _bind_subjob(self, job, legacy_label=None):
         """Attach program-specific output lookup to a child job."""
@@ -602,9 +596,11 @@ class PKaJob:
 
     def compute_thermochemistry(self):
         """Return thermochemistry for every pKa species in the job."""
+        from chemsmart.analysis.pka import compute_pka_thermochemistry
+
         self._require_completed_opt_jobs("compute thermochemistry")
         files = self._pka_output_files()
-        return self._pka_output_class().compute_pka_thermochemistry(
+        return compute_pka_thermochemistry(
             ha_file=files["HA"]["gas"],
             a_file=files["A-"]["gas"],
             href_file=files["HRef"]["gas"] if "HRef" in files else None,
@@ -619,9 +615,11 @@ class PKaJob:
 
     def print_thermochemistry(self):
         """Print the pKa summary and return the result dictionary."""
+        from chemsmart.analysis.pka import print_pka_summary
+
         self._require_completed_opt_jobs("print thermochemistry")
         files = self._pka_output_files()
-        return self._pka_output_class().print_pka_summary(
+        return print_pka_summary(
             ha_gas_file=files["HA"]["gas"],
             a_gas_file=files["A-"]["gas"],
             href_gas_file=files["HRef"]["gas"] if "HRef" in files else None,

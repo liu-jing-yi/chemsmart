@@ -2360,6 +2360,13 @@ class TestPKa:
         with pytest.raises(ValueError, match="num_conformers must be >= 1"):
             ORCApKaJobSettings(proton_index=10, num_conformers=0)
 
+        with pytest.raises(ValueError, match="Unknown pKa shared options"):
+            GaussianpKaJobSettings.build_gaussian_pka_settings(
+                10,
+                {**shared, "not_a_pka_option": 1},
+                GaussianJobSettings(functional="B3LYP", basis="6-31G*"),
+            )
+
     def test_validate_reference_options_requires_reference_for_proton_exchange(
         self, tmp_path
     ):

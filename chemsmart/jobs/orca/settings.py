@@ -14,7 +14,10 @@ import os
 import re
 
 from chemsmart.io.orca import ORCA_ALL_SOLVENT_MODELS
-from chemsmart.jobs.chain.pka_settings import PKaMoleculeSettingsMixin
+from chemsmart.jobs.chain.pka_settings import (
+    PKaMoleculeSettingsMixin,
+    pka_kwargs_from_shared,
+)
 from chemsmart.jobs.settings import MolecularJobSettings
 from chemsmart.utils.utils import (
     deduplicate_string_keywords,
@@ -854,51 +857,15 @@ class ORCApKaJobSettings(PKaMoleculeSettingsMixin, ORCAJobSettings):
     @classmethod
     def build_orca_pka_settings(cls, proton_index, shared, opt_settings):
         """Build settings from CLI shared options and merged opt settings."""
-        solvent_model = shared["solvent_model"]
-        if solvent_model is None:
-            try:
-                solvent_model = opt_settings.solvent_model
-            except AttributeError:
-                solvent_model = None
-        solvent_id = shared["solvent_id"]
-        if solvent_id is None:
-            try:
-                solvent_id = opt_settings.solvent_id
-            except AttributeError:
-                solvent_id = None
-        if solvent_model is None:
-            solvent_model = "CPCM"
-        if solvent_id is None:
-            solvent_id = "water"
-
+        pka_kwargs = pka_kwargs_from_shared(
+            shared,
+            opt_settings=opt_settings,
+            default_solvent_model="CPCM",
+            default_solvent_id="water",
+        )
         return cls(
             proton_index=proton_index,
-            scheme=shared["scheme"],
-            reference_file=shared["reference"],
-            reference_proton_index=shared["reference_proton_index"],
-            reference_charge=shared["reference_charge"],
-            reference_multiplicity=shared["reference_multiplicity"],
-            reference_conjugate_base_charge=shared[
-                "reference_conjugate_base_charge"
-            ],
-            reference_conjugate_base_multiplicity=shared[
-                "reference_conjugate_base_multiplicity"
-            ],
-            delta_G_proton=shared["delta_g_proton"],
-            conjugate_base_charge=shared["conjugate_base_charge"],
-            conjugate_base_multiplicity=shared["conjugate_base_multiplicity"],
-            solvent_model=solvent_model,
-            solvent_id=solvent_id,
-            temperature=shared["temperature"],
-            concentration=shared["concentration"],
-            pressure=shared["pressure"],
-            cutoff_entropy_grimme=shared["cutoff_entropy_grimme"],
-            cutoff_enthalpy=shared["cutoff_enthalpy"],
-            pkb=shared.get("pkb", False),
-            pks=shared.get("pks"),
-            sampling=shared.get("sampling", False),
-            num_conformers=shared.get("num_conformers", 1),
-            crest_project=shared.get("crest_project"),
+            **pka_kwargs,
             charge=opt_settings.charge,
             multiplicity=opt_settings.multiplicity,
             functional=opt_settings.functional,

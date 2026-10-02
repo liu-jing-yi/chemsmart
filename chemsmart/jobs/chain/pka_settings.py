@@ -5,6 +5,89 @@ reference-acid loading, and charge/multiplicity defaults. Gas-phase
 and solvent job settings stay on the program-specific classes.
 """
 
+_PKA_SHARED_RENAME = {
+    "reference": "reference_file",
+    "delta_g_proton": "delta_G_proton",
+}
+_PKA_SHARED_IGNORE = {
+    "entropy_method",
+    "preview",
+    "reference_color_code",
+    "skip_completed",
+}
+_PKA_SHARED_FIELDS = {
+    "concentration",
+    "conjugate_base_charge",
+    "conjugate_base_multiplicity",
+    "crest_project",
+    "cutoff_enthalpy",
+    "cutoff_entropy_grimme",
+    "delta_g_proton",
+    "energy_units",
+    "num_conformers",
+    "pkb",
+    "pks",
+    "pressure",
+    "reference",
+    "reference_charge",
+    "reference_conjugate_base_charge",
+    "reference_conjugate_base_multiplicity",
+    "reference_multiplicity",
+    "reference_proton_index",
+    "sampling",
+    "scheme",
+    "solvent_id",
+    "solvent_model",
+    "temperature",
+}
+
+
+def pka_kwargs_from_shared(
+    shared,
+    *,
+    opt_settings,
+    default_solvent_model,
+    default_solvent_id,
+    sp_settings=None,
+):
+    """Map a CLI shared dict onto pKa settings constructor kwargs.
+
+    Known CLI-only keys are dropped. Unknown keys raise ``ValueError``.
+    Solvent model and ID fall back to *opt_settings*, then *sp_settings*,
+    then the program defaults.
+    """
+    unknown = set(shared) - _PKA_SHARED_FIELDS - _PKA_SHARED_IGNORE
+    if unknown:
+        raise ValueError(
+            "Unknown pKa shared options: " + ", ".join(sorted(unknown))
+        )
+
+    kwargs = {}
+    for key, value in shared.items():
+        if key in _PKA_SHARED_IGNORE:
+            continue
+        kwargs[_PKA_SHARED_RENAME.get(key, key)] = value
+
+    solvent_model = kwargs.get("solvent_model")
+    if solvent_model is None:
+        solvent_model = opt_settings.solvent_model
+    if solvent_model is None and sp_settings is not None:
+        solvent_model = sp_settings.solvent_model
+    if solvent_model is None:
+        solvent_model = default_solvent_model
+
+    solvent_id = kwargs.get("solvent_id")
+    if solvent_id is None:
+        solvent_id = opt_settings.solvent_id
+    if solvent_id is None and sp_settings is not None:
+        solvent_id = sp_settings.solvent_id
+    if solvent_id is None:
+        solvent_id = default_solvent_id
+
+    kwargs["solvent_model"] = solvent_model
+    kwargs["solvent_id"] = solvent_id
+    return kwargs
+
 
 class PKaMoleculeSettingsMixin:
     """Proton removal, reference loading, and charge defaults for pKa."""

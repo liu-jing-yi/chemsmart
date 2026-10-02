@@ -18,7 +18,10 @@ import re
 
 from chemsmart.io.gaussian import GAUSSIAN_SOLVATION_MODELS
 from chemsmart.io.gaussian.gengenecp import GenGenECPSection
-from chemsmart.jobs.chain.pka_settings import PKaMoleculeSettingsMixin
+from chemsmart.jobs.chain.pka_settings import (
+    PKaMoleculeSettingsMixin,
+    pka_kwargs_from_shared,
+)
 from chemsmart.jobs.settings import MolecularJobSettings
 from chemsmart.utils.periodictable import PeriodicTable
 from chemsmart.utils.repattern import (
@@ -1195,51 +1198,19 @@ class GaussianpKaJobSettings(PKaMoleculeSettingsMixin, GaussianJobSettings):
         cls, proton_index, shared, opt_settings, sp_settings=None
     ):
         """Build settings from CLI shared options and merged opt settings."""
-        cli_only = {"reference_color_code", "skip_completed"}
-        rename = {
-            "reference": "reference_file",
-            "delta_g_proton": "delta_G_proton",
-        }
-
-        pka_kwargs = {}
-        for key, value in shared.items():
-            if key in cli_only:
-                continue
-            pka_kwargs[rename.get(key, key)] = value
-
+        pka_kwargs = pka_kwargs_from_shared(
+            shared,
+            opt_settings=opt_settings,
+            default_solvent_model="SMD",
+            default_solvent_id="water",
+            sp_settings=sp_settings,
+        )
         gs_params = cls._gaussian_job_settings_init_field_names()
         opt_kwargs = {
             key: value
             for key, value in vars(opt_settings).items()
             if key in gs_params and value is not None and key not in pka_kwargs
         }
-
-        def _first_non_none(*values):
-            for val in values:
-                if val is not None:
-                    return val
-            return None
-
-        solvent_model = _first_non_none(
-            pka_kwargs.get("solvent_model"),
-            getattr(opt_settings, "solvent_model", None),
-            (
-                getattr(sp_settings, "solvent_model", None)
-                if sp_settings
-                else None
-            ),
-            "SMD",
-        )
-        solvent_id = _first_non_none(
-            pka_kwargs.get("solvent_id"),
-            getattr(opt_settings, "solvent_id", None),
-            getattr(sp_settings, "solvent_id", None) if sp_settings else None,
-            "water",
-        )
-
-        pka_kwargs["solvent_model"] = solvent_model
-        pka_kwargs["solvent_id"] = solvent_id
-
         return cls(
             proton_index=proton_index,
             **pka_kwargs,

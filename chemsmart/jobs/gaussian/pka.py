@@ -70,11 +70,6 @@ class GaussianpKaJob(PKaJob, GaussianJob):
         )
         self._reset_pka_child_jobs()
 
-    def _pka_output_class(self):
-        from chemsmart.io.gaussian.output import Gaussian16pKaOutput
-
-        return Gaussian16pKaOutput
-
     @property
     def original_mol(self):
         """Original molecule used to initialize the job (usually HA)."""
