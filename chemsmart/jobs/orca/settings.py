@@ -14,6 +14,7 @@ import os
 import re
 
 from chemsmart.io.orca import ORCA_ALL_SOLVENT_MODELS
+from chemsmart.jobs.chain.pka_settings import PKaMoleculeSettingsMixin
 from chemsmart.jobs.settings import MolecularJobSettings
 from chemsmart.utils.utils import (
     deduplicate_string_keywords,
@@ -750,7 +751,7 @@ class ORCAJobSettings(MolecularJobSettings):
             )
 
 
-class ORCApKaJobSettings(ORCAJobSettings):
+class ORCApKaJobSettings(PKaMoleculeSettingsMixin, ORCAJobSettings):
     """
     Settings for ORCA pKa calculations using the dual-level proton exchange scheme.
 
@@ -819,64 +820,36 @@ class ORCApKaJobSettings(ORCAJobSettings):
             )
 
         super().__init__(**kwargs)
-        self.proton_index = proton_index
-        self.scheme = scheme
-        self.solvent_model = solvent_model
-        self.solvent_id = solvent_id
-        self.conjugate_base_charge = conjugate_base_charge
-        self.conjugate_base_multiplicity = conjugate_base_multiplicity
-
-        self.temperature = temperature
-        self.concentration = concentration
-        self.pressure = pressure
-        self.cutoff_entropy_grimme = cutoff_entropy_grimme
-        self.cutoff_enthalpy = cutoff_enthalpy
-        self.energy_units = energy_units
-        self.reference_pka = reference_pka
-
-        if not self.title:
-            self.title = "ORCA pKa calculation job"
-
-        if scheme == "proton exchange":
-            self.reference_file = reference_file
-            self.reference_proton_index = reference_proton_index
-            self.reference_charge = reference_charge
-            self.reference_multiplicity = reference_multiplicity
-            self.reference_conjugate_base_charge = (
-                reference_conjugate_base_charge
-            )
-            self.reference_conjugate_base_multiplicity = (
+        self._store_pka_common_settings(
+            proton_index=proton_index,
+            scheme=scheme,
+            reference_file=reference_file,
+            reference_proton_index=reference_proton_index,
+            reference_charge=reference_charge,
+            reference_multiplicity=reference_multiplicity,
+            reference_conjugate_base_charge=reference_conjugate_base_charge,
+            reference_conjugate_base_multiplicity=(
                 reference_conjugate_base_multiplicity
-            )
-        else:
-            self.reference_file = None
-            self.reference_proton_index = None
-            self.reference_charge = None
-            self.reference_multiplicity = None
-            self.reference_conjugate_base_charge = None
-            self.reference_conjugate_base_multiplicity = None
-
-        self.delta_G_proton = delta_G_proton
-        self.pkb = bool(pkb)
-        self.pks = pks
-        self.sampling = bool(sampling)
-        if num_conformers is None:
-            num_conformers = 1
-        if num_conformers < 1:
-            raise ValueError("num_conformers must be >= 1.")
-        self.num_conformers = int(num_conformers)
-        self.crest_project = crest_project
-        from chemsmart.cli.pka import (
-            resolve_pkb_reporting,
-            warn_if_default_pks_non_aqueous,
-            warn_if_non_aqueous_direct_proton_default,
+            ),
+            reference_pka=reference_pka,
+            delta_G_proton=delta_G_proton,
+            solvent_model=solvent_model,
+            solvent_id=solvent_id,
+            conjugate_base_charge=conjugate_base_charge,
+            conjugate_base_multiplicity=conjugate_base_multiplicity,
+            temperature=temperature,
+            concentration=concentration,
+            pressure=pressure,
+            cutoff_entropy_grimme=cutoff_entropy_grimme,
+            cutoff_enthalpy=cutoff_enthalpy,
+            energy_units=energy_units,
+            pkb=pkb,
+            pks=pks,
+            sampling=sampling,
+            num_conformers=num_conformers,
+            crest_project=crest_project,
+            default_title="ORCA pKa calculation job",
         )
-
-        warn_if_non_aqueous_direct_proton_default(
-            self.scheme, self.delta_G_proton, self.solvent_id
-        )
-        _, _, pks_defaulted = resolve_pkb_reporting(pkb=self.pkb, pks=self.pks)
-        warn_if_default_pks_non_aqueous(pks_defaulted, self.solvent_id)
 
     @classmethod
     def build_orca_pka_settings(cls, proton_index, shared, opt_settings):
@@ -942,130 +915,6 @@ class ORCApKaJobSettings(ORCAJobSettings):
             light_elements_basis=opt_settings.light_elements_basis,
         )
 
-    # ------------------------------------------------------------------
-    # Reference helpers
-    # ------------------------------------------------------------------
-
-    @property
-    def has_reference_file(self):
-        """Check if a reference acid geometry file is provided."""
-        return (
-            self.scheme == "proton exchange"
-            and self.reference_file is not None
-        )
-
-    def validate_reference_settings(self):
-        """Validate reference acid settings are complete."""
-        if not self.has_reference_file:
-            raise ValueError(
-                "Reference acid file must be provided for proton exchange cycle."
-            )
-        missing = []
-        if self.reference_proton_index is None:
-            missing.append("reference_proton_index")
-        if self.reference_charge is None:
-            missing.append("reference_charge")
-        if self.reference_multiplicity is None:
-            missing.append("reference_multiplicity")
-        if missing:
-            raise ValueError(
-                f"Missing required reference acid settings: {', '.join(missing)}"
-            )
-
-    def get_reference_molecule(self):
-        """Load the reference acid (HB) molecule from file."""
-        self.validate_reference_settings()
-        from chemsmart.io.molecules.structure import Molecule
-
-        ref_mol = Molecule.from_filepath(self.reference_file)
-        ref_mol.charge = self.reference_charge
-        ref_mol.multiplicity = self.reference_multiplicity
-        return ref_mol
-
-    def get_reference_conjugate_base_molecule(self):
-        """Create the reference conjugate base (B-) molecule."""
-        ref_mol = self.get_reference_molecule()
-        return self._create_reference_conjugate_base_molecule(ref_mol)
-
-    def _create_reference_conjugate_base_molecule(self, reference_molecule):
-        """Remove proton from reference acid to create B-."""
-        if self.reference_proton_index is None:
-            raise ValueError(
-                "reference_proton_index must be specified to create reference "
-                "conjugate base molecule. Use 1-based indexing."
-            )
-
-        # Validate reference_proton_index range (1-based)
-        if (
-            self.reference_proton_index < 1
-            or self.reference_proton_index > len(reference_molecule)
-        ):
-            raise ValueError(
-                f"reference_proton_index {self.reference_proton_index} is out "
-                f"of range. Reference molecule has "
-                f"{len(reference_molecule)} atoms "
-                f"(1-indexed: 1 to {len(reference_molecule)})."
-            )
-
-        # Convert to 0-based index for internal use
-        proton_idx_0based = self.reference_proton_index - 1
-
-        # Validate that the atom is a hydrogen
-        atom_symbol = reference_molecule.symbols[proton_idx_0based]
-        if atom_symbol not in ("H", "h"):
-            raise ValueError(
-                f"Reference atom at index {self.reference_proton_index} is "
-                f"'{atom_symbol}', not hydrogen."
-            )
-
-        ref_cb_mol = reference_molecule.delete_atoms_by_indices(
-            self.reference_proton_index, one_based=True
-        )
-
-        if self.reference_conjugate_base_charge is not None:
-            ref_cb_mol.charge = self.reference_conjugate_base_charge
-        else:
-            ref_cb_mol.charge = self.reference_charge - 1
-
-        if self.reference_conjugate_base_multiplicity is not None:
-            ref_cb_mol.multiplicity = (
-                self.reference_conjugate_base_multiplicity
-            )
-        else:
-            ref_cb_mol.multiplicity = self.reference_multiplicity
-
-        return ref_cb_mol
-
-    # ------------------------------------------------------------------
-    # Conjugate base creation
-    # ------------------------------------------------------------------
-
-    @property
-    def protonated_charge(self):
-        """Charge of the protonated form (alias for inherited charge)."""
-        return self.charge
-
-    @protonated_charge.setter
-    def protonated_charge(self, value):
-        self.charge = value
-
-    @property
-    def protonated_multiplicity(self):
-        """Multiplicity of the protonated form."""
-        return self.multiplicity
-
-    @protonated_multiplicity.setter
-    def protonated_multiplicity(self, value):
-        self.multiplicity = value
-
-    def conjugate_base_molecule(self, molecule):
-        """Create and return the conjugate base molecule."""
-        return self._create_conjugate_base_molecule(molecule)
-
-    def conjugate_pair_molecules(self, molecule):
-        """Create and return both protonated and conjugate base molecules."""
-        return molecule, self._create_conjugate_base_molecule(molecule)
-
     def conjugate_pair_job_settings(self, molecule):
         """Create ORCAJobSettings for gas phase optimization."""
         return self._create_gas_phase_job_settings(molecule)
@@ -1074,12 +923,6 @@ class ORCApKaJobSettings(ORCAJobSettings):
         """Create ORCAJobSettings for solution phase SP."""
         return self._create_solution_phase_sp_settings(molecule)
 
-    def reference_pair_molecules(self):
-        """Create and return reference acid (HB) and conjugate base (B-)."""
-        ref_mol = self.get_reference_molecule()
-        ref_cb_mol = self._create_reference_conjugate_base_molecule(ref_mol)
-        return ref_mol, ref_cb_mol
-
     def reference_pair_job_settings(self):
         """Create ORCAJobSettings for reference acid gas phase optimization."""
         return self._create_reference_gas_phase_job_settings()
@@ -1087,48 +930,6 @@ class ORCApKaJobSettings(ORCAJobSettings):
     def reference_pair_sp_job_settings(self):
         """Create ORCAJobSettings for reference acid solution phase SP."""
         return self._create_reference_solution_phase_sp_settings()
-
-    def _create_conjugate_base_molecule(self, molecule):
-        """Remove the specified proton to create the conjugate base (A-)."""
-        if self.proton_index is None:
-            raise ValueError(
-                "proton_index must be specified to create conjugate base "
-                "molecule. Use 1-based indexing."
-            )
-        if self.proton_index < 1 or self.proton_index > len(molecule):
-            raise ValueError(
-                f"proton_index {self.proton_index} is out of range. "
-                f"Molecule has {len(molecule)} atoms."
-            )
-
-        proton_idx_0based = self.proton_index - 1
-        atom_symbol = molecule.symbols[proton_idx_0based]
-        if atom_symbol not in ("H", "h"):
-            raise ValueError(
-                f"Atom at index {self.proton_index} is '{atom_symbol}', "
-                "not hydrogen."
-            )
-
-        conjugate_base_mol = molecule.delete_atoms_by_indices(
-            self.proton_index, one_based=True
-        )
-
-        original_charge = molecule.charge if molecule.charge is not None else 0
-        original_mult = (
-            molecule.multiplicity if molecule.multiplicity is not None else 1
-        )
-
-        if self.conjugate_base_charge is not None:
-            conjugate_base_mol.charge = self.conjugate_base_charge
-        else:
-            conjugate_base_mol.charge = original_charge - 1
-
-        if self.conjugate_base_multiplicity is not None:
-            conjugate_base_mol.multiplicity = self.conjugate_base_multiplicity
-        else:
-            conjugate_base_mol.multiplicity = original_mult
-
-        return conjugate_base_mol
 
     # ------------------------------------------------------------------
     # Sub-job settings factories
@@ -1157,20 +958,7 @@ class ORCApKaJobSettings(ORCAJobSettings):
 
     def _create_gas_phase_job_settings(self, molecule):
         """Create GAS PHASE optimization settings for HA and A-."""
-        prot_charge = (
-            self.charge
-            if self.charge is not None
-            else (molecule.charge if molecule.charge is not None else 0)
-        )
-        prot_mult = (
-            self.multiplicity
-            if self.multiplicity is not None
-            else (
-                molecule.multiplicity
-                if molecule.multiplicity is not None
-                else 1
-            )
-        )
+        prot_charge, prot_mult = self._protonated_charge_multiplicity(molecule)
 
         shared = self._orca_settings_kwargs()
 
@@ -1185,15 +973,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             **shared,
         )
 
-        cb_charge = (
-            self.conjugate_base_charge
-            if self.conjugate_base_charge is not None
-            else prot_charge - 1
-        )
-        cb_mult = (
-            self.conjugate_base_multiplicity
-            if self.conjugate_base_multiplicity is not None
-            else prot_mult
+        cb_charge, cb_mult = self._conjugate_base_charge_multiplicity(
+            prot_charge, prot_mult
         )
 
         conjugate_base_settings = ORCAJobSettings(
@@ -1211,20 +992,7 @@ class ORCApKaJobSettings(ORCAJobSettings):
 
     def _create_solution_phase_sp_settings(self, molecule):
         """Create SOLUTION PHASE single point settings for HA and A-."""
-        prot_charge = (
-            self.charge
-            if self.charge is not None
-            else (molecule.charge if molecule.charge is not None else 0)
-        )
-        prot_mult = (
-            self.multiplicity
-            if self.multiplicity is not None
-            else (
-                molecule.multiplicity
-                if molecule.multiplicity is not None
-                else 1
-            )
-        )
+        prot_charge, prot_mult = self._protonated_charge_multiplicity(molecule)
 
         shared = self._orca_settings_kwargs()
 
@@ -1239,15 +1007,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             **shared,
         )
 
-        cb_charge = (
-            self.conjugate_base_charge
-            if self.conjugate_base_charge is not None
-            else prot_charge - 1
-        )
-        cb_mult = (
-            self.conjugate_base_multiplicity
-            if self.conjugate_base_multiplicity is not None
-            else prot_mult
+        cb_charge, cb_mult = self._conjugate_base_charge_multiplicity(
+            prot_charge, prot_mult
         )
 
         conjugate_base_sp_settings = ORCAJobSettings(
@@ -1279,15 +1040,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             **shared,
         )
 
-        ref_cb_charge = (
-            self.reference_conjugate_base_charge
-            if self.reference_conjugate_base_charge is not None
-            else self.reference_charge - 1
-        )
-        ref_cb_mult = (
-            self.reference_conjugate_base_multiplicity
-            if self.reference_conjugate_base_multiplicity is not None
-            else self.reference_multiplicity
+        ref_cb_charge, ref_cb_mult = (
+            self._reference_conjugate_base_charge_multiplicity()
         )
 
         ref_cb_settings = ORCAJobSettings(
@@ -1319,15 +1073,8 @@ class ORCApKaJobSettings(ORCAJobSettings):
             **shared,
         )
 
-        ref_cb_charge = (
-            self.reference_conjugate_base_charge
-            if self.reference_conjugate_base_charge is not None
-            else self.reference_charge - 1
-        )
-        ref_cb_mult = (
-            self.reference_conjugate_base_multiplicity
-            if self.reference_conjugate_base_multiplicity is not None
-            else self.reference_multiplicity
+        ref_cb_charge, ref_cb_mult = (
+            self._reference_conjugate_base_charge_multiplicity()
         )
 
         ref_cb_sp_settings = ORCAJobSettings(

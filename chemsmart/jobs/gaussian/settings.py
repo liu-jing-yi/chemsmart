@@ -18,6 +18,7 @@ import re
 
 from chemsmart.io.gaussian import GAUSSIAN_SOLVATION_MODELS
 from chemsmart.io.gaussian.gengenecp import GenGenECPSection
+from chemsmart.jobs.chain.pka_settings import PKaMoleculeSettingsMixin
 from chemsmart.jobs.settings import MolecularJobSettings
 from chemsmart.utils.periodictable import PeriodicTable
 from chemsmart.utils.repattern import (
@@ -953,7 +954,7 @@ class GaussianJobSettings(MolecularJobSettings):
             )
 
 
-class GaussianpKaJobSettings(GaussianJobSettings):
+class GaussianpKaJobSettings(PKaMoleculeSettingsMixin, GaussianJobSettings):
     """
     Specialized settings for Gaussian pKa calculations.
 
@@ -1062,8 +1063,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         )
     """
 
-    reference_pka = None
-
     def __init__(
         self,
         proton_index=None,
@@ -1160,66 +1159,36 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             )
 
         super().__init__(**kwargs)
-        self.proton_index = proton_index
-        self.scheme = scheme
-        self.solvent_model = solvent_model
-        self.solvent_id = solvent_id
-        self.conjugate_base_charge = conjugate_base_charge
-        self.conjugate_base_multiplicity = conjugate_base_multiplicity
-
-        # Thermochemistry settings
-        self.temperature = temperature
-        self.concentration = concentration
-        self.pressure = pressure
-        self.cutoff_entropy_grimme = cutoff_entropy_grimme
-        self.cutoff_enthalpy = cutoff_enthalpy
-        self.energy_units = energy_units
-
-        if not self.title:
-            self.title = "Gaussian pKa calculation job"
-
-        # Reference acid settings for proton exchange cycle
-        if scheme == "proton exchange":
-            self.reference_file = reference_file
-            self.reference_proton_index = reference_proton_index
-            self.reference_charge = reference_charge
-            self.reference_multiplicity = reference_multiplicity
-            self.reference_conjugate_base_charge = (
-                reference_conjugate_base_charge
-            )
-            self.reference_conjugate_base_multiplicity = (
+        self._store_pka_common_settings(
+            proton_index=proton_index,
+            scheme=scheme,
+            reference_file=reference_file,
+            reference_proton_index=reference_proton_index,
+            reference_charge=reference_charge,
+            reference_multiplicity=reference_multiplicity,
+            reference_conjugate_base_charge=reference_conjugate_base_charge,
+            reference_conjugate_base_multiplicity=(
                 reference_conjugate_base_multiplicity
-            )
-        else:
-            # Not needed for direct cycle
-            self.reference_file = None
-            self.reference_proton_index = None
-            self.reference_charge = None
-            self.reference_multiplicity = None
-            self.reference_conjugate_base_charge = None
-            self.reference_conjugate_base_multiplicity = None
-
-        self.delta_G_proton = delta_G_proton
-        self.pkb = bool(pkb)
-        self.pks = pks
-        self.sampling = bool(sampling)
-        if num_conformers is None:
-            num_conformers = 1
-        if num_conformers < 1:
-            raise ValueError("num_conformers must be >= 1.")
-        self.num_conformers = int(num_conformers)
-        self.crest_project = crest_project
-        from chemsmart.cli.pka import (
-            resolve_pkb_reporting,
-            warn_if_default_pks_non_aqueous,
-            warn_if_non_aqueous_direct_proton_default,
+            ),
+            reference_pka=None,
+            delta_G_proton=delta_G_proton,
+            solvent_model=solvent_model,
+            solvent_id=solvent_id,
+            conjugate_base_charge=conjugate_base_charge,
+            conjugate_base_multiplicity=conjugate_base_multiplicity,
+            temperature=temperature,
+            concentration=concentration,
+            pressure=pressure,
+            cutoff_entropy_grimme=cutoff_entropy_grimme,
+            cutoff_enthalpy=cutoff_enthalpy,
+            energy_units=energy_units,
+            pkb=pkb,
+            pks=pks,
+            sampling=sampling,
+            num_conformers=num_conformers,
+            crest_project=crest_project,
+            default_title="Gaussian pKa calculation job",
         )
-
-        warn_if_non_aqueous_direct_proton_default(
-            self.scheme, self.delta_G_proton, self.solvent_id
-        )
-        _, _, pks_defaulted = resolve_pkb_reporting(pkb=self.pkb, pks=self.pks)
-        warn_if_default_pks_non_aqueous(pks_defaulted, self.solvent_id)
 
     @classmethod
     def build_gaussian_pka_settings(
@@ -1310,177 +1279,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             kwargs["dieze_tag"] = dieze_tag.lstrip("#") or None
         return GaussianJobSettings(**kwargs)
 
-    @property
-    def has_reference_file(self):
-        """Check if a reference acid geometry file is provided."""
-        return (
-            self.scheme == "proton exchange"
-            and self.reference_file is not None
-        )
-
-    def validate_reference_settings(self):
-        """
-        Validate that all required reference acid settings are provided.
-
-        Raises:
-            ValueError: If reference_file is provided but other required
-                settings are missing.
-        """
-        if not self.has_reference_file:
-            return
-
-        missing = []
-        if self.reference_proton_index is None:
-            missing.append("reference_proton_index")
-        if self.reference_charge is None:
-            missing.append("reference_charge")
-        if self.reference_multiplicity is None:
-            missing.append("reference_multiplicity")
-
-        if missing:
-            raise ValueError(
-                f"When reference_file is provided, the following must also be "
-                f"specified: {', '.join(missing)}"
-            )
-
-    def get_reference_molecule(self):
-        """
-        Load and return the reference acid molecule (HRef) from file.
-
-        Returns:
-            Molecule: The reference acid molecule with charge/multiplicity set.
-
-        Raises:
-            ValueError: If href_file is not provided or settings are invalid.
-        """
-        if not self.has_reference_file:
-            raise ValueError(
-                "Reference file not provided. Cannot load reference molecule."
-            )
-
-        self.validate_reference_settings()
-
-        from chemsmart.io.molecules.structure import Molecule
-
-        ref_mol = Molecule.from_filepath(self.reference_file)
-        ref_mol.charge = self.reference_charge
-        ref_mol.multiplicity = self.reference_multiplicity
-        return ref_mol
-
-    def get_reference_conjugate_base_molecule(self):
-        """
-        Create and return the reference conjugate base molecule (Ref-).
-
-        Returns:
-            Molecule: The reference conjugate base with proton removed.
-
-        Raises:
-            ValueError: If reference settings are invalid.
-        """
-        ref_mol = self.get_reference_molecule()
-        return self._create_reference_conjugate_base_molecule(ref_mol)
-
-    def _create_reference_conjugate_base_molecule(self, reference_molecule):
-        """
-        Create a reference conjugate base molecule by removing the specified proton.
-
-        Args:
-            reference_molecule (Molecule): The reference acid molecule (HRef).
-
-        Returns:
-            Molecule: A new molecule with the proton removed (Ref-).
-
-        Raises:
-            ValueError: If reference_proton_index is invalid.
-        """
-        if self.reference_proton_index is None:
-            raise ValueError(
-                "reference_proton_index must be specified to create reference "
-                "conjugate base molecule. Use 1-based indexing."
-            )
-
-        # Validate reference_proton_index range (1-based)
-        if (
-            self.reference_proton_index < 1
-            or self.reference_proton_index > len(reference_molecule)
-        ):
-            raise ValueError(
-                f"reference_proton_index {self.reference_proton_index} is out of range. "
-                f"Reference molecule has {len(reference_molecule)} atoms "
-                f"(1-indexed: 1 to {len(reference_molecule)})."
-            )
-
-        # Convert to 0-based index for internal use
-        proton_idx_0based = self.reference_proton_index - 1
-
-        # Validate that the atom is a hydrogen
-        atom_symbol = reference_molecule.symbols[proton_idx_0based]
-        if atom_symbol not in ("H", "h"):
-            raise ValueError(
-                f"Atom at reference_proton_index {self.reference_proton_index} is "
-                f"'{atom_symbol}', not hydrogen. Only hydrogen atoms can be removed."
-            )
-
-        # Create lists excluding the proton
-        new_symbols = [
-            s
-            for i, s in enumerate(reference_molecule.symbols)
-            if i != proton_idx_0based
-        ]
-        new_positions = [
-            p
-            for i, p in enumerate(reference_molecule.positions)
-            if i != proton_idx_0based
-        ]
-
-        # Handle frozen_atoms if present
-        new_frozen_atoms = None
-        if reference_molecule.frozen_atoms is not None:
-            new_frozen_atoms = [
-                f
-                for i, f in enumerate(reference_molecule.frozen_atoms)
-                if i != proton_idx_0based
-            ]
-
-        from chemsmart.io.molecules.structure import Molecule
-
-        # Create the reference conjugate base molecule
-        ref_conjugate_base_mol = Molecule(
-            symbols=new_symbols,
-            positions=new_positions,
-            frozen_atoms=new_frozen_atoms,
-        )
-
-        # Set charge and multiplicity for the reference conjugate base
-        if self.reference_conjugate_base_charge is not None:
-            ref_conjugate_base_mol.charge = (
-                self.reference_conjugate_base_charge
-            )
-        else:
-            ref_conjugate_base_mol.charge = self.reference_charge - 1
-
-        if self.reference_conjugate_base_multiplicity is not None:
-            ref_conjugate_base_mol.multiplicity = (
-                self.reference_conjugate_base_multiplicity
-            )
-        else:
-            ref_conjugate_base_mol.multiplicity = self.reference_multiplicity
-
-        return ref_conjugate_base_mol
-
-    def reference_pair_molecules(self):
-        """
-        Create and return both reference acid (HRef) and conjugate base (Ref-) molecules.
-
-        Returns:
-            tuple: A tuple of (reference_acid_mol, reference_conjugate_base_mol).
-        """
-        ref_acid_mol = self.get_reference_molecule()
-        ref_conjugate_base_mol = (
-            self._create_reference_conjugate_base_molecule(ref_acid_mol)
-        )
-        return ref_acid_mol, ref_conjugate_base_mol
-
     def reference_pair_job_settings(self):
         """
         Create GaussianJobSettings for reference acid gas phase optimization.
@@ -1518,16 +1316,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id=None,
         )
 
-        # Reference conjugate base (B-) charge/multiplicity
-        if self.reference_conjugate_base_charge is not None:
-            ref_cb_charge = self.reference_conjugate_base_charge
-        else:
-            ref_cb_charge = self.reference_charge - 1
-
-        if self.reference_conjugate_base_multiplicity is not None:
-            ref_cb_mult = self.reference_conjugate_base_multiplicity
-        else:
-            ref_cb_mult = self.reference_multiplicity
+        ref_cb_charge, ref_cb_mult = (
+            self._reference_conjugate_base_charge_multiplicity()
+        )
 
         # Reference conjugate base (B-) settings - GAS PHASE (no solvent)
         ref_conjugate_base_settings = self._copy_gaussian_job_settings(
@@ -1560,16 +1351,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id=self.solvent_id,
         )
 
-        # Reference conjugate base (B-) charge/multiplicity
-        if self.reference_conjugate_base_charge is not None:
-            ref_cb_charge = self.reference_conjugate_base_charge
-        else:
-            ref_cb_charge = self.reference_charge - 1
-
-        if self.reference_conjugate_base_multiplicity is not None:
-            ref_cb_mult = self.reference_conjugate_base_multiplicity
-        else:
-            ref_cb_mult = self.reference_multiplicity
+        ref_cb_charge, ref_cb_mult = (
+            self._reference_conjugate_base_charge_multiplicity()
+        )
 
         # Reference conjugate base (B-) SP settings - SOLUTION PHASE
         ref_conjugate_base_sp_settings = self._copy_gaussian_job_settings(
@@ -1583,60 +1367,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
 
         return ref_acid_sp_settings, ref_conjugate_base_sp_settings
 
-    @property
-    def protonated_charge(self):
-        """Charge of the protonated form (alias for inherited charge)."""
-        return self.charge
-
-    @protonated_charge.setter
-    def protonated_charge(self, value):
-        """Set the charge of the protonated form."""
-        self.charge = value
-
-    @property
-    def protonated_multiplicity(self):
-        """Multiplicity of the protonated form (alias for inherited multiplicity)."""
-        return self.multiplicity
-
-    @protonated_multiplicity.setter
-    def protonated_multiplicity(self, value):
-        """Set the multiplicity of the protonated form."""
-        self.multiplicity = value
-
-    def protonated_molecule(self, molecule):
-        """
-        Create and return the protonated molecule.
-
-        Args:
-            molecule (Molecule): The original molecule (HA).
-
-        Returns:
-            Molecule: A copy of the molecule with updated charge/multiplicity.
-        """
-        protonated_mol = molecule.copy()
-
-        if self.charge is not None:
-            protonated_mol.charge = self.charge
-        elif protonated_mol.charge is None:
-            protonated_mol.charge = 0
-
-        if self.multiplicity is not None:
-            protonated_mol.multiplicity = self.multiplicity
-        elif protonated_mol.multiplicity is None:
-            protonated_mol.multiplicity = 1
-
-        return protonated_mol
-
-    def conjugate_base_molecule(self, molecule):
-        """Create and return the conjugate base molecule."""
-        return self._create_conjugate_base_molecule(molecule)
-
-    def conjugate_pair_molecules(self, molecule):
-        """Create and return both protonated and conjugate base molecules."""
-        protonated_mol = molecule
-        conjugate_base_mol = self._create_conjugate_base_molecule(molecule)
-        return protonated_mol, conjugate_base_mol
-
     def conjugate_pair_job_settings(self, molecule):
         """Create and return GaussianJobSettings for gas phase optimization."""
         return self._create_gas_phase_job_settings(molecule)
@@ -1644,77 +1374,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
     def conjugate_pair_sp_job_settings(self, molecule):
         """Create and return GaussianJobSettings for solution phase SP."""
         return self._create_solution_phase_sp_settings(molecule)
-
-    def _create_conjugate_base_molecule(self, molecule):
-        """
-        Create a conjugate base molecule by removing the specified proton.
-
-        Creates a deep copy of the input molecule and removes the atom at
-        the specified proton_index. The resulting molecule represents the
-        conjugate base (A-) of the original acid (HA).
-
-        Args:
-            molecule (Molecule): The protonated molecule (HA).
-
-        Returns:
-            Molecule: A new molecule with the proton removed (A-).
-
-        Raises:
-            ValueError: If proton_index is not specified or is out of range.
-            ValueError: If the atom at proton_index is not a hydrogen.
-
-        Example:
-            settings = GaussianpKaJobSettings(proton_index=10)
-            conjugate_base_mol = settings.conjugate_base_molecule(acetic_acid)
-        """
-        if self.proton_index is None:
-            raise ValueError(
-                "proton_index must be specified to create conjugate base molecule. "
-                "Use 1-based indexing."
-            )
-
-        # Validate proton_index range (1-based)
-        if self.proton_index < 1 or self.proton_index > len(molecule):
-            raise ValueError(
-                f"proton_index {self.proton_index} is out of range. "
-                f"Molecule has {len(molecule)} atoms (1-indexed: 1 to {len(molecule)})."
-            )
-
-        # Convert to 0-based index for validation
-        proton_idx_0based = self.proton_index - 1
-
-        # Validate that the atom is a hydrogen
-        atom_symbol = molecule.symbols[proton_idx_0based]
-        if atom_symbol not in ("H", "h"):
-            raise ValueError(
-                f"Atom at index {self.proton_index} is '{atom_symbol}', not hydrogen. "
-                "Only hydrogen atoms can be removed for pKa calculations."
-            )
-
-        # Use the instance method (1-based index)
-        conjugate_base_mol = molecule.delete_atoms_by_indices(
-            self.proton_index, one_based=True
-        )
-
-        # Set charge and multiplicity for the conjugate base
-        # By default, removing H+ decreases charge by 1
-        original_charge = molecule.charge if molecule.charge is not None else 0
-        original_mult = (
-            molecule.multiplicity if molecule.multiplicity is not None else 1
-        )
-
-        if self.conjugate_base_charge is not None:
-            conjugate_base_mol.charge = self.conjugate_base_charge
-        else:
-            conjugate_base_mol.charge = original_charge - 1
-
-        if self.conjugate_base_multiplicity is not None:
-            conjugate_base_mol.multiplicity = self.conjugate_base_multiplicity
-        else:
-            # Multiplicity usually stays the same for closed-shell systems
-            conjugate_base_mol.multiplicity = original_mult
-
-        return conjugate_base_mol
 
     def _create_gas_phase_job_settings(self, molecule):
         """
@@ -1745,21 +1404,7 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             )
             prot_settings, conj_base_settings = settings._create_gas_phase_job_settings(mol)
         """
-        # Determine charge and multiplicity for protonated form
-        # Use self.charge/multiplicity (inherited from parent), fall back to molecule
-        if self.charge is not None:
-            prot_charge = self.charge
-        elif molecule.charge is not None:
-            prot_charge = molecule.charge
-        else:
-            prot_charge = 0
-
-        if self.multiplicity is not None:
-            prot_mult = self.multiplicity
-        elif molecule.multiplicity is not None:
-            prot_mult = molecule.multiplicity
-        else:
-            prot_mult = 1
+        prot_charge, prot_mult = self._protonated_charge_multiplicity(molecule)
 
         # Create settings for protonated form (HA) - GAS PHASE (no solvent)
         protonated_settings = self._copy_gaussian_job_settings(
@@ -1771,16 +1416,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id=None,
         )
 
-        # Determine charge and multiplicity for conjugate base
-        if self.conjugate_base_charge is not None:
-            conj_base_charge = self.conjugate_base_charge
-        else:
-            conj_base_charge = prot_charge - 1
-
-        if self.conjugate_base_multiplicity is not None:
-            conj_base_mult = self.conjugate_base_multiplicity
-        else:
-            conj_base_mult = prot_mult
+        conj_base_charge, conj_base_mult = (
+            self._conjugate_base_charge_multiplicity(prot_charge, prot_mult)
+        )
 
         # Create settings for conjugate base (A-) - GAS PHASE (no solvent)
         conjugate_base_settings = self._copy_gaussian_job_settings(
@@ -1793,43 +1431,6 @@ class GaussianpKaJobSettings(GaussianJobSettings):
         )
 
         return protonated_settings, conjugate_base_settings
-
-    def _create_molecules(self, molecule):
-        """
-        Create both protonated and conjugate base molecule objects.
-
-        Creates a copy of the input molecule with appropriate charge/multiplicity
-        for the protonated form, and generates a new molecule with the proton
-        removed for the conjugate base.
-
-        Args:
-            molecule (Molecule): The original protonated molecule (HA).
-
-        Returns:
-            tuple: A tuple of (protonated_molecule, conjugate_base_molecule).
-
-        Example:
-            settings = GaussianpKaJobSettings(proton_index=10)
-            prot_mol, conj_base_mol = settings.create_molecules(acetic_acid)
-            print(f"HA: {len(prot_mol)} atoms, A-: {len(conj_base_mol)} atoms")
-        """
-        # Create protonated molecule (copy with updated charge/mult if needed)
-        protonated_mol = molecule.copy()
-
-        if self.charge is not None:
-            protonated_mol.charge = self.charge
-        elif protonated_mol.charge is None:
-            protonated_mol.charge = 0
-
-        if self.multiplicity is not None:
-            protonated_mol.multiplicity = self.multiplicity
-        elif protonated_mol.multiplicity is None:
-            protonated_mol.multiplicity = 1
-
-        # Create conjugate base molecule
-        conjugate_base_mol = self._create_conjugate_base_molecule(molecule)
-
-        return protonated_mol, conjugate_base_mol
 
     def _create_solution_phase_sp_settings(self, molecule):
         """
@@ -1863,20 +1464,7 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             )
             prot_sp_settings, conj_base_sp_settings = settings._create_solution_phase_sp_settings(mol)
         """
-        # Determine charge and multiplicity for protonated form
-        if self.charge is not None:
-            prot_charge = self.charge
-        elif molecule.charge is not None:
-            prot_charge = molecule.charge
-        else:
-            prot_charge = 0
-
-        if self.multiplicity is not None:
-            prot_mult = self.multiplicity
-        elif molecule.multiplicity is not None:
-            prot_mult = molecule.multiplicity
-        else:
-            prot_mult = 1
+        prot_charge, prot_mult = self._protonated_charge_multiplicity(molecule)
 
         # Create settings for protonated form (HA) SP - SOLUTION PHASE
         # Uses SAME functional/basis as gas phase for error cancellation
@@ -1889,16 +1477,9 @@ class GaussianpKaJobSettings(GaussianJobSettings):
             solvent_id=self.solvent_id,
         )
 
-        # Determine charge and multiplicity for conjugate base
-        if self.conjugate_base_charge is not None:
-            conj_base_charge = self.conjugate_base_charge
-        else:
-            conj_base_charge = prot_charge - 1
-
-        if self.conjugate_base_multiplicity is not None:
-            conj_base_mult = self.conjugate_base_multiplicity
-        else:
-            conj_base_mult = prot_mult
+        conj_base_charge, conj_base_mult = (
+            self._conjugate_base_charge_multiplicity(prot_charge, prot_mult)
+        )
 
         # Create settings for conjugate base (A-) SP - SOLUTION PHASE
         # Uses SAME functional/basis as gas phase for error cancellation

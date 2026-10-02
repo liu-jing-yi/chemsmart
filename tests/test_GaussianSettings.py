@@ -1549,6 +1549,40 @@ class TestGaussianpKaJobSettings:
         assert ref_cb_mol.multiplicity == 1
         assert len(ref_cb_mol) == len(mol) - 1  # One H removed
 
+    def test_reference_conjugate_base_keeps_per_atom_arrays(
+        self, single_molecule_xyz_file
+    ):
+        """Removing the reference proton keeps forces, velocities, and modes."""
+        import numpy as np
+
+        mol = Molecule.from_filepath(single_molecule_xyz_file)
+        h_indices = [
+            i + 1 for i, symbol in enumerate(mol.symbols) if symbol == "H"
+        ]
+        ref_proton_index = h_indices[0]
+        n_atoms = len(mol)
+        mol.forces = np.arange(n_atoms * 3, dtype=float).reshape(n_atoms, 3)
+        mol.velocities = np.ones((n_atoms, 3))
+        mol.frozen_atoms = [0] * n_atoms
+        mol.frozen_atoms[ref_proton_index - 1] = -1
+        mol.vibrational_modes = [np.full((n_atoms, 3), 0.2)]
+
+        settings = GaussianpKaJobSettings(
+            scheme="proton exchange",
+            reference_file=single_molecule_xyz_file,
+            reference_proton_index=ref_proton_index,
+            reference_charge=0,
+            reference_multiplicity=1,
+        )
+        ref_cb = settings._create_reference_conjugate_base_molecule(mol)
+
+        assert len(ref_cb.forces) == n_atoms - 1
+        assert len(ref_cb.velocities) == n_atoms - 1
+        assert len(ref_cb.frozen_atoms) == n_atoms - 1
+        assert ref_cb.frozen_atoms == [0] * (n_atoms - 1)
+        assert len(ref_cb.vibrational_modes) == 1
+        assert len(ref_cb.vibrational_modes[0]) == n_atoms - 1
+
     def test_create_conjugate_base_molecule(self, single_molecule_xyz_file):
         """Test creating conjugate base molecule by removing a proton."""
         mol = Molecule.from_filepath(single_molecule_xyz_file)
