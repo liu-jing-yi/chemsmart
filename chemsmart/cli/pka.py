@@ -11,6 +11,7 @@ analyze        Compute pKa from 8 existing output files.
 batch-analyze  Batch pKa from a table of output file paths.
 """
 
+import copy
 import functools
 import logging
 import math
@@ -1794,8 +1795,8 @@ def _fragment_pka_job_label(filename, fragment):
 
 def _table_pka_job_label(filepath, backend):
     label = Path(str(filepath)).stem
-    if backend == "orca" and not label.endswith("_pka"):
-        return f"{label}_pka"
+    if backend == "orca":
+        return ensure_pka_label_suffix(label)
     return label
 
 
@@ -2136,6 +2137,508 @@ def print_pka_preview(ctx):
         click.echo(notice)
     click.echo(format_pka_preflight_table(rows))
     return True
+
+
+def ensure_pka_label_suffix(raw):
+    """Append ``_pka`` when *raw* does not already end with that suffix."""
+    text = "" if raw is None else str(raw)
+    if text.endswith("_pka"):
+        return text
+    return f"{text}_pka"
+
+
+def log_pka_job_settings(pka_settings, proton_index, shared):
+    """Log the proton site, thermodynamic cycle, and species charges."""
+    logger.info(f"Proton index to remove: {proton_index}")
+    logger.info(f"Thermodynamic cycle: {shared['scheme']}")
+    logger.info(
+        f"Protonated form (HA): charge={pka_settings.charge}, "
+        f"mult={pka_settings.multiplicity}"
+    )
+    if shared["conjugate_base_charge"] is not None:
+        cb_charge = shared["conjugate_base_charge"]
+    else:
+        cb_charge = pka_settings.charge - 1
+    if shared["conjugate_base_multiplicity"] is not None:
+        cb_mult = shared["conjugate_base_multiplicity"]
+    else:
+        cb_mult = pka_settings.multiplicity
+    logger.info(f"Conjugate base (A-): charge={cb_charge}, mult={cb_mult}")
+
+
+_PKA_REFERENCE_SHARED_KEYS = (
+    "reference",
+    "reference_proton_index",
+    "reference_charge",
+    "reference_multiplicity",
+    "reference_conjugate_base_charge",
+    "reference_conjugate_base_multiplicity",
+)
+
+
+def configure_pka_submission(ctx, *, submit_command, batch_command, **options):
+    """Store shared pKa options and dispatch to submit or batch.
+
+    *options* are the Click values from ``gaussian pka`` or ``orca pka``.
+    When the group is invoked without a subcommand, a submission table
+    selects *batch_command* and every other input selects *submit_command*.
+    """
+    s_freq_cutoff, entropy_method = resolve_pka_entropy_cutoff(
+        options["cutoff_entropy_grimme"],
+        options["cutoff_entropy_truhlar"],
+    )
+    sampling, num_conformers = resolve_pka_sampling_options(
+        options["sampling"], options["num_conformers"]
+    )
+    shared = dict(
+        scheme=options["scheme"],
+        reference=options["reference"],
+        reference_proton_index=options["reference_proton_index"],
+        reference_color_code=options["reference_color_code"],
+        reference_charge=options["reference_charge"],
+        reference_multiplicity=options["reference_multiplicity"],
+        reference_conjugate_base_charge=options[
+            "reference_conjugate_base_charge"
+        ],
+        reference_conjugate_base_multiplicity=options[
+            "reference_conjugate_base_multiplicity"
+        ],
+        delta_g_proton=options["delta_g_proton"],
+        conjugate_base_charge=options["conjugate_base_charge"],
+        conjugate_base_multiplicity=options["conjugate_base_multiplicity"],
+        solvent_model=options["solvent_model"],
+        solvent_id=options["solvent_id"],
+        sampling=sampling,
+        num_conformers=num_conformers,
+        pkb=options["pkb"],
+        pks=options["pks"],
+        temperature=options["temperature"],
+        concentration=options["concentration"],
+        pressure=options["pressure"],
+        cutoff_entropy_grimme=s_freq_cutoff,
+        cutoff_enthalpy=options["cutoff_enthalpy"],
+        entropy_method=entropy_method,
+        skip_completed=options["skip_completed"],
+        preview=options["preview"],
+    )
+    ctx.ensure_object(dict)
+    ctx.obj["pka_shared"] = shared
+    ctx.obj["pka_proton_index"] = options["proton_index"]
+    ctx.obj["pka_color_code"] = options["color_code"]
+
+    if ctx.invoked_subcommand is not None:
+        return None
+
+    from chemsmart.utils.datasets import PKaTableEntry
+
+    filename = ctx.obj.get("filename")
+    skip_completed = options["skip_completed"]
+    if PKaTableEntry.is_submission_table(filename):
+        return ctx.invoke(batch_command, skip_completed=skip_completed)
+    return ctx.invoke(submit_command, skip_completed=skip_completed)
+
+
+def _pka_opt_settings(ctx, *, mode):
+    """Return project settings and merged optimization settings.
+
+    ``submit`` always merges job settings. ``fragment`` merges when job
+    settings are present and requires the context keys. ``batch`` merges
+    when job settings are present and tolerates missing context keys.
+    """
+    project_settings = ctx.obj["project_settings"]
+    opt_settings = project_settings.opt_settings()
+    if mode == "batch":
+        job_settings = ctx.obj.get("job_settings")
+        keywords = ctx.obj.get("keywords", {})
+    else:
+        job_settings = ctx.obj["job_settings"]
+        keywords = ctx.obj["keywords"]
+    if mode == "submit" or job_settings:
+        opt_settings = opt_settings.merge(job_settings, keywords=keywords)
+    return project_settings, opt_settings
+
+
+def _require_batch_reference_options(shared):
+    """Require reference acid options for a proton-exchange batch."""
+    if shared["scheme"] != "proton exchange":
+        return
+
+    missing = []
+    if shared["reference"] is None:
+        missing.append("-r/--reference")
+    elif shared["reference_proton_index"] is None:
+        ref = shared["reference"]
+        if str(ref).endswith((".cdx", ".cdxml")):
+            try:
+                shared["reference_proton_index"] = (
+                    PKaCDXFile.resolve_reference_proton(
+                        ref,
+                        None,
+                        shared["reference_color_code"],
+                    )
+                )
+            except click.UsageError:
+                missing.append("-rpi/--reference-proton-index")
+        else:
+            missing.append("-rpi/--reference-proton-index")
+    if shared["reference_charge"] is None:
+        missing.append("-rc/--reference-charge")
+    if shared["reference_multiplicity"] is None:
+        missing.append("-rm/--reference-multiplicity")
+    if missing:
+        raise click.UsageError(
+            "For proton exchange cycle with batch input, these "
+            "reference acid options are required:\n  " + "\n  ".join(missing)
+        )
+
+
+def _batch_row_shared(shared, index):
+    """Keep the reference acid on the first proton-exchange row only."""
+    row_shared = copy.copy(shared)
+    original_scheme = shared["scheme"]
+    if index == 0 or original_scheme != "proton exchange":
+        row_shared["scheme"] = original_scheme
+    else:
+        row_shared["scheme"] = "direct"
+    if row_shared["scheme"] != "proton exchange":
+        for key in _PKA_REFERENCE_SHARED_KEYS:
+            row_shared[key] = None
+    return row_shared
+
+
+def _make_pka_job(
+    job_class,
+    molecule,
+    settings,
+    label,
+    jobrunner,
+    skip_completed,
+    **kwargs,
+):
+    return job_class(
+        molecule=molecule,
+        settings=settings,
+        label=label,
+        jobrunner=jobrunner,
+        skip_completed=skip_completed,
+        **kwargs,
+    )
+
+
+def _create_pka_jobs_from_molecules(
+    ctx,
+    pka_molecules,
+    shared,
+    skip_completed,
+    *,
+    job_class,
+    settings_builder,
+    label_for,
+    program,
+    **kwargs,
+):
+    """Create one pKa job per ChemDraw fragment."""
+    validate_reference_options(shared)
+    project_settings, opt_settings = _pka_opt_settings(ctx, mode="fragment")
+    jobrunner = ctx.obj["jobrunner"]
+    filename = ctx.obj.get("filename", "")
+    basename = Path(str(filename)).stem or "pka"
+
+    jobs = []
+    for idx, pka_mol in enumerate(pka_molecules, start=1):
+        label = label_for(f"{basename}_frag{idx}_pka")
+        try:
+            molecule, proton_index, row_opt_settings = (
+                prepare_pka_submit_structure(
+                    pka_mol,
+                    pka_mol.proton_index,
+                    opt_settings,
+                    pkb=shared.get("pkb", False),
+                )
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        require_pka_charge_multiplicity(
+            row_opt_settings,
+            source_hint=(f"ChemDraw molecular fragment {idx} in {filename}"),
+        )
+        pka_settings = settings_builder(
+            proton_index, shared, row_opt_settings, project_settings
+        )
+        logger.info(
+            f"Creating {program} pKa job for fragment {idx}: "
+            f"proton_index={proton_index}, label={label}"
+        )
+        job = _make_pka_job(
+            job_class,
+            molecule,
+            pka_settings,
+            label,
+            jobrunner,
+            skip_completed,
+            **kwargs,
+        )
+        charge = pka_mol.charge
+        if charge is None:
+            charge = pka_settings.charge
+        job._batch_entry = {
+            "filepath": str(filename),
+            "proton_index": pka_mol.proton_index,
+            "charge": int(charge),
+            "multiplicity": int(pka_settings.multiplicity),
+            "scheme": shared["scheme"],
+            "fragment_index": idx,
+            "label": label,
+        }
+        jobs.append(job)
+
+    logger.info(
+        f"Created {len(jobs)} {program} pKa jobs from multi-fragment CDXML"
+    )
+    return jobs
+
+
+def submit_pka_jobs(
+    ctx,
+    skip_completed,
+    proton_index,
+    color_code,
+    *,
+    job_class,
+    settings_builder,
+    label_for,
+    batch_command,
+    program,
+    **kwargs,
+):
+    """Create pKa jobs for one structure, or expand a multi-fragment CDXML.
+
+    *settings_builder* is called as
+    ``settings_builder(proton_index, shared, opt_settings, project_settings)``.
+    *label_for* maps a raw label to the program's job label.
+    A submission table is handed to *batch_command*.
+    """
+    shared = ctx.obj["pka_shared"]
+    if print_pka_preview(ctx):
+        return None
+    filename = ctx.obj.get("filename")
+
+    from chemsmart.utils.datasets import PKaTableEntry
+
+    if PKaTableEntry.is_submission_table(filename):
+        return ctx.invoke(batch_command, skip_completed=skip_completed)
+
+    proton_index, color_code = resolve_pka_submit_proton_options(
+        ctx, proton_index=proton_index, color_code=color_code
+    )
+    try:
+        proton_index, pka_molecules = resolve_proton_index(
+            filename,
+            proton_index,
+            color_code,
+            mode=pka_submit_site_mode(shared.get("pkb", False)),
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    if pka_molecules is not None:
+        return _create_pka_jobs_from_molecules(
+            ctx,
+            pka_molecules,
+            shared,
+            skip_completed,
+            job_class=job_class,
+            settings_builder=settings_builder,
+            label_for=label_for,
+            program=program,
+            **kwargs,
+        )
+
+    validate_reference_options(shared)
+    project_settings, opt_settings = _pka_opt_settings(ctx, mode="submit")
+    molecules = ctx.obj["molecules"]
+    try:
+        molecules, proton_index, opt_settings = prepare_pka_submit_molecules(
+            molecules,
+            proton_index,
+            opt_settings,
+            pkb=shared.get("pkb", False),
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    pka_settings = settings_builder(
+        proton_index, shared, opt_settings, project_settings
+    )
+    require_pka_charge_multiplicity(
+        pka_settings, source_hint=f"input file {filename}"
+    )
+    log_pka_job_settings(pka_settings, proton_index, shared)
+
+    jobrunner = ctx.obj["jobrunner"]
+    label = label_for(ctx.obj["label"])
+    molecule_indices = ctx.obj.get("molecule_indices")
+    if len(molecules) > 1 and molecule_indices:
+        logger.info(f"Creating {len(molecules)} {program} pKa jobs")
+        return [
+            _make_pka_job(
+                job_class,
+                mol,
+                pka_settings,
+                f"{label}_idx{idx}",
+                jobrunner,
+                skip_completed,
+                **kwargs,
+            )
+            for mol, idx in zip(molecules, molecule_indices)
+        ]
+
+    return _make_pka_job(
+        job_class,
+        molecules[-1],
+        pka_settings,
+        label,
+        jobrunner,
+        skip_completed,
+        **kwargs,
+    )
+
+
+def batch_pka_jobs(
+    ctx,
+    skip_completed,
+    proton_index,
+    color_code,
+    *,
+    job_class,
+    settings_builder,
+    label_for,
+    submit_command,
+    program,
+    **kwargs,
+):
+    """Create pKa jobs from a submission table or a multi-molecule CDXML.
+
+    Only the first proton-exchange row keeps the reference acid. Later
+    rows use the direct cycle. *settings_builder* and *label_for* match
+    :func:`submit_pka_jobs`.
+    """
+    shared = ctx.obj["pka_shared"]
+    if print_pka_preview(ctx):
+        return None
+
+    input_table_path = ctx.obj.get("filename")
+    if not input_table_path:
+        raise click.UsageError(
+            "Batch mode requires the parent "
+            f"{program} -f/--filename to specify the table file path."
+        )
+
+    def create_fragment_jobs(
+        ctx, pka_molecules, shared, skip_completed, **fragment_kwargs
+    ):
+        return _create_pka_jobs_from_molecules(
+            ctx,
+            pka_molecules,
+            shared,
+            skip_completed,
+            job_class=job_class,
+            settings_builder=settings_builder,
+            label_for=label_for,
+            program=program,
+            **fragment_kwargs,
+        )
+
+    def invoke_submit(ctx, **invoke_kwargs):
+        return ctx.invoke(submit_command, **invoke_kwargs)
+
+    if is_pka_cdxml_input(input_table_path):
+        return batch_pka_jobs_from_cdxml(
+            ctx,
+            skip_completed,
+            create_fragment_jobs,
+            invoke_submit,
+            **kwargs,
+        )
+
+    from chemsmart.utils.datasets import PKaOutputTable, PKaTableEntry
+
+    logger.info(f"Reading {program} pKa jobs from table: {input_table_path}")
+    try:
+        entries = PKaTableEntry.parse_pka_table(input_table_path)
+        PKaOutputTable.validate_pka_table_entries(
+            entries, check_file_exists=True
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    logger.info(f"Found {len(entries)} entries in table")
+    _require_batch_reference_options(shared)
+
+    project_settings, opt_settings = _pka_opt_settings(ctx, mode="batch")
+    _, color_code = resolve_pka_submit_proton_options(
+        ctx, proton_index=proton_index, color_code=color_code
+    )
+    jobrunner = ctx.obj["jobrunner"]
+    jobs = []
+    for index, entry in enumerate(entries):
+        filepath = entry.get("filepath") or entry.get("path") or entry.filepath
+        try:
+            row_proton_index, molecule = resolve_pka_batch_row(
+                filepath,
+                proton_index=entry.proton_index,
+                color_code=color_code,
+                pkb=shared.get("pkb", False),
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        label = label_for(Path(filepath).stem)
+        input_proton_index = row_proton_index
+        input_charge = int(entry.charge)
+
+        row_opt_settings = copy.copy(opt_settings)
+        row_opt_settings.charge = input_charge
+        row_opt_settings.multiplicity = int(entry.multiplicity)
+        try:
+            molecule, row_proton_index, row_opt_settings = (
+                prepare_pka_submit_structure(
+                    molecule,
+                    row_proton_index,
+                    row_opt_settings,
+                    pkb=shared.get("pkb", False),
+                )
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
+        row_shared = _batch_row_shared(shared, index)
+        pka_settings = settings_builder(
+            row_proton_index,
+            row_shared,
+            row_opt_settings,
+            project_settings,
+        )
+        job = _make_pka_job(
+            job_class,
+            molecule,
+            pka_settings,
+            label,
+            jobrunner,
+            skip_completed,
+            **kwargs,
+        )
+        job._batch_entry = {
+            "filepath": str(filepath),
+            "proton_index": input_proton_index,
+            "charge": input_charge,
+            "multiplicity": int(entry.multiplicity),
+            "scheme": row_shared["scheme"],
+            "label": label,
+        }
+        jobs.append(job)
+
+    logger.info(f"Created {len(jobs)} {program} pKa jobs from table")
+    return jobs
 
 
 def batch_pka_jobs_from_cdxml(
