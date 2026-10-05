@@ -96,13 +96,34 @@ class PKaJob:
         return None
 
     def _subjob_label(self, species, stage, index, num_conformers):
-        """Return the DFT label for one species, stage, and conformer."""
+        """Return the DFT label for one species, stage, and conformer.
+
+        Reference species use the reference filename stem, so every target
+        in a batch shares one HRef and one Ref- opt+SP pair.
+        """
+        base_label = self.label
+        if species in ("HRef", "Ref"):
+            stem = self._reference_job_stem()
+            if stem:
+                base_label = stem
         return pka_subjob_label(
-            self.label, species, stage, index, num_conformers
+            base_label, species, stage, index, num_conformers
         )
+
+    def _reference_job_stem(self):
+        """Return the filename stem shared by every job using this reference."""
+        if not self.has_reference_jobs:
+            return None
+        return os.path.splitext(
+            os.path.basename(self.settings.reference_file)
+        )[0]
 
     def _crest_job_label(self, species):
         """Return the CREST label for ``HA``, ``A``, ``HRef``, or ``Ref``."""
+        if species in ("HRef", "Ref"):
+            stem = self._reference_job_stem()
+            if stem:
+                return f"{stem}_{species}_crest"
         return f"{self.label}_{species}_crest"
 
     def _optimized_molecule_from_job(
@@ -334,17 +355,65 @@ class PKaJob:
             phase_label="gas phase optimization",
         )
 
+    def _reference_submission_exists(self, job):
+        """Return True when this reference job already has an input file."""
+        return os.path.exists(job.inputfile)
+
+    def _claim_reference_job(self, job):
+        """Return True when this process should submit *job*.
+
+        Batch members that share a reference file use the same label.
+        The first process to create the lock submits; the others wait.
+        """
+        lock_path = job.inputfile + ".lock"
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
+        os.close(fd)
+        return not self._reference_submission_exists(job)
+
+    def _run_shared_reference_jobs(self, jobs, phase_label):
+        """Submit reference jobs that no other batch member has launched.
+
+        Claim each job immediately before it runs. An incomplete job stops
+        the phase, and its lock is not held for the species that follow.
+        """
+        for job in jobs or []:
+            if job is None or job.is_complete():
+                continue
+            if self._reference_submission_exists(job):
+                logger.info(
+                    "Reference job %s is already submitted; "
+                    "not launching another copy.",
+                    job.label,
+                )
+                continue
+            if not self._claim_reference_job(job):
+                logger.info(
+                    "Reference job %s is owned by another pKa job; "
+                    "not launching another copy.",
+                    job.label,
+                )
+                continue
+            run_phase_jobs(
+                parent_runner=self.jobrunner,
+                jobs=[job],
+                stop_on_incomplete=True,
+                logger_obj=logger,
+                phase_label=phase_label,
+            )
+            if not job.is_complete():
+                break
+
     def _run_ref_opt_jobs(self):
         """Run reference gas phase optimization jobs."""
         if not self.has_reference_jobs:
             return
         self._sync_subjob_folders(self.ref_opt_jobs)
-        run_phase_jobs(
-            parent_runner=self.jobrunner,
-            jobs=self.ref_opt_jobs,
-            stop_on_incomplete=True,
-            logger_obj=logger,
-            phase_label="reference gas phase optimization",
+        self._run_shared_reference_jobs(
+            self.ref_opt_jobs,
+            "reference gas phase optimization",
         )
 
     def _run_sp_jobs(self):
@@ -376,12 +445,9 @@ class PKaJob:
             return
         self._create_ref_sp_jobs()
         self._sync_subjob_folders(self.ref_sp_jobs)
-        run_phase_jobs(
-            parent_runner=self.jobrunner,
-            jobs=self.ref_sp_jobs,
-            stop_on_incomplete=True,
-            logger_obj=logger,
-            phase_label="reference solution phase SP",
+        self._run_shared_reference_jobs(
+            self.ref_sp_jobs,
+            "reference solution phase SP",
         )
 
     def _run_crest_jobs(self):

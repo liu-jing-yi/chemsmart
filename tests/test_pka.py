@@ -355,6 +355,98 @@ def _make_crest_search_job(molecule, jobrunner, label="ha_crest"):
     )
 
 
+class TestSharedReferenceJobs:
+    def test_batch_fragments_share_one_reference_opt_and_sp(
+        self, tmp_path, monkeypatch, gaussian_jobrunner_no_scratch
+    ):
+        """Two proton-exchange jobs must launch one HRef and one Ref- pair."""
+        monkeypatch.chdir(tmp_path)
+        reference = tmp_path / "pyridinium_reference.xyz"
+        reference.write_text(
+            "3\nref\nO 0.0 0.0 0.0\nH 0.0 0.0 1.0\nH 0.0 1.0 0.0\n"
+        )
+        target = tmp_path / "pyridine.xyz"
+        target.write_text(
+            "3\npyr\nN 0.0 0.0 0.0\nH 0.0 0.0 1.0\nH 0.0 1.0 0.0\n"
+        )
+
+        from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.jobs.job import Job
+
+        molecule = Molecule.from_filepath(str(target))
+        calls = []
+
+        def _fake_run(self, **kwargs):
+            calls.append(self.label)
+            Path(self.inputfile).write_text("")
+
+        monkeypatch.setattr(Job, "run", _fake_run)
+
+        first = _direct_pka_job(
+            "gaussian",
+            molecule,
+            gaussian_jobrunner_no_scratch,
+            label="pyridine_series_frag1_pka",
+            scheme="proton exchange",
+            reference_file=str(reference),
+            reference_proton_index=2,
+        )
+        second = _direct_pka_job(
+            "gaussian",
+            molecule,
+            gaussian_jobrunner_no_scratch,
+            label="pyridine_series_frag2_pka",
+            scheme="proton exchange",
+            reference_file=str(reference),
+            reference_proton_index=2,
+        )
+
+        assert (
+            first.ref_acid_opt_jobs[0].label == "pyridinium_reference_HRef_opt"
+        )
+        assert (
+            first.ref_conjugate_base_opt_jobs[0].label
+            == "pyridinium_reference_Ref_opt"
+        )
+        assert (
+            first.ref_acid_sp_jobs[0].label == "pyridinium_reference_HRef_sp"
+        )
+        assert (
+            first.ref_conjugate_base_sp_jobs[0].label
+            == "pyridinium_reference_Ref_sp"
+        )
+        assert [job.label for job in second.ref_opt_jobs] == [
+            job.label for job in first.ref_opt_jobs
+        ]
+        assert [job.label for job in second.ref_sp_jobs] == [
+            job.label for job in first.ref_sp_jobs
+        ]
+        assert (
+            first.protonated_opt_jobs[0].label
+            != second.protonated_opt_jobs[0].label
+        )
+
+        first._run_ref_opt_jobs()
+        second._run_ref_opt_jobs()
+        first._run_ref_opt_jobs()
+        first._run_shared_reference_jobs(
+            first.ref_sp_jobs, "reference solution phase SP"
+        )
+        second._run_shared_reference_jobs(
+            second.ref_sp_jobs, "reference solution phase SP"
+        )
+        second._run_shared_reference_jobs(
+            second.ref_sp_jobs, "reference solution phase SP"
+        )
+
+        assert calls == [
+            "pyridinium_reference_HRef_opt",
+            "pyridinium_reference_Ref_opt",
+            "pyridinium_reference_HRef_sp",
+            "pyridinium_reference_Ref_sp",
+        ]
+
+
 class TestAqueousProtonSolutionFreeEnergy:
     def test_value_at_298_15_k(self):
         from chemsmart.analysis.pka import (
