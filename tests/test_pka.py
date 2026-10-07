@@ -3937,6 +3937,36 @@ class TestPKa:
         ):
             process_pipeline.__wrapped__(ctx, ["not-a-job", "also-not-a-job"])
 
+    def test_run_skips_failed_pka_fragment_and_continues(
+        self, pbs_server, monkeypatch
+    ):
+        """One failed pKa fragment does not stop the rest of a local batch."""
+        from chemsmart.cli.run import process_pipeline
+        from chemsmart.jobs.chain.pka import PKaJob
+        from chemsmart.jobs.job import Job
+        from chemsmart.jobs.runner import JobRunner
+
+        class _Fragment(PKaJob, Job):
+            def __init__(self, label):
+                super().__init__(molecule=None, label=label, jobrunner=None)
+
+        calls = []
+
+        def _fake_run(job, jobrunner):
+            calls.append(job.label)
+            if job.label == "frag_bad":
+                raise ValueError("optimization failed")
+
+        monkeypatch.setattr("chemsmart.cli.run._run_single_job", _fake_run)
+        ctx = click.Context(run)
+        ctx.ensure_object(dict)
+        ctx.obj["jobrunner"] = JobRunner(server=pbs_server, fake=True)
+        jobs = [_Fragment("frag_bad"), _Fragment("frag_ok")]
+
+        process_pipeline.__wrapped__(ctx, jobs)
+
+        assert calls == ["frag_bad", "frag_ok"]
+
 
 class TestIonizableSiteSMARTS:
     def test_acid_and_base_smarts_are_the_resolver_patterns(self):

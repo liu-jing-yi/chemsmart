@@ -2262,6 +2262,8 @@ def batch_analyze(ctx, output_table, output_results, program, **kwargs):
     """Batch pKa computation from a table of precomputed output files.
 
     Blank reference-acid cells are filled from the previous row.
+    A system whose pKa calculation fails is skipped; the remaining
+    systems are still reported.
 
     \b
     Examples:

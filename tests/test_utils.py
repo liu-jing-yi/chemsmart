@@ -2628,3 +2628,51 @@ class TestPKaTableParsing:
                 "basename": "sys1",
             }
         ]
+
+    def test_pka_output_table_skips_failed_row(self, tmp_path):
+        """A failed pKa row is reported and does not stop later rows."""
+        from chemsmart.utils.datasets import PKaOutputTable
+
+        for name in ["ha.log", "a.log", "ha_sp.log", "a_sp.log"]:
+            (tmp_path / name).write_text("dummy")
+
+        table_file = tmp_path / "outputs_direct.csv"
+        row = (
+            f"{tmp_path}/ha.log,{tmp_path}/a.log,"
+            f"{tmp_path}/ha_sp.log,{tmp_path}/a_sp.log"
+        )
+        table_file.write_text(
+            "basename,ha_gas,a_gas,ha_sp,a_sp\n" f"bad,{row}\n" f"good,{row}\n"
+        )
+
+        class FakeOutput:
+            calls = []
+
+            @classmethod
+            def compute_pka(cls, **kwargs):
+                cls.calls.append(kwargs["ha_gas_file"])
+                if len(cls.calls) == 1:
+                    raise ValueError("missing free energy for bad")
+                return {
+                    "pKa": 4.5,
+                    "delta_G_diss_kcal_mol": 6.1,
+                    "scheme": "direct",
+                }
+
+        pka_table = PKaOutputTable.from_file(str(table_file))
+        pka_table.prepare(check_file_exists=True, scheme="direct")
+        results = pka_table.run_pka(output_cls=FakeOutput, scheme="direct")
+        text = pka_table.format_pka_batch_results_table(
+            pka_table.entries,
+            results,
+            temperature=298.15,
+            pressure=1.0,
+            scheme="direct",
+        )
+
+        assert results[0]["skipped"] is True
+        assert results[0]["basename"] == "bad"
+        assert "missing free energy for bad" in results[0]["error"]
+        assert results[1]["pKa"] == 4.5
+        assert "bad" in text and "skipped:" in text
+        assert "4.50" in text

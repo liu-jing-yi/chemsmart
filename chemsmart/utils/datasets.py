@@ -1133,7 +1133,11 @@ class PKaOutputTable:
         scheme: str = "proton exchange",
         delta_G_proton: float = None,
     ) -> list:
-        """Compute pKa for every row using the supplied output class."""
+        """Compute pKa for every row using the supplied output class.
+
+        A row whose calculation fails is recorded as skipped. Later rows
+        are still computed.
+        """
         results = []
         for entry in entries:
             pka_kwargs = dict(
@@ -1168,7 +1172,24 @@ class PKaOutputTable:
                 if isinstance(output_cls, type)
                 else output_cls
             )
-            pka_result = compute_fn(**pka_kwargs)
+            try:
+                pka_result = compute_fn(**pka_kwargs)
+            except Exception as exc:
+                message = " ".join(str(exc).split())
+                logger.warning(
+                    "Skipping %s: pKa calculation failed: %s",
+                    entry["basename"],
+                    message,
+                )
+                results.append(
+                    {
+                        "basename": entry["basename"],
+                        "scheme": scheme,
+                        "skipped": True,
+                        "error": message,
+                    }
+                )
+                continue
             pka_result["basename"] = entry["basename"]
             results.append(pka_result)
         return results
@@ -1236,6 +1257,11 @@ class PKaOutputTable:
         ]
 
         for entry, result in zip(entries, results):
+            if result.get("skipped"):
+                lines.append(
+                    f"{entry['basename']:<30} skipped: {result['error']}"
+                )
+                continue
             dg_value = PKaOutputTable.pka_scheme_delta_g_value(result, scheme)
             if report_pkb:
                 pkb_value = pks_to_pkb(result["pKa"], pks_value)

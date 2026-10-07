@@ -129,9 +129,19 @@ def process_pipeline(ctx, *args, **kwargs):
             raise ValueError(
                 "Batch job submission is not supported in this branch."
             )
+        from chemsmart.jobs.chain.pka import PKaJob
+
         logger.info(f"Running {len(job)} jobs locally")
         for single_job in job:
-            _run_single_job(single_job, jobrunner)
+            try:
+                _run_single_job(single_job, jobrunner)
+            except Exception:
+                if not isinstance(single_job, PKaJob):
+                    raise
+                logger.exception(
+                    "Skipping %s: pKa calculation failed.",
+                    single_job.label,
+                )
         return None
 
     if isinstance(job, Job):
