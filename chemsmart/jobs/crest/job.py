@@ -45,6 +45,11 @@ class CRESTJob(Job):
         return CRESTJobSettings
 
     @property
+    def inputfile(self):
+        """Return the geometry file CREST reads."""
+        return self.xyzfile
+
+    @property
     def xyzfile(self):
         return os.path.join(self.folder, f"{self.label}.xyz")
 

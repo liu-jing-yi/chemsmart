@@ -446,6 +446,87 @@ class TestSharedReferenceJobs:
             "pyridinium_reference_Ref_sp",
         ]
 
+    def test_batch_fragments_share_one_reference_crest(
+        self, tmp_path, monkeypatch, gaussian_jobrunner_no_scratch
+    ):
+        """Two fragments launch one HRef CREST and one Ref- CREST."""
+        monkeypatch.chdir(tmp_path)
+        reference = tmp_path / "pyridinium_reference.xyz"
+        reference.write_text(
+            "3\nref\nO 0.0 0.0 0.0\nH 0.0 0.0 1.0\nH 0.0 1.0 0.0\n"
+        )
+        target = tmp_path / "pyridine.xyz"
+        target.write_text(
+            "3\npyr\nN 0.0 0.0 0.0\nH 0.0 0.0 1.0\nH 0.0 1.0 0.0\n"
+        )
+
+        from chemsmart.io.molecules.structure import Molecule
+        from chemsmart.jobs.job import Job
+
+        molecule = Molecule.from_filepath(str(target))
+        calls = []
+
+        def _fake_run(self, **kwargs):
+            calls.append(self.label)
+            assert self.jobrunner.PROGRAM == "crest"
+            Path(self.xyzfile).write_text("")
+
+        monkeypatch.setattr(Job, "run", _fake_run)
+
+        first = _direct_pka_job(
+            "gaussian",
+            molecule,
+            gaussian_jobrunner_no_scratch,
+            sampling=True,
+            label="pyridine_series_frag1_pka",
+            scheme="proton exchange",
+            reference_file=str(reference),
+            reference_proton_index=2,
+        )
+        second = _direct_pka_job(
+            "gaussian",
+            molecule,
+            gaussian_jobrunner_no_scratch,
+            sampling=True,
+            label="pyridine_series_frag2_pka",
+            scheme="proton exchange",
+            reference_file=str(reference),
+            reference_proton_index=2,
+        )
+
+        assert (
+            first.ref_acid_crest_job.label == "pyridinium_reference_HRef_crest"
+        )
+        assert (
+            second.ref_acid_crest_job.label == first.ref_acid_crest_job.label
+        )
+        assert (
+            first.protonated_crest_job.label
+            != second.protonated_crest_job.label
+        )
+
+        first._run_crest_jobs()
+        first._run_ref_crest_jobs()
+        second._run_crest_jobs()
+        second._run_ref_crest_jobs()
+        first._run_crest_jobs()
+        first._run_ref_crest_jobs()
+
+        assert calls.count("pyridinium_reference_HRef_crest") == 1
+        assert calls.count("pyridinium_reference_Ref_crest") == 1
+
+        def _conformers(crest_job, num_conformers, fallback_molecule):
+            return [fallback_molecule]
+
+        monkeypatch.setattr(
+            "chemsmart.jobs.chain.pka.select_crest_conformers",
+            _conformers,
+        )
+        assert first._selected_crest_conformers() is None
+        first.ref_acid_crest_job.is_complete = lambda: True
+        first.ref_conjugate_base_crest_job.is_complete = lambda: True
+        assert first._selected_crest_conformers() is not None
+
 
 class TestAqueousProtonSolutionFreeEnergy:
     def test_value_at_298_15_k(self):

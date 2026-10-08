@@ -63,6 +63,7 @@ class PKaJob:
         self.crest_jobs = []
         self.protonated_crest_job = None
         self.conjugate_base_crest_job = None
+        self.ref_crest_jobs = []
         self.ref_acid_crest_job = None
         self.ref_conjugate_base_crest_job = None
 
@@ -193,7 +194,10 @@ class PKaJob:
             self.ref_conjugate_base_crest_job = job
         else:
             raise ValueError(f"Unknown pKa CREST species {species!r}.")
-        self.crest_jobs.append(job)
+        if species in ("HRef", "Ref"):
+            self.ref_crest_jobs.append(job)
+        else:
+            self.crest_jobs.append(job)
         return job
 
     def _prepare_target_opt_jobs(self, ha_molecules, a_molecules):
@@ -356,14 +360,15 @@ class PKaJob:
         )
 
     def _reference_submission_exists(self, job):
-        """Return True when this reference job already has an input file."""
+        """Return True when this reference job has already been launched."""
         return os.path.exists(job.inputfile)
 
     def _claim_reference_job(self, job):
         """Return True when this process should submit *job*.
 
         Batch members that share a reference file use the same label.
-        The first process to create the lock submits; the others wait.
+        The first process to create the lock submits; the others do not
+        launch another copy.
         """
         lock_path = job.inputfile + ".lock"
         try:
@@ -378,6 +383,7 @@ class PKaJob:
 
         Claim each job immediately before it runs. An incomplete job stops
         the phase, and its lock is not held for the species that follow.
+        A child whose program differs from the parent keeps its own runner.
         """
         for job in jobs or []:
             if job is None or job.is_complete():
@@ -396,8 +402,11 @@ class PKaJob:
                     job.label,
                 )
                 continue
+            parent_runner = (
+                self.jobrunner if job.PROGRAM == self.PROGRAM else None
+            )
             run_phase_jobs(
-                parent_runner=self.jobrunner,
+                parent_runner=parent_runner,
                 jobs=[job],
                 stop_on_incomplete=True,
                 logger_obj=logger,
@@ -451,13 +460,22 @@ class PKaJob:
         )
 
     def _run_crest_jobs(self):
-        """Run CREST sampling jobs for HA, A-, and any reference acid."""
+        """Run CREST sampling jobs for the target acid and its conjugate base."""
         run_phase_jobs(
             parent_runner=None,
             jobs=self.crest_jobs,
             stop_on_incomplete=False,
             logger_obj=logger,
             phase_label="CREST sampling",
+        )
+
+    def _run_ref_crest_jobs(self):
+        """Run one shared CREST for the reference acid and its conjugate base."""
+        if not self.has_reference_jobs:
+            return
+        self._run_shared_reference_jobs(
+            self.ref_crest_jobs,
+            "reference CREST sampling",
         )
 
     def _select_species_conformers(self, crest_job, fallback_molecule):
@@ -484,6 +502,8 @@ class PKaJob:
             return None
         if not self.has_reference_jobs:
             return ha_confs, a_confs, None, None
+        if not self._ref_crest_jobs_are_complete():
+            return None
         href_mol, ref_mol = self._reference_pair_molecules()
         href_confs = self._select_species_conformers(
             self.ref_acid_crest_job, href_mol
@@ -499,6 +519,8 @@ class PKaJob:
         """Run CREST when requested, then gas-phase opt and solvent SP."""
         if self.settings.sampling:
             self._run_crest_jobs()
+            if self.has_reference_jobs:
+                self._run_ref_crest_jobs()
             selected = self._selected_crest_conformers()
             crest_transition = decide_phase_transition(
                 phase_name="CREST",
@@ -573,6 +595,14 @@ class PKaJob:
         if not self.opt_jobs:
             return False
         return all(job.is_complete() for job in self.opt_jobs)
+
+    def _ref_crest_jobs_are_complete(self):
+        """Return True when reference CREST finished or is not configured."""
+        if not self.has_reference_jobs:
+            return True
+        if not self.ref_crest_jobs:
+            return False
+        return all(job.is_complete() for job in self.ref_crest_jobs)
 
     def _ref_opt_jobs_are_complete(self):
         """Return True when reference opt jobs finished or are not configured."""
