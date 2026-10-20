@@ -1,3 +1,4 @@
+from chemsmart.cli.amber import amber
 from chemsmart.cli.convert import convert
 from chemsmart.cli.crest import crest
 from chemsmart.cli.database import database
@@ -19,6 +20,7 @@ subcommands = [
     orca,
     xtb,
     pka,
+    amber,
     mol,
     nciplot,
     thermochemistry,
